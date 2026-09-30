@@ -1,4 +1,4 @@
-import { app, BrowserWindow, safeStorage, session, dialog, shell, nativeImage, ipcMain, clipboard } from 'electron';
+import { app, BrowserWindow, safeStorage, session, dialog, shell, nativeImage, ipcMain, clipboard, Tray, Menu } from 'electron';
 import { mkdirSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
@@ -19,6 +19,7 @@ else { void start().catch(error=>{dialog.showErrorBox('token-flow 启动失败',
 async function start() {
   let window:BrowserWindow|undefined;
   let closing=false;
+  let tray:Tray|undefined;
   await app.whenReady();
   const icon=join(here,'console','app-icon.png');
   if(process.platform==='darwin')app.dock?.setIcon(nativeImage.createFromPath(icon));
@@ -52,6 +53,18 @@ async function start() {
     window.show();
     window.focus();
   };
+  const trayIcon=nativeImage.createFromPath(icon).resize({width:18,height:18});
+  if(process.platform==='darwin')trayIcon.setTemplateImage(true);
+  tray=new Tray(trayIcon);
+  tray.setToolTip('token-flow');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    {label:'打开工作台',click:()=>{void show();}},
+    {label:'维修师傅',click:()=>{void show().then(()=>window?.webContents.send('repair:open'));}},
+    {type:'separator'},
+    {label:'退出 token-flow',click:()=>app.quit()},
+  ]));
+  tray.on('click',()=>{void show();});
+  app.on('will-quit',()=>tray?.destroy());
   app.on('second-instance',()=>{void show();});app.on('activate',()=>{void show();});
   app.on('window-all-closed',()=>app.quit());
   app.on('before-quit',event=>{if(closing)return;event.preventDefault();closing=true;void service.app.close().finally(()=>app.quit());});

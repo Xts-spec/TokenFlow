@@ -8,9 +8,9 @@ import { QuotaRing } from './QuotaRing';
 const names={codex:'Codex',antigravity:'反重力 · Antigravity',claude:'Claude Code'};
 type Props={local:LocalAgentSnapshot;onAccounts:()=>void;onGateway:()=>void};
 type Status=NativeAccountStatus&{gatewayConnected:boolean;accounts:{id:string;email:string|null;switchable:boolean;reason:string}[]};
-export function AccountsPane(props:Props){
- const [provider,setProvider]=useState<keyof typeof names>('codex');
- return <><div className="modelCenterTabs" role="tablist" aria-label="多账号客户端">{(Object.keys(names) as (keyof typeof names)[]).map(id=><button key={id} role="tab" aria-selected={provider===id} aria-controls="native-account-panel" onClick={()=>setProvider(id)}>{names[id]}</button>)}</div><div id="native-account-panel" role="tabpanel" aria-label={names[provider]}>{provider==='codex'?<CodexAccountsPane {...props}/>:<NativeAccountsPane key={provider} {...props} provider={provider}/>}</div></>;
+export function AccountsPane({provider:initialProvider,...props}:Props&{provider?:keyof typeof names}){
+ const [provider,setProvider]=useState<keyof typeof names>(initialProvider??'codex');
+ return <>{!initialProvider&&<div className="modelCenterTabs" role="tablist" aria-label="多账号客户端">{(Object.keys(names) as (keyof typeof names)[]).map(id=><button key={id} role="tab" aria-selected={provider===id} aria-controls="native-account-panel" onClick={()=>setProvider(id)}>{names[id]}</button>)}</div>}<div id="native-account-panel" role="tabpanel" aria-label={names[provider]}>{provider==='codex'?<CodexAccountsPane {...props}/>:<NativeAccountsPane key={provider} {...props} provider={provider}/>}</div></>;
 }
 function NativeAccountsPane({local,onAccounts,onGateway,provider}:Props&{provider:NativeProvider}){
  const [status,setStatus]=useState<Status>();const [selected,setSelected]=useState('');const [model,setModel]=useState('');
@@ -41,6 +41,6 @@ function NativeAccountsPane({local,onAccounts,onGateway,provider}:Props&{provide
    <button disabled={blocked||!credential?.switchable||status?.backup?.state==='prepared'} onClick={()=>{setSelected(a.id);setModel(a.models.includes(`claude/${status?.model}`)?`claude/${status?.model}`:a.models[0]);setMessage('');}}>切换到此账号</button>
    {selected===a.id&&<form onSubmit={e=>{e.preventDefault();void act();}}>{provider==='claude'?<><label htmlFor="native-model">默认模型</label><select id="native-model" value={model} disabled={busy} onChange={e=>setModel(e.target.value)}>{a.models.map(m=><option key={m} value={m}>{modelLabel(local.models,m)}</option>)}</select></>:<p>将反重力的本机登录切换到 {a.label}。</p>}<div className="actions"><button type="button" disabled={busy} onClick={()=>setSelected('')}>取消</button><button className="primary" disabled={blocked||provider==='claude'&&!a.models.includes(model)}>{busy?'正在切换…':'确认切换'}</button></div></form>}
   </article>;})}</div>
-  {!accounts.length&&<div className="empty"><p>{local.state==='running'?`还没有可切换的 ${name} 授权。`:'正在等待网关加载已保存的授权…'}</p><button onClick={onAccounts}>前往模型中心</button></div>}
+  {!accounts.length&&<div className="empty"><p>{local.state==='running'?`还没有可切换的 ${name} 授权。`:'正在等待网关加载已保存的授权…'}</p><button onClick={onAccounts}>前往模型来源</button></div>}
  </section>;
 }

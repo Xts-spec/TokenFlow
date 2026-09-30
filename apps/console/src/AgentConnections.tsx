@@ -33,7 +33,7 @@ export function AgentConnections({local,preferredModel,preferredKind='codex',onK
    }else setStatus('Key 认证通过，所选模型已授权。未发起模型调用。');
   }catch(e){setStatus(e instanceof Error?e.message:'连接测试失败');}finally{setBusy(false);}
  };
- return <div className="agentConnections"><div className="gatewayHero"><div><span className="eyebrow">CONNECT YOUR AGENTS</span><h1>一个网关，各自熟悉的接口。</h1><p>为每个 Agent 分配独立 Key，选择模型，复制配置后接入。</p></div><button onClick={onKeys}><Icon name="shield" size={16}/>管理 Agent Key</button></div>
+ return <div className="agentConnections"><div className="gatewayHero"><div><h1>手动配置 Agent</h1><p>为每个 Agent 分配独立 Key，选择模型，复制配置后接入。</p></div><button onClick={onKeys}><Icon name="shield" size={16}/>客户端访问密钥（高级）</button></div>
   {error&&<p className="notice" role="alert">{error}</p>}
   <div className="agentChoices">{agentCatalog.map(item=><button key={item.id} aria-pressed={kind===item.id} onClick={()=>{setKind(item.id);changed();}}><span className="agentLetter">{item.id==='codex'?'C':item.id==='claude'?'✳':'{}'}</span><span><strong>{item.name}</strong><small>{item.protocol}</small></span><Icon name="arrow" size={17}/></button>)}</div>
   <div className="agentSetup"><section className="agentSetupForm"><div className="sectionTitle"><h2>{agent.name} 接入配置</h2><span>{agent.protocol}</span></div><p className="hint">{agent.description}</p>

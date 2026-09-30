@@ -319,7 +319,7 @@ export async function createDesktopService(options:ServiceOptions) {
   app.post('/api/a2a/import',async req=>{
     await idle();const {target}=z.object({target:z.enum(['codex','claude'])}).strict().parse(req.body);
     try{return await proxy.importCredential(target,await localCredential(target,connections.paths));}
-    catch(error){throw Object.assign(new Error(error instanceof z.ZodError?'本地凭据不是支持的 OAuth 格式，请通过模型中心授权。':error instanceof Error?error.message:'导入失败'),{statusCode:400});}
+    catch(error){throw Object.assign(new Error(error instanceof z.ZodError?'本地凭据不是支持的 OAuth 格式，请通过模型来源授权。':error instanceof Error?error.message:'导入失败'),{statusCode:400});}
   });
   app.post('/api/a2a/connect',async req=>{
     await idle();
@@ -328,7 +328,7 @@ export async function createDesktopService(options:ServiceOptions) {
     const record=await applyConnection(input,`http://${req.headers.host}`);
     maintenanceOrigin=`http://${req.headers.host}`;
     let review:{status:string;message:string}={status:'not_configured',message:'可先指定维修师傅，再检查这次接入。'};
-    if(maintenance.snapshot().selection)review={status:'deferred',message:'接入已完成。维修模型还未通过检测，可在首页点击“检测连接”。'};
+    if(maintenance.snapshot().selection)review={status:'deferred',message:'接入已完成。维修模型还未通过检测，可在维修抽屉点击“检测维修模型”。'};
     if(maintenance.snapshot().readiness.status==='ready'){try{startMaintenance(`请 review 刚完成的 ${record.target} 接入（记录 ${record.id}），核对所选模型、接口、辅助模型、Key 权限与备份，并说明是否需要重启或手动选模型。仅做只读检查，不要还原。`,false,{target:record.target,sourceId:record.sourceId,model:record.model,connectionId:record.id});review={status:'running',message:'维修师傅正在检查这次接入。'};}catch{review={status:'deferred',message:'配置已接入，维修检查暂未开始，可点击“请师傅复查”重试。'};}}
     return {...record,review};
   });
