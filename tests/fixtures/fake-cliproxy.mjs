@@ -4,7 +4,8 @@ import { createServer } from 'node:http';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
-const config = readFileSync(process.argv[process.argv.indexOf('-config') + 1], 'utf8');
+const configPath=process.argv[process.argv.indexOf('-config') + 1];
+const config = readFileSync(configPath, 'utf8');
 const port = Number(config.match(/^port: (\d+)/m)[1]);
 const key = JSON.parse(config.match(/^  - (.+)/m)[1]);
 const managementKey = JSON.parse(config.match(/^  secret-key: (.+)/m)[1]);
@@ -29,12 +30,15 @@ const server = createServer(async(req,res) => {
  }
  const management=url.pathname.startsWith('/v0/management/');
  if(req.headers.authorization!==`Bearer ${management?managementKey:key}`)return send(401,{error:'denied'});
+ const liveConfig=readFileSync(configPath,'utf8');
+ const apiEntries=['codex-api-key','claude-api-key','openai-compatibility'].flatMap(name=>JSON.parse(liveConfig.match(new RegExp('^'+name+': (.+)','m'))?.[1]??'[]'));
+ const apiModels=apiEntries.flatMap(s=>s.models??[]).map(m=>({id:m.alias,object:'model',owned_by:'api'}));
  const path=url.pathname.replace('/v0/management','').replace('/v1','');
  // Mirrors upstream /v1/models: each enabled account contributes a model carrying its provider `type`.
  const modelTypes={codex:'openai',claude:'claude',antigravity:'antigravity',kimi:'kimi',xai:'xai',qoder:'qoder',workbuddy:'workbuddy',zcode:'zcode',doubao:'doubao',trae:'trae'};
  const accountModels = a => (a.models ?? [`fixture-${a.provider}-model`]).flatMap(entry => {const {id,...meta}=typeof entry==='string'?{id:entry}:entry;return [{id,...meta,object:'model',type:modelTypes[a.provider],owned_by:a.provider==='codex'?'openai':a.provider}, ...(aliases[a.provider] ?? []).filter(alias=>alias.name===id).map(alias=>({id:alias.alias,...meta,object:'model',type:modelTypes[a.provider],owned_by:a.provider}))];});
  if((path==='/models'||path==='/auth-files/models')&&Date.now()-fixtureStarted<(fixtureOptions.modelDelayMs??0))return send(200,path==='/models'?{data:[]}:{models:[]});
- if(path==='/models')return send(200,{data:[...new Map(accounts.filter(a=>!a.disabled).flatMap(accountModels).map(m=>[m.id,m])).values()]});
+ if(path==='/models')return send(200,{data:[...apiModels,...new Map(accounts.filter(a=>!a.disabled).flatMap(accountModels).map(m=>[m.id,m])).values()]});
  if(path==='/auth-files/models')return send(200,{models:accounts.filter(a=>a.name===url.searchParams.get('name')&&!a.disabled).flatMap(accountModels)});
  if(path==='/oauth-model-alias') {
   if(req.method==='PUT'){let body='';for await(const c of req)body+=c;aliasWrites++;if(aliasWrites<=(fixtureOptions.failAliasWrites??0))return send(503,{error:'fixture transient alias registration failure'});aliases=JSON.parse(body);}
@@ -42,6 +46,8 @@ const server = createServer(async(req,res) => {
  }
  if(['/responses','/responses/compact','/messages','/messages/count_tokens','/chat/completions'].includes(path)) {
   let body='';for await(const c of req)body+=c;const input=JSON.parse(body);
+  const apiSource=apiEntries.find(s=>s.models?.some(m=>m.alias===input.model));
+  if(apiSource){const model=apiSource.models.find(m=>m.alias===input.model).name;const upstream=await fetch(`${apiSource['base-url']}${path}`,{method:'POST',headers:{authorization:`Bearer ${apiSource['api-key']??apiSource['api-key-entries'][0]['api-key']}`,'content-type':'application/json'},body:JSON.stringify({...input,model})});res.statusCode=upstream.status;res.setHeader('content-type',upstream.headers.get('content-type')??'application/json');res.end(Buffer.from(await upstream.arrayBuffer()));return;}
   const account=accounts.find(a=>!a.disabled&&(!req.headers['x-token-flow-auth']||a.name===req.headers['x-token-flow-auth'])&&accountModels(a).some(m=>m.id===input.model));
   if(!account)return send(404,{error:'model unavailable'});
   if(fixtureMode==='region-restricted')return send(400,{error:{message:'User location is not supported for the API use.',debug:'upstream-secret-never-expose'}});

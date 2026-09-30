@@ -1,4 +1,4 @@
-import { modelLabel } from './model-label';
+import { qualifiedModelLabel } from './model-label';
 import { copyText } from './clipboard';
 import { useState } from 'react';
 import type { LocalAgentSnapshot } from '../../../packages/core/src/cliproxy';
@@ -40,7 +40,7 @@ export function AgentConnections({local,preferredModel,preferredKind='codex',onK
    {kind==='cursor'&&<label>外网 HTTPS 网关地址<input type="url" value={publicOrigin} onChange={e=>{setPublicOrigin(e.target.value);changed();}} placeholder="https://your-gateway.example.com"/><small>使用你已部署的网关地址。本页不会发布本机服务，也不会替你修改 Cursor 的设置。</small></label>}
    <label>Agent 访问 Key<select aria-label="Agent 访问 Key" value={key?.id??''} disabled={busy} onChange={e=>{setKeyId(e.target.value);setSelectedModel('');setCredential('');changed();}}><option value="" disabled>选择已创建的 Key</option>{keys.map(k=><option key={k.id} value={k.id}>{k.name} · {k.enabled?`${k.models.length} 个授权模型`:'已停用'}</option>)}</select></label>
    {!keys.length&&<p className="hint">尚无访问凭据。<button className="textButton" onClick={onKeys}>创建第一把 Key →</button></p>}
-   <label>调用模型<select aria-label="调用模型" value={model} disabled={busy||!models.length} onChange={e=>{setSelectedModel(e.target.value);changed();}}><option value="" disabled>选择此 Key 已授权的模型</option>{models.map(m=><option key={m.id} value={m.id}>{modelLabel(local.models,m.id)}</option>)}</select></label>
+   <label>调用模型<select aria-label="调用模型" value={model} disabled={busy||!models.length} onChange={e=>{setSelectedModel(e.target.value);changed();}}><option value="" disabled>选择此 Key 已授权的模型</option>{models.map(m=><option key={m.id} value={m.id}>{qualifiedModelLabel(local,m.id)}</option>)}</select></label>
    {!models.length&&<p className="hint">模型需同时满足账号可用和 Key 授权。<button className="textButton" onClick={onAccounts}>查看厂商账号 →</button></p>}
    {key&&!permitted&&<p className="notice">该 Key 未授权此 Agent 类型，请在 Key 管理中调整协议范围。</p>}
    {key&&key.tokenLimit!==null&&<p className="hint">额度：已用 {key.usedTokens.toLocaleString()} / {key.tokenLimit.toLocaleString()} tokens{key.unmeteredRequests?' · 用量待核对，已暂停消费':''}</p>}

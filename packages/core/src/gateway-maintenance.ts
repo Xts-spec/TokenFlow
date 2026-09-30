@@ -18,8 +18,8 @@ export type MaintenanceReadiness={status:'unchecked'|'checking'|'ready'|'failed'
 function failure(error:unknown){
  const text=error instanceof Error?error.message:String(error);
  const code=text.match(/\b(401|403|404|429|500|502|503|504)\b/)?.[1];
- if(code==='401')return '授权已过期（HTTP 401），请重新登录所选源账号。';
- if(code==='403')return '模型访问被拒绝（HTTP 403），请检查所选账号和模型权限。';
+ if(code==='401')return '授权未通过（HTTP 401），请检查所选来源的密钥、账号授权或客户端 Key。';
+ if(code==='403')return '模型访问被拒绝（HTTP 403），请检查所选来源和模型权限。';
  if(code==='429')return '额度不足或请求过于频繁（HTTP 429），请稍后重试或更换模型。';
  if(code)return `网关或上游请求失败（HTTP ${code}），请检查网关或更换维修模型。`;
  if(/no.events|empty|malformed|before completion|no model events/i.test(text))return '模型未返回完整响应，请重启 token-flow 加载最新网关后重新检测。';

@@ -1,0 +1,139 @@
+import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { mkdir, readFile, writeFile, rename, copyFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createServer, type Server } from 'node:http';
+import { Readable } from 'node:stream';
+import { z } from 'zod';
+import { providerSchema, type ProviderConfig } from './providers.js';
+import { RunnerCoreError } from './errors.js';
+import { upstreamIdle } from './upstream-idle.js';
+import type { Secrets } from './service.js';
+
+const modelID=z.string().trim().min(1).max(200).refine(v=>!/[\x00-\x1f\x7f]/.test(v));
+export const apiSourceInput=z.object({name:z.string().trim().min(1).max(80),baseURL:providerSchema.shape.baseURL,
+ protocol:z.enum(['responses','chat','messages']),enabled:z.boolean().default(true),models:z.array(modelID).max(2000).transform(v=>[...new Set(v)]),
+ apiKey:z.string().trim().min(1).max(4096).refine(v=>!/[\r\n]/.test(v)).optional(),acknowledge:z.boolean().optional()}).strict();
+const evidence=z.object({status:z.enum(['passed','failed']),checkedAt:z.string(),message:z.string()});
+const storedSource=apiSourceInput.omit({apiKey:true,acknowledge:true}).extend({id:z.string().regex(/^[a-f0-9]{24}$/),credentialRef:z.string().regex(/^source-[a-f0-9]{24}-[a-f0-9]{16}$/),createdAt:z.string(),checks:z.record(evidence).default({})});
+type StoredSource=z.infer<typeof storedSource>;
+export type ApiSource=Omit<StoredSource,'credentialRef'> & {hasKey:boolean};
+export const apiModelID=(sourceId:string,upstream:string)=>`api-${sourceId}/${upstream}`;
+const conflict=(message:string)=>new RunnerCoreError(message,{statusCode:409,code:'api_source_conflict'});
+const LIMIT=16*1024*1024;
+function safeSourceStream(body:ReadableStream<Uint8Array>){
+ const decoder=new TextDecoder(),encoder=new TextEncoder();let buffer='';
+ const safe=(frame:string)=>{
+  const data=frame.split('\n').filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trimStart()).join('\n');
+  if(!data||data==='[DONE]')return frame+'\n\n';
+  let failed=false;try{const value=JSON.parse(data);failed=value?.type==='error'||value?.type==='response.failed'||!!value?.error||!!value?.response?.error;}catch{failed=true;}
+  return failed?'event: error\ndata: '+JSON.stringify({type:'error',code:'api_source_error',message:'API source stream failed',error:{type:'api_error',message:'API source stream failed'}})+'\n\n':frame+'\n\n';
+ };
+ return body.pipeThrough(new TransformStream<Uint8Array,Uint8Array>({
+  transform(chunk,out){buffer+=decoder.decode(chunk,{stream:true});buffer=buffer.replace(/\r\n/g,'\n');let end:number;while((end=buffer.indexOf('\n\n'))!==-1){const frame=buffer.slice(0,end);if(Buffer.byteLength(frame)>LIMIT)throw new Error('Source event too large');buffer=buffer.slice(end+2);out.enqueue(encoder.encode(safe(frame)));}if(Buffer.byteLength(buffer)>LIMIT)throw new Error('Source event too large');},
+  flush(out){buffer+=decoder.decode();if(buffer.trim())out.enqueue(encoder.encode(safe(buffer)));}
+ }));
+}
+
+/** The sidecar sees only a loopback relay credential, never an upstream API key.
+ * Its existing translators still handle Responses, Chat and Messages. */
+export class ApiSources {
+ private entries:StoredSource[]=[];
+ private server?:Server;
+ private relayURL='';
+ private relayKey=randomBytes(32).toString('hex');
+ private requests=new Set<ReturnType<typeof upstreamIdle>>();
+ private migration?:string;
+ private migrationWarning?:string;
+ warnings(){return this.migrationWarning?[this.migrationWarning]:[];}
+ private constructor(private root:string,private secrets:Secrets){}
+ static async open(root:string,secrets:Secrets,legacy:ProviderConfig){
+  const store=new ApiSources(root,secrets);
+  try{const data=z.object({version:z.literal(1),sources:z.array(storedSource),migration:z.string().optional()}).strict().parse(JSON.parse(await readFile(join(root,'api-sources.json'),'utf8')));if(new Set(data.sources.map(s=>s.id)).size!==data.sources.length||data.sources.some(s=>!s.credentialRef.startsWith(`source-${s.id}-`)))throw new Error('Invalid source identity');store.entries=data.sources;store.migration=data.migration;}
+  catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw new Error('API 来源文件无法读取；已保留原文件，请检查 api-sources.json。');}
+  if(secrets.persistent!==false&&!store.migration&&legacy.kind!=='cliproxy'){
+   const key=await secrets.get(legacy.kind);
+   if(key)try{
+    const backup=join(root,'backups','api-sources-migration');await mkdir(backup,{recursive:true,mode:0o700});
+    await copyFile(join(root,'settings.json'),join(backup,'settings.json'));
+    try{await copyFile(join(root,'api-sources.json'),join(backup,'api-sources.json'));}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}
+    // Copy ciphertext only; the legacy slot remains usable for rollback.
+    try{await copyFile(join(root,'secrets',`${legacy.kind}.bin`),join(backup,`${legacy.kind}.bin`));}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}
+    store.migration=legacy.kind;
+    await store.save({name:'迁移的 API 来源',baseURL:legacy.baseURL,protocol:'responses',models:legacy.model?[legacy.model]:[],apiKey:key});
+   }catch{store.migration=undefined;store.migrationWarning='旧 API 配置尚未迁移到模型来源，原配置和密钥已保留。请解锁系统安全存储后重启，或在模型来源手动添加。';}
+  }
+  await store.listen();return store;
+ }
+ private persist(){const path=join(this.root,'api-sources.json');return writeFile(`${path}.tmp`,JSON.stringify({version:1,sources:this.entries,migration:this.migration},null,2),{mode:0o600}).then(()=>rename(`${path}.tmp`,path));}
+ async list():Promise<ApiSource[]>{return Promise.all(this.entries.map(async({credentialRef,...s})=>({...structuredClone(s),hasKey:!!await this.secrets.get(credentialRef)})));}
+ has(id:string){return this.entries.some(s=>s.id===id);}
+ sourceFor(model:string){return this.entries.find(s=>s.models.some(m=>apiModelID(s.id,m)===model));}
+ assert(id:string,model:string){const s=this.entries.find(s=>s.id===id);if(!s?.enabled||!s.models.some(m=>apiModelID(id,m)===model))throw conflict('API 来源已停用、删除或未保存此模型；不会切换到其他来源。');return s;}
+ /** Keep native API fields (including output limits) when no translation is needed. */
+ async response(id:string,path:string,body:{model:string},signal:AbortSignal,headers:Record<string,string>={}){
+  const s=this.assert(id,body.model);const model=s.models.find(m=>apiModelID(id,m)===body.model)!;
+  return fetch(`${this.relayURL}/${id}/v1/${path}`,{method:'POST',headers:{...headers,authorization:`Bearer ${this.relayKey}`,'content-type':'application/json'},body:JSON.stringify({...body,model}),signal,redirect:'error'});
+ }
+ async save(input:z.input<typeof apiSourceInput>,id?:string){
+  const value=apiSourceInput.parse(input);const old=id?this.entries.find(s=>s.id===id):undefined;if(id&&!old)throw conflict('API 来源已变更，请刷新。');
+  const {apiKey,acknowledge:_ack,...fields}=value;if(apiKey&&this.secrets.persistent===false)throw new RunnerCoreError('此服务没有持久化安全密钥存储，请在桌面版添加 API 来源。',{statusCode:400,code:'credential_storage_unavailable'});const sourceId=old?.id??randomBytes(12).toString('hex');
+  if(!old&&!apiKey)throw conflict('新来源需要 API Key。');
+  const ref=apiKey?`source-${sourceId}-${randomBytes(8).toString('hex')}`:old!.credentialRef;
+  if(apiKey)try{await this.secrets.set(ref,apiKey);}catch{throw new RunnerCoreError('API 密钥无法写入系统加密存储，请解锁安全存储后重试。原来源已保留。',{statusCode:400,code:'credential_storage_unavailable'});}
+  const changed=apiKey||old?.baseURL!==value.baseURL||old?.protocol!==value.protocol;
+  const source:StoredSource={...fields,id:sourceId,credentialRef:ref,createdAt:old?.createdAt??new Date().toISOString(),checks:changed?{}:Object.fromEntries(Object.entries(old?.checks??{}).filter(([m])=>fields.models.includes(m)))};
+  const previous=this.entries;this.entries=[...previous.filter(s=>s.id!==sourceId),source];
+  try{await this.persist();}catch(e){this.entries=previous;if(apiKey)await this.secrets.remove?.(ref);throw e;}
+  // Old encrypted revisions are retained so an interrupted migration/edit is recoverable.
+  return (await this.list()).find(s=>s.id===sourceId)!;
+ }
+ async remove(id:string){const old=this.entries;this.entries=old.filter(s=>s.id!==id);try{await this.persist();}catch(e){this.entries=old;throw e;}const s=old.find(s=>s.id===id);if(s)await this.secrets.remove?.(s.credentialRef);}
+ async record(id:string,model:string,passed:boolean,message:string){const s=this.assert(id,model);const upstream=s.models.find(m=>apiModelID(id,m)===model)!;const old=this.entries;this.entries=old.map(entry=>entry.id===id?{...entry,checks:{...entry.checks,[upstream]:{status:passed?'passed':'failed',checkedAt:new Date().toISOString(),message}}}:entry);try{await this.persist();}catch(e){this.entries=old;throw e;}}
+ async models(id:string){const s=this.entries.find(s=>s.id===id);if(!s)throw conflict('来源不存在');const key=await this.secrets.get(s.credentialRef);if(!key)throw conflict('API 密钥暂不可读取，请解锁系统安全存储或重新填写。');
+  try{const r=await fetch(`${s.baseURL.replace(/\/$/,'')}/models`,{headers:s.protocol==='messages'?{'x-api-key':key,'anthropic-version':'2023-06-01'}:{Authorization:`Bearer ${key}`},signal:AbortSignal.timeout(15000),redirect:'error'});if(!r.ok){await r.body?.cancel();throw new Error();}const data=await this.boundedJSON(r);return z.object({data:z.array(z.object({id:modelID})).max(2000)}).parse(data).data.map(m=>m.id);}
+  catch{throw new RunnerCoreError('无法读取模型列表，请检查地址和权限，或手动添加模型 ID。',{statusCode:400,code:'api_models_unavailable'});}
+ }
+ private async boundedJSON(r:Response){let bytes=0;const chunks:Uint8Array[]=[];for await(const c of Readable.fromWeb(r.body as never)){bytes+=c.length;if(bytes>LIMIT)throw new Error('Response too large');chunks.push(c);}return JSON.parse(Buffer.concat(chunks).toString());}
+ sidecarConfig(){
+  const chat:unknown[]=[],responses:unknown[]=[],messages:unknown[]=[];
+  for(const s of this.entries.filter(s=>s.enabled&&s.models.length)){
+   const common={'base-url':`${this.relayURL}/${s.id}${s.protocol==='messages'?'':'/v1'}`,models:s.models.map(name=>({name,alias:apiModelID(s.id,name),'force-mapping':true})),'request-retry':0,'disable-cooling':true};
+   if(s.protocol==='chat')chat.push({...common,name:`api-${s.id}`,'api-key-entries':[{'api-key':this.relayKey}]});
+   else (s.protocol==='responses'?responses:messages).push({...common,'api-key':this.relayKey});
+  }
+  return `openai-compatibility: ${JSON.stringify(chat)}\ncodex-api-key: ${JSON.stringify(responses)}\nclaude-api-key: ${JSON.stringify(messages)}\n`;
+ }
+ private async listen(){
+  this.server=createServer(async(req,res)=>{
+   const idle=upstreamIdle();this.requests.add(idle);res.once('close',()=>{idle.abort();this.requests.delete(idle);});
+   const fail=(status:number,message:string)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify({error:{message,type:'api_source_error'}}));};
+   try{
+    const token=req.headers.authorization?.replace(/^Bearer /,'')??(typeof req.headers['x-api-key']==='string'?req.headers['x-api-key']:'');
+    const a=Buffer.from(token),b=Buffer.from(this.relayKey);
+    if(a.length!==b.length||!timingSafeEqual(a,b)||req.headers.origin){fail(401,'Private source relay');return;}
+    const requestURL=new URL(req.url??'',this.relayURL);
+    if(requestURL.search&&requestURL.search!=='?beta=true'){fail(400,'Source query unsupported');return;}
+    const match=/^\/([a-f0-9]{24})\/(?:v1\/)?(chat\/completions|responses(?:\/compact)?|messages(?:\/count_tokens)?)$/.exec(requestURL.pathname);
+    const s=match&&this.entries.find(s=>s.id===match[1]);
+    if(!s?.enabled||req.method!=='POST'){fail(503,'Source unavailable');return;}
+    const allowed=s.protocol==='chat'?['chat/completions']:s.protocol==='responses'?['responses','responses/compact']:['messages','messages/count_tokens'];
+    if(!allowed.includes(match![2])){fail(400,'Source protocol mismatch');return;}
+    let bytes=0;const chunks:Buffer[]=[];for await(const c of req){bytes+=c.length;if(bytes>LIMIT){fail(413,'Source request too large');return;}chunks.push(c);}
+    const body=JSON.parse(Buffer.concat(chunks).toString());if(!s.models.includes(body.model)){fail(403,'Source model mismatch');return;}
+    const key=await this.secrets.get(s.credentialRef);if(!key){fail(503,'Encrypted API credential unavailable');return;}
+    const headers:Record<string,string>={'content-type':'application/json',...(s.protocol==='messages'?{'x-api-key':key,'anthropic-version':typeof req.headers['anthropic-version']==='string'?req.headers['anthropic-version']:'2023-06-01'}:{Authorization:`Bearer ${key}`})};
+    // Forward only protocol headers, never local routing or administrator credentials.
+    if(s.protocol==='messages'&&typeof req.headers['anthropic-beta']==='string')headers['anthropic-beta']=req.headers['anthropic-beta'];
+    const r=idle.watch(await fetch(`${s.baseURL.replace(/\/$/,'')}/${match![2]}${s.protocol==='messages'?requestURL.search:''}`,{method:'POST',headers,body:JSON.stringify(body),redirect:'error',signal:idle.signal}));
+    if(!r.ok){await r.body?.cancel();fail(r.status,'API source request failed');return;}
+    res.writeHead(r.status,{'content-type':r.headers.get('content-type')??'application/json','cache-control':'no-store'});
+    if(!r.body){res.end();return;}
+    const stream=Readable.fromWeb(((r.headers.get('content-type')??'').includes('text/event-stream')?safeSourceStream(r.body):r.body) as never);stream.once('error',()=>res.destroy());stream.pipe(res);
+   }catch{if(res.headersSent)res.destroy();else fail(502,'API source unavailable or timed out');}finally{if(res.writableEnded)idle.close();}
+  });
+  this.server.requestTimeout=30000;this.server.headersTimeout=15000;
+  await new Promise<void>((ok,bad)=>{this.server!.once('error',bad);this.server!.listen(0,'127.0.0.1',ok);});
+  this.relayURL=`http://127.0.0.1:${(this.server.address() as {port:number}).port}`;
+ }
+ async close(){for(const r of this.requests)r.abort();this.server?.closeAllConnections();if(this.server)await new Promise<void>(r=>this.server!.close(()=>r()));}
+}

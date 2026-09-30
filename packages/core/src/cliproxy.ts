@@ -2,11 +2,12 @@ import { retryQuotaCall, QuotaTransportError, transientQuotaStatus } from './quo
 import { nativeCredentialSchema, nativeConflict, type NativeProvider } from './native-accounts.js';
 import { readConfig } from './agent-connections.js';
 import { CursorProvider,cursorCatalog } from './cursor.js';
+import { RunnerCoreError } from './errors.js';
 // Router 层：受管 CLIProxyAPI 进程、管理接口、已保存账号与模型路由表。
 // 对话层始终发送 Responses 请求到 127.0.0.1:<port>/v1；CLIProxyAPI 按模型转换为各家协议，
 // 并路由到登录层保存的账号。登录流程本身见 ./login。
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdir, writeFile, chmod, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, chmod, readFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
 import { createHash, randomBytes } from 'node:crypto';
@@ -23,6 +24,7 @@ const accountSchema = z.object({
   id: z.string().optional(), name: z.string(), provider: z.string().optional(), type: z.string().optional(),
   status_message: z.string().optional(), email: z.string().optional(), label: z.string().optional(), status: z.string().optional(),
   disabled: z.boolean().optional(), unavailable: z.boolean().optional(),
+  runtime_only: z.boolean().optional(),
   // 额度查询所需的非敏感字段；auth_index 只留在进程内，不进快照。
   auth_index: z.union([z.string(), z.number()]).optional(), project_id: z.string().optional(), account_type: z.string().optional(),
   id_token: z.object({chatgpt_account_id: z.string().optional(), plan_type: z.string().optional()}).passthrough().optional(),
@@ -32,8 +34,8 @@ const apiCallSchema = z.object({status_code: z.number().int(), header: z.record(
 export function revokedCredential(file:{status?:string;status_message?:string}){return file.status==='error'&&/\b(?:invalid_grant|refresh_token_revoked|refresh_token_reused|refresh_token_expired)\b/i.test(file.status_message??'');}
 export type LocalAccount = {id: string; provider: string; label: string; status: string; disabled: boolean; unavailable: boolean; isDuplicate?: boolean; modelError?:string; models?: string[]};
 /** `provider` 为承接该模型的登录 Provider；未知类型（如 Gemini API Key）为空。 */
-export type LocalModel = {id: string; displayName?: string; provider?: LoginProviderId | 'cursor';textOnly?:boolean;capabilities?:{text:boolean;tools:boolean;images:boolean}};
-export type CLIProxyOptions = LoginOptions & {secrets?:{get:(name:string)=>Promise<string>;set:(name:string,value:string)=>Promise<void>}};
+export type LocalModel = {id: string; displayName?: string; provider?: LoginProviderId | 'cursor' | 'api';textOnly?:boolean;capabilities?:{text:boolean;tools:boolean;images:boolean}};
+export type CLIProxyOptions = LoginOptions & {secrets?:{get:(name:string)=>Promise<string>;set:(name:string,value:string)=>Promise<void>};apiConfig?:()=>string};
 
 export class CLIProxyManager {
   readonly cursor:CursorProvider;
@@ -60,6 +62,8 @@ export class CLIProxyManager {
   private quotas: Record<string, AccountQuota> = {};
   private quotaBusy = false;
   private models: LocalModel[] = [];
+  private apiModels=new Set<string>();
+  apiModelAvailable(id:string){return this.state==='running'&&this.apiModels.has(id);}
   private accountError?: string;
   private readonly login_: LoginController;
   constructor(readonly root: string, readonly binary: string, private key: string,
@@ -105,8 +109,18 @@ export class CLIProxyManager {
     await chmod(dir, 0o700);
     // Upstream management stays on loopback. Neither key is returned to the renderer.
     const yaml = `host: "127.0.0.1"\nport: ${this.port}\nauth-dir: ${JSON.stringify(join(dir, 'auth'))}\napi-keys:\n  - ${JSON.stringify(this.key)}\nremote-management:\n  allow-remote: false\n  secret-key: ${JSON.stringify(this.managementKey)}\n  disable-control-panel: true\ndebug: false\nlogging-to-file: false\nrequest-log: false\nrequest-retry: 0\noauth-model-alias: ${JSON.stringify(this.aliases)}\n`;
-    await writeFile(this.configPath, yaml, {mode: 0o600});
+    await writeFile(this.configPath+'.tmp', yaml+(this.options.apiConfig?.()??''), {mode: 0o600});
+    await rename(this.configPath+'.tmp',this.configPath);
     await chmod(this.configPath, 0o600);
+  }
+  async synchronizeAPIModels(ids:string[]) {
+    await this.configure();
+    if(this.state!=='running'||!ids.length)return;
+    for(let attempt=0;attempt<40;attempt++){
+      try{const live=z.object({data:z.array(modelSchema)}).parse(await this.request('/models','GET',undefined,false,1500));this.apiModels=new Set(live.data.filter(m=>/^api-[a-f0-9]{24}\//.test(m.id)).map(m=>m.id));if(ids.every(id=>this.apiModels.has(id)))return;}catch{/* A reload may briefly stop serving. */}
+      await new Promise(r=>setTimeout(r,100));
+    }
+    throw new RunnerCoreError('API 来源已保存，但网关模型路由尚未同步。请稍后重新保存，或重启网关；不会切换到其他来源。',{statusCode:503,code:'api_routes_pending'});
   }
   private async request(path: string, method = 'GET', body?: unknown, management = true, timeoutMs = 10000): Promise<unknown> {
     const response = await fetch(`http://127.0.0.1:${this.port}${management ? '/v0/management' : '/v1'}${path}`, {
@@ -236,7 +250,7 @@ export class CLIProxyManager {
           await this.request(`/auth-files?name=${encodeURIComponent(file.name)}`,'DELETE');removed.add(file.name);
         }catch{/* Keep the credential if archival or removal fails; never log its contents. */}
       }
-      result.files=result.files.filter(file=>!removed.has(file.name));
+      result.files=result.files.filter(file=>!removed.has(file.name)&&!file.runtime_only);
       const names = new Map<string, string>();
       const authIDs = new Map<string,string>();
       const quotaTargets = new Map<string, {authIndex: string; account: QuotaAccount}>();
@@ -292,6 +306,7 @@ export class CLIProxyManager {
         const live = z.object({data: z.array(modelSchema)}).parse(await this.request('/models', 'GET', undefined, false));
         for (const model of live.data) {
           if (!model.id) continue;
+          if(/^api-[a-f0-9]{24}\//.test(model.id))continue;
           let provider: LoginProviderId | undefined;
           let baseId = model.id;
           if (model.id.includes('/')) {
@@ -335,6 +350,7 @@ export class CLIProxyManager {
         await new Promise(r => setTimeout(r, 100));
       }
       this.models = [...catalog.values()].filter(m => available.has(m.id)).sort((a,b) => a.id.localeCompare(b.id));
+      this.apiModels=new Set([...available].filter(id=>/^api-[a-f0-9]{24}\//.test(id)));
       this.accountError = this.models.length < catalog.size ? '模型路由正在同步，网关会自动重试。' : accounts.some(a=>!a.disabled&&!a.unavailable&&!a.models?.length) ? '授权已读取，正在同步可用模型…' : undefined;
       // Load quotas after startup / new login without delaying account discovery or the workspace.
       void (this.quotaTask ?? Promise.resolve()).then(() => {
@@ -495,4 +511,4 @@ export class CLIProxyManager {
   async shutdown() {this.closing = true;await this.cursor.close(); this.login_.close(); await this.stop(); await this.refreshTask?.catch(() => undefined); await this.quotaTask?.catch(() => undefined);}
 }
 
-export type LocalAgentSnapshot = ReturnType<CLIProxyManager['snapshot']>;
+export type LocalAgentSnapshot = ReturnType<CLIProxyManager['snapshot']> & {apiSources?:import('./api-sources.js').ApiSource[]};

@@ -32,7 +32,8 @@ export function GatewayKeysPane({local}:{local:LocalAgentSnapshot}) {
   const currentModels=local.models.map(m=>m.id);
   const allIds=[...new Set([...currentModels,...(editing?.models??[])])];
   const toggle=(ids:string[])=>setSelected(current=>ids.every(id=>current.includes(id))?current.filter(id=>!ids.includes(id)):[...new Set([...current,...ids])]);
-  const groups=local.providers.map(provider=>({...provider,models:allIds.filter(id=>id.startsWith(`${provider.id}/`))})).filter(provider=>provider.models.length);
+  const providers=[...local.providers,...(local.apiSources??[]).map(s=>({id:`api-${s.id}`,label:s.name+' · API'}))];
+  const groups=providers.map(provider=>({...provider,models:allIds.filter(id=>id.startsWith(`${provider.id}/`))})).filter(provider=>provider.models.length);
   const visible=groups.filter(group=>`${group.id} ${group.label}`.toLowerCase().includes(query.toLowerCase())||group.models.some(id=>`${id} ${modelLabel(local.models,id)}`.toLowerCase().includes(query.toLowerCase())));
   const save=()=>act(async()=>{
     const input={name,enabled:editing?.enabled??true,models:selected,agents,tokenLimit:limit.trim()===''?null:Number(limit)};

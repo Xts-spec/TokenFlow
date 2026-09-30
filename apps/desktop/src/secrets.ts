@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { copyFile, readFile, writeFile, rename } from 'node:fs/promises';
+import { copyFile, readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -13,15 +13,16 @@ type Storage = {
 export function createSecrets(root:string, storage:Storage, platform=process.platform) {
   const unreadable=new Set<string>();
   const warnings=new Map<string,string>();
-  const label=(name:string)=>({cliproxy:'内部网关',openai:'OpenAI',custom:'自定义接口','cursor-account':'Cursor 账号'}[name]??name);
+  const label=(name:string)=>name.startsWith('source-')?'API 来源':({cliproxy:'内部网关',openai:'OpenAI',custom:'自定义接口','cursor-account':'Cursor 账号'}[name]??name);
   const path=(name:string)=>{
-    if(!['cliproxy','openai','custom','cursor-account'].includes(name))throw new Error('未知密钥类型');
+    if(!['cliproxy','openai','custom','cursor-account'].includes(name)&&!/^source-[a-f0-9]{24}-[a-f0-9]{16}$/.test(name))throw new Error('未知密钥类型');
     return join(root,'secrets',`${name}.bin`);
   };
   const canEncrypt=()=>storage.isEncryptionAvailable()&&!(platform==='linux'&&storage.getSelectedStorageBackend?.()==='basic_text');
   return {
     canEncrypt,
     warnings:()=>[...warnings.values()],
+    async remove(name:string) {await rm(path(name),{force:true});warnings.delete(name);},
     temporaryGateway:()=>warnings.set('cliproxy','系统安全密钥存储不可用，内部网关本次使用临时密钥；重启后会变化。原有登录账号和客户端 Key 不受影响。'),
     async get(name:string) {
       let data:Buffer;
@@ -34,7 +35,7 @@ export function createSecrets(root:string, storage:Storage, platform=process.pla
       try{return storage.decryptString(data);}
       catch {
         unreadable.add(name);
-        warnings.set(name,`${label(name)}密钥无法解密，原加密文件已保留。${name==='cliproxy'?'已重新生成内部网关密钥，旧的内部直连客户端需更新密钥；账号登录和受限客户端 Key 不受影响。':'请解锁系统钥匙串后重启，或在「模型中心 → 接口与能力」重新填写 API Key。'}`);
+        warnings.set(name,`${label(name)}密钥无法解密，原加密文件已保留。${name==='cliproxy'?'已重新生成内部网关密钥，旧的内部直连客户端需更新密钥；账号登录和受限客户端 Key 不受影响。':'请解锁系统钥匙串后重启，或在模型来源重新填写 API Key。'}`);
         return '';
       }
     },

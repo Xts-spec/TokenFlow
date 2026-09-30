@@ -28,7 +28,8 @@
     "test:sidecar-pin": "node scripts/test-sidecar-pin.mjs",
     "test:sidecar-qoder": "node scripts/test-sidecar-qoder.mjs",
     "test:sidecar-agents": "node scripts/test-sidecar-qoder.mjs",
-    "test:claude-compat": "go -C upstream/CLIProxyAPI test ./internal/translator/codex/claude ./internal/translator/openai/claude && npm run test:sidecar-agents"
+    "test:claude-compat": "go -C upstream/CLIProxyAPI test ./internal/translator/codex/claude ./internal/translator/openai/claude && npm run test:sidecar-agents",
+    "test:api-sources": "node scripts/api-sources-smoke.mjs"
   },
   "dependencies": {
     "@cua-sample/contracts": "*",

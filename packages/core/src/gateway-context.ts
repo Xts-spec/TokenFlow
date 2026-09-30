@@ -136,7 +136,7 @@ export class GatewayContext {
    if(body.store!==false)await this.save(id,[...input,...value.output],scope);
    const output=checkpoint?[checkpoint,...value.output]:value.output;
    const usage=checkpoint?combinedUsage(summaryUsage,value.usage):value.usage;
-   return {...value,id,output,usage,previous_response_id:body.previous_response_id??null};
+   return {...value,id,model:body.model,output,usage,previous_response_id:body.previous_response_id??null};
   };
   if(!(response.headers.get('content-type')??'').includes('text/event-stream')){
    const result=reply(await finish(await json(response)),response.headers);
@@ -151,7 +151,7 @@ export class GatewayContext {
    let event:Item;try{const parsed:unknown=JSON.parse(data);if(!object(parsed))throw new Error();event=parsed;}catch{throw new GatewayContextError('Invalid Responses stream event',502);}
    if(object(event.response)){
     if(event.type==='response.completed'||event.type==='response.incomplete'){event.response=await finish(event.response);terminal=true;}
-    else event.response={...event.response,id};
+    else event.response={...event.response,id,model:body.model};
    }
    if(event.type==='response.failed'||event.type==='error')terminal=true;
    if('response_id' in event)event.response_id=id;
