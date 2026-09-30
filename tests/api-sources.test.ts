@@ -158,3 +158,31 @@ it('keeps the previous credential on a failed edit and refuses durable API setup
  const memory=await ApiSources.open(root,{...secrets,persistent:false},defaultProvider);cleanup.push(()=>memory.close());
  await expect(memory.save({name:'Memory',baseURL,protocol:'responses',models:['shared'],apiKey:'new-private-key'})).rejects.toThrow('桌面版');
 });
+it('uses an explicitly selected bounded repair source while sidecar is offline, without granting other keys a bypass',async()=>{
+ const {service,headers,add,root,calls}=await fixture();const source=await add('Offline repair','offline-repair-key');const model=apiModelID(source.id,'shared');
+ const normal=(await service.app.inject({method:'POST',url:'/api/gateway-keys',headers,payload:{name:'normal',models:[model],sourceId:source.id}})).json();
+ await service.proxy.stop();
+ const direct=await service.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:{sourceId:source.id,model,channel:'direct'}});expect(direct.statusCode,direct.body).toBe(200);
+ await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
+ expect((await service.app.inject({method:'POST',url:'/v1/responses',headers:{...headers,authorization:`Bearer ${normal.apiKey}`},payload:{model,input:'Hi'}})).statusCode).toBe(503);
+ const repair=await service.app.inject({method:'POST',url:'/api/maintenance/run',headers,payload:{prompt:'只读检查'}});expect(repair.statusCode,repair.body).toBe(200);await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().status).toBe('completed');
+ const key=(await service.app.inject({url:'/api/gateway-keys',headers})).json().keys.find((k:{name:string})=>k.name==='内部 · 维修模型');expect(key.tokenLimit).toBe(32000);expect(key.usedTokens).toBeGreaterThan(0);expect(calls.at(-1)?.key).toContain('offline-repair-key');
+ expect((await service.app.inject({method:'POST',url:'/api/maintenance/local/diagnose',headers,payload:{target:'codex'}})).statusCode).toBe(200);await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance/local',headers})).json().active).toBeUndefined();
+ expect(await readFile(join(root,'local-maintenance.json'),'utf8')).not.toContain('offline-repair-key');
+ expect((await service.app.inject({url:'/api/maintenance/local',headers:{...headers,authorization:`Bearer ${normal.apiKey}`}})).statusCode).toBe(401);
+ expect((await service.app.inject({method:'POST',url:'/api/maintenance/local/upgrade',headers,payload:{id:crypto.randomUUID()}})).statusCode).toBe(400);
+ await service.proxy.start();
+ const target=(await service.app.inject({url:'/api/a2a',headers})).json().targets.find((t:{id:string})=>t.id==='codex');
+ const connected=await service.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload:{target:'codex',sourceId:source.id,model,revision:target.revision}});expect(connected.statusCode,connected.body).toBe(200);
+ // Stop any automatic read-only review before exercising the independent repair loop.
+ await service.app.inject({method:'POST',url:'/api/maintenance/stop',headers,payload:{}});
+ await writeFile(join(root,'codex/config.toml'),'');
+ const chain={target:'codex',sourceId:source.id,model,connectionId:connected.json().id};
+ const plan=(await service.app.inject({method:'POST',url:'/api/maintenance/propose',headers,payload:{chain}})).json();expect(plan.status).toBe('pending');
+ const approved=await service.app.inject({method:'POST',url:'/api/maintenance/approve',headers,payload:{id:plan.id,approve:true}});expect(approved.json().proposal.status,approved.body).toBe('completed');await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().status).toBe('completed');
+ expect(await readFile(join(root,'codex/config.toml'),'utf8')).toContain(model);
+ const current=(await service.app.inject({url:'/api/a2a',headers})).json().targets.find((t:{id:string})=>t.id==='codex');
+ const repaired=await readFile(join(root,'codex/config.toml'),'utf8');const configuredKey=repaired.match(/experimental_bearer_token = "([^"]+)"/)![1];
+ const probe=await service.app.inject({method:'POST',url:'/v1/responses',headers:{...headers,authorization:`Bearer ${configuredKey}`},payload:{model:current.connection.model,input:'minimal gateway test',max_output_tokens:32}});expect(probe.statusCode,probe.body).toBe(200);
+ const other=await add('Not native','other','chat');expect((await service.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:{sourceId:other.id,model:apiModelID(other.id,'shared'),channel:'direct'}})).statusCode).toBe(409);
+},30000);

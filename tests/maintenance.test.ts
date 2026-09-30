@@ -58,3 +58,20 @@ it('reviews exact proposal IDs with the selected approval model and no tools',as
  const care=new GatewayMaintenance(root,(model,context)=>{expect(model.id).toBe('codex/approver');expect(JSON.stringify(context)).not.toContain('inspect_gateway');return answer([{type:'text',text:JSON.stringify({id:wrong?'wrong':proposal.id,decision:'approve',reason:'checked'})}]);});
  try{const result=await care.reviewProposal(proposal,{sourceId:'approver',model:'codex/approver'},transport);expect(result.reviewer).toBe('codex/approver');wrong=true;await expect(care.reviewProposal(proposal,{sourceId:'approver',model:'codex/approver'},transport)).rejects.toThrow();}finally{await care.close();await rm(root,{recursive:true,force:true});}
 });
+it('lets the real Pi loop compose bounded local diagnostics and prepare an upgrade without executing it',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'pi-local-care-'));let turns=0,diagnoses=0,plans=0;
+ const care=new GatewayMaintenance(root,(_model,context)=>{
+  if(++turns===1)return answer([{type:'toolCall',id:'local',name:'diagnose_local',arguments:{check:'processes',target:'codex'}}]);
+  if(turns===2){expect(JSON.stringify(context)).toContain('local-process-evidence');return answer([{type:'toolCall',id:'upgrade',name:'prepare_upgrade',arguments:{}}]);}
+  expect(JSON.stringify(context)).toContain('manual-confirmation-required');return answer([{type:'text',text:'已取得证据，升级需要人工确认'}]);
+ });
+ try{await care.select({sourceId:'repair',model:'qoder/test'});care.start('诊断并准备升级',transport,{inspect:async()=>({}),refresh:async()=>({}),restore:async()=>({}),diagnose:async(input,signal)=>{expect(input.target).toBe('codex');expect(signal.aborted).toBe(false);diagnoses++;return {evidence:'local-process-evidence'};},upgrade:async()=>{plans++;return {status:'manual-confirmation-required'};}});await expect.poll(()=>care.snapshot().status).toBe('completed');expect(diagnoses).toBe(1);expect(plans).toBe(1);expect(care.snapshot().messages.some(m=>m.role==='tool'&&m.text.includes('diagnose_local'))).toBe(true);
+ }finally{await care.close();await rm(root,{recursive:true,force:true});}
+});
+it('keeps the P1 model file readable, preserves explicit channel across restart and blocks mismatched channel data',async()=>{
+ const {readFile,writeFile}=await import('node:fs/promises');const root=await mkdtemp(join(tmpdir(),'pi-channel-'));const care=new GatewayMaintenance(root);
+ try{await care.select({sourceId:'api-source',model:'api/model',channel:'direct'});expect(JSON.parse(await readFile(join(root,'maintenance-model.json'),'utf8'))).toEqual({sourceId:'api-source',model:'api/model'});
+ const reopened=new GatewayMaintenance(root);await reopened.load();expect(reopened.snapshot().selection?.channel).toBe('direct');await reopened.close();
+ await writeFile(join(root,'maintenance-model.json'),JSON.stringify({sourceId:'other',model:'other/model'}));const interrupted=new GatewayMaintenance(root);await interrupted.load();expect(interrupted.snapshot().selection).toBeUndefined();expect(interrupted.snapshot().channelWarning).toContain('未调用模型或自动切换');await interrupted.close();
+ }finally{await care.close();await rm(root,{recursive:true,force:true});}
+});

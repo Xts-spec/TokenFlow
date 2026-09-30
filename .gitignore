@@ -71,3 +71,9 @@ releases/
 *.asar
 *.zip
 *.7z
+
+# Local maintenance facts and sensitive upgrade snapshots
+local-maintenance.json
+maintenance-channel.json
+codex-upgrade.lock
+**/backups/codex-upgrade-*/
