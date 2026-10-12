@@ -10,9 +10,15 @@ import { upstreamIdle } from './upstream-idle.js';
 import type { Secrets } from './service.js';
 
 const modelID=z.string().trim().min(1).max(200).refine(v=>!/[\x00-\x1f\x7f]/.test(v));
-export const apiSourceInput=z.object({name:z.string().trim().min(1).max(80),baseURL:providerSchema.shape.baseURL,
+export const apiSourceInput=z.object({name:z.string().trim().min(1,'请填写来源名称。').max(80,'来源名称不能超过 80 个字符。'),baseURL:providerSchema.shape.baseURL,
  protocol:z.enum(['responses','chat','messages']),enabled:z.boolean().default(true),models:z.array(modelID).max(2000).transform(v=>[...new Set(v)]),
- apiKey:z.string().trim().min(1).max(4096).refine(v=>!/[\r\n]/.test(v)).optional(),acknowledge:z.boolean().optional()}).strict();
+ apiKey:z.string().trim().min(1,'请填写 API Key。').max(4096,'API Key 不能超过 4096 个字符。').refine(v=>!/[\r\n]/.test(v),'API Key 不能包含换行。').optional(),acknowledge:z.boolean().optional()}).strict();
+export function parseApiSourceInput(input:unknown){
+ const result=apiSourceInput.safeParse(input);if(result.success)return result.data;
+ const issue=result.error.issues[0],field=String(issue.path[0]??'');
+ const fallback:Record<string,string>={name:'请填写有效的来源名称。',baseURL:'请填写有效的 API 地址。',protocol:'请选择来源明确支持的协议。',models:'请填写有效的模型 ID，最多 2000 个。',apiKey:'请填写有效的 API Key。',enabled:'来源启用状态无效。',acknowledge:'请确认来源修改影响。'};
+ throw new RunnerCoreError(field&&/[\u3400-\u9fff]/.test(issue.message)?issue.message:fallback[field]??'API 来源配置无效，请检查填写内容。',{statusCode:400,code:'api_source_invalid',hint:field?`请检查${({name:'来源名称',baseURL:'API 地址',protocol:'协议',models:'模型 ID',apiKey:'API Key'} as Record<string,string>)[field]??'填写内容'}。`:undefined});
+}
 const evidence=z.object({status:z.enum(['passed','failed']),checkedAt:z.string(),message:z.string()});
 const storedSource=apiSourceInput.omit({apiKey:true,acknowledge:true}).extend({id:z.string().regex(/^[a-f0-9]{24}$/),credentialRef:z.string().regex(/^source-[a-f0-9]{24}-[a-f0-9]{16}$/),createdAt:z.string(),checks:z.record(evidence).default({})});
 type StoredSource=z.infer<typeof storedSource>;
@@ -20,6 +26,7 @@ export type ApiSource=Omit<StoredSource,'credentialRef'> & {hasKey:boolean};
 export const apiModelID=(sourceId:string,upstream:string)=>`api-${sourceId}/${upstream}`;
 const conflict=(message:string)=>new RunnerCoreError(message,{statusCode:409,code:'api_source_conflict'});
 const LIMIT=16*1024*1024;
+const nativeHeader='x-token-flow-native';
 function safeSourceStream(body:ReadableStream<Uint8Array>){
  const decoder=new TextDecoder(),encoder=new TextEncoder();let buffer='';
  const safe=(frame:string)=>{
@@ -32,6 +39,19 @@ function safeSourceStream(body:ReadableStream<Uint8Array>){
   transform(chunk,out){buffer+=decoder.decode(chunk,{stream:true});buffer=buffer.replace(/\r\n/g,'\n');let end:number;while((end=buffer.indexOf('\n\n'))!==-1){const frame=buffer.slice(0,end);if(Buffer.byteLength(frame)>LIMIT)throw new Error('Source event too large');buffer=buffer.slice(end+2);out.enqueue(encoder.encode(safe(frame)));}if(Buffer.byteLength(buffer)>LIMIT)throw new Error('Source event too large');},
   flush(out){buffer+=decoder.decode();if(buffer.trim())out.enqueue(encoder.encode(safe(buffer)));}
  }));
+}
+
+/** The sidecar talks to every Responses source as if it were the ChatGPT Codex backend: it adds an
+ * image tool and encrypted-reasoning include that generic Responses APIs often reject. The second
+ * body is a retry for upstreams that also refuse `include` or `prompt_cache_key`. */
+export function genericResponsesBodies(body:Record<string,unknown>):Record<string,unknown>[]{
+ const {tools,tool_choice:choice,...rest}=body;
+ const kept=Array.isArray(tools)?tools.filter(tool=>(tool as {type?:unknown})?.type!=='image_generation'):[];
+ const imageChoice=(choice as {type?:unknown}|undefined)?.type==='image_generation';
+ const cleaned:Record<string,unknown>={...rest,...(kept.length?{tools:kept}:{}),...(kept.length&&choice!==undefined&&!imageChoice?{tool_choice:choice}:{})};
+ if(!('include' in cleaned)&&!('prompt_cache_key' in cleaned))return [cleaned];
+ const {include:_include,prompt_cache_key:_cache,...plain}=cleaned;
+ return [cleaned,plain];
 }
 
 /** The sidecar sees only a loopback relay credential, never an upstream API key.
@@ -67,15 +87,16 @@ export class ApiSources {
  private persist(){const path=join(this.root,'api-sources.json');return writeFile(`${path}.tmp`,JSON.stringify({version:1,sources:this.entries,migration:this.migration},null,2),{mode:0o600}).then(()=>rename(`${path}.tmp`,path));}
  async list():Promise<ApiSource[]>{return Promise.all(this.entries.map(async({credentialRef,...s})=>({...structuredClone(s),hasKey:!!await this.secrets.get(credentialRef)})));}
  has(id:string){return this.entries.some(s=>s.id===id);}
+ async keyFor(id:string){const s=this.entries.find(s=>s.id===id);return s?this.secrets.get(s.credentialRef):'';}
  sourceFor(model:string){return this.entries.find(s=>s.models.some(m=>apiModelID(s.id,m)===model));}
  assert(id:string,model:string){const s=this.entries.find(s=>s.id===id);if(!s?.enabled||!s.models.some(m=>apiModelID(id,m)===model))throw conflict('API 来源已停用、删除或未保存此模型；不会切换到其他来源。');return s;}
  /** Keep native API fields (including output limits) when no translation is needed. */
  async response(id:string,path:string,body:{model:string},signal:AbortSignal,headers:Record<string,string>={}){
   const s=this.assert(id,body.model);const model=s.models.find(m=>apiModelID(id,m)===body.model)!;
-  return fetch(`${this.relayURL}/${id}/v1/${path}`,{method:'POST',headers:{...headers,authorization:`Bearer ${this.relayKey}`,'content-type':'application/json'},body:JSON.stringify({...body,model}),signal,redirect:'error'});
+  return fetch(`${this.relayURL}/${id}/v1/${path}`,{method:'POST',headers:{...headers,authorization:`Bearer ${this.relayKey}`,'content-type':'application/json',[nativeHeader]:'1'},body:JSON.stringify({...body,model}),signal,redirect:'error'});
  }
  async save(input:z.input<typeof apiSourceInput>,id?:string){
-  const value=apiSourceInput.parse(input);const old=id?this.entries.find(s=>s.id===id):undefined;if(id&&!old)throw conflict('API 来源已变更，请刷新。');
+  const value=parseApiSourceInput(input);const old=id?this.entries.find(s=>s.id===id):undefined;if(id&&!old)throw conflict('API 来源已变更，请刷新。');
   const {apiKey,acknowledge:_ack,...fields}=value;if(apiKey&&this.secrets.persistent===false)throw new RunnerCoreError('此服务没有持久化安全密钥存储，请在桌面版添加 API 来源。',{statusCode:400,code:'credential_storage_unavailable'});const sourceId=old?.id??randomBytes(12).toString('hex');
   if(!old&&!apiKey)throw conflict('新来源需要 API Key。');
   const ref=apiKey?`source-${sourceId}-${randomBytes(8).toString('hex')}`:old!.credentialRef;
@@ -89,11 +110,23 @@ export class ApiSources {
  }
  async remove(id:string){const old=this.entries;this.entries=old.filter(s=>s.id!==id);try{await this.persist();}catch(e){this.entries=old;throw e;}const s=old.find(s=>s.id===id);if(s)await this.secrets.remove?.(s.credentialRef);}
  async record(id:string,model:string,passed:boolean,message:string){const s=this.assert(id,model);const upstream=s.models.find(m=>apiModelID(id,m)===model)!;const old=this.entries;this.entries=old.map(entry=>entry.id===id?{...entry,checks:{...entry.checks,[upstream]:{status:passed?'passed':'failed',checkedAt:new Date().toISOString(),message}}}:entry);try{await this.persist();}catch(e){this.entries=old;throw e;}}
- async models(id:string){const s=this.entries.find(s=>s.id===id);if(!s)throw conflict('来源不存在');const key=await this.secrets.get(s.credentialRef);if(!key)throw conflict('API 密钥暂不可读取，请解锁系统安全存储或重新填写。');
-  try{const r=await fetch(`${s.baseURL.replace(/\/$/,'')}/models`,{headers:s.protocol==='messages'?{'x-api-key':key,'anthropic-version':'2023-06-01'}:{Authorization:`Bearer ${key}`},signal:AbortSignal.timeout(15000),redirect:'error'});if(!r.ok){await r.body?.cancel();throw new Error();}const data=await this.boundedJSON(r);return z.object({data:z.array(z.object({id:modelID})).max(2000)}).parse(data).data.map(m=>m.id);}
-  catch{throw new RunnerCoreError('无法读取模型列表，请检查地址和权限，或手动添加模型 ID。',{statusCode:400,code:'api_models_unavailable'});}
+ async models(id:string,signal?:AbortSignal){const s=this.entries.find(s=>s.id===id);if(!s)throw conflict('来源不存在');const key=await this.secrets.get(s.credentialRef);if(!key)throw conflict('API 密钥暂不可读取，请解锁系统安全存储或重新填写。');
+  const timeout=AbortSignal.timeout(15000),requestSignal=signal?AbortSignal.any([signal,timeout]):timeout;
+  const failure=(code:string,message:string)=>new RunnerCoreError(message,{statusCode:400,code});
+  try{
+   const r=await fetch(`${s.baseURL.replace(/\/$/,'')}/models`,{headers:s.protocol==='messages'?{'x-api-key':key,'anthropic-version':'2023-06-01'}:{Authorization:`Bearer ${key}`},signal:requestSignal,redirect:'error'});
+   if(!r.ok){await r.body?.cancel();if(r.status===401||r.status===403)throw failure('api_models_auth',`模型列表认证未通过（HTTP ${r.status}），请检查 API Key 和模型列表读取权限。`);throw failure('api_models_http',`读取模型列表失败（HTTP ${r.status}），请检查 API 地址和服务状态，或手动添加模型 ID。`);}
+   try{const data=await this.boundedJSON(r);return z.object({data:z.array(z.object({id:modelID})).max(2000)}).parse(data).data.map(m=>m.id);}
+   catch{throw failure('api_models_response','模型列表响应格式不符合预期，请检查 API 地址和服务文档，或手动添加模型 ID。');}
+  }catch(error){
+   if(signal?.aborted)throw failure('api_models_cancelled','已取消读取模型列表，已保存的来源配置和模型仍保留。');
+   if(timeout.aborted)throw failure('api_models_timeout','读取模型列表超过 15 秒，请检查网络或服务状态后重试；已保存的来源配置和模型仍保留。');
+   if(error instanceof RunnerCoreError)throw error;
+   throw failure('api_models_unavailable','无法连接模型列表接口，请检查网络和 API 地址后重试，或手动添加模型 ID。');
+  }
  }
  private async boundedJSON(r:Response){let bytes=0;const chunks:Uint8Array[]=[];for await(const c of Readable.fromWeb(r.body as never)){bytes+=c.length;if(bytes>LIMIT)throw new Error('Response too large');chunks.push(c);}return JSON.parse(Buffer.concat(chunks).toString());}
+ sidecarModelIDs(){return this.entries.filter(s=>s.enabled).flatMap(s=>s.models.map(model=>apiModelID(s.id,model)));}
  sidecarConfig(){
   const chat:unknown[]=[],responses:unknown[]=[],messages:unknown[]=[];
   for(const s of this.entries.filter(s=>s.enabled&&s.models.length)){
@@ -124,7 +157,14 @@ export class ApiSources {
     const headers:Record<string,string>={'content-type':'application/json',...(s.protocol==='messages'?{'x-api-key':key,'anthropic-version':typeof req.headers['anthropic-version']==='string'?req.headers['anthropic-version']:'2023-06-01'}:{Authorization:`Bearer ${key}`})};
     // Forward only protocol headers, never local routing or administrator credentials.
     if(s.protocol==='messages'&&typeof req.headers['anthropic-beta']==='string')headers['anthropic-beta']=req.headers['anthropic-beta'];
-    const r=idle.watch(await fetch(`${s.baseURL.replace(/\/$/,'')}/${match![2]}${s.protocol==='messages'?requestURL.search:''}`,{method:'POST',headers,body:JSON.stringify(body),redirect:'error',signal:idle.signal}));
+    // Same-protocol calls arrive from the gateway untouched; only sidecar-translated Responses bodies need cleaning.
+    const bodies=s.protocol==='responses'&&req.headers[nativeHeader]!=='1'?genericResponsesBodies(body):[body];
+    let r!:Response;
+    for(const [index,attempt] of bodies.entries()){
+     r=idle.watch(await fetch(`${s.baseURL.replace(/\/$/,'')}/${match![2]}${s.protocol==='messages'?requestURL.search:''}`,{method:'POST',headers,body:JSON.stringify(attempt),redirect:'error',signal:idle.signal}));
+     if(r.ok||r.status!==400||index===bodies.length-1)break;
+     await r.body?.cancel();
+    }
     if(!r.ok){await r.body?.cancel();fail(r.status,'API source request failed');return;}
     res.writeHead(r.status,{'content-type':r.headers.get('content-type')??'application/json','cache-control':'no-store'});
     if(!r.body){res.end();return;}

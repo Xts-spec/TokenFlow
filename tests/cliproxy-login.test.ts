@@ -1,10 +1,11 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
 import { CLIProxyManager, validateAuthorizationURL } from '../packages/core/src/cliproxy.js';
 import { createDesktopService } from '../packages/core/src/service.js';
+import {quotaProviders} from '../packages/core/src/quota/index.js';
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => {for (const fn of cleanup.splice(0).reverse()) await fn();});
 const binary = resolve('tests/fixtures/fake-cliproxy.mjs');
@@ -206,6 +207,24 @@ it('loads saved account models after delayed registration without navigating or 
  expect(manager.snapshot().models.some(m=>m.id==='codex/gpt-6-astra')).toBe(true);
 });
 
+it('publishes account models and callable routes together after namespace registration',async()=>{
+ const {root,manager}=await setup();await mkdir(join(root,'cliproxy'),{recursive:true});
+ await writeFile(join(root,'cliproxy','fixture-accounts.json'),JSON.stringify([{name:'codex-saved.json',provider:'codex',status:'active',models:['gpt-6-astra']}]));
+ const originalFetch=globalThis.fetch;let release!:()=>void;let registrationStarted!:()=>void;
+ const pending=new Promise<void>(resolve=>{release=resolve;});const started=new Promise<void>(resolve=>{registrationStarted=resolve;});
+ const intercepted=vi.spyOn(globalThis,'fetch').mockImplementation(async(input,init)=>{
+  if(String(input).endsWith('/oauth-model-alias')&&init?.method==='PUT'){registrationStarted();await pending;}
+  return originalFetch(input,init);
+ });
+ const starting=manager.start();
+ try{
+  await started;const during=manager.snapshot();
+  expect(during.accounts.flatMap(account=>account.models??[]).every(id=>during.models.some(model=>model.id===id))).toBe(true);
+ }finally{release();await starting;intercepted.mockRestore();}
+ expect(manager.snapshot().accounts[0].models).toContain('codex/gpt-6-astra');
+ expect(manager.snapshot().models.some(model=>model.id==='codex/gpt-6-astra')).toBe(true);
+});
+
 it('retries failed namespace registration instead of caching it as successful',async()=>{
  const {root,manager}=await setup();await mkdir(join(root,'cliproxy'),{recursive:true});
  await writeFile(join(root,'cliproxy','fixture-options.json'),JSON.stringify({failAliasWrites:1}));
@@ -241,4 +260,52 @@ it('automatically recovers Codex quota after two transient bridge 502s without t
  const recovered=await pending;
  expect(Object.values(recovered.quotas).find(q=>q.provider==='codex')?.status).toBe('ok');
  expect((await fixture()).quotaBridgeAttempts).toBe(3);expect(recovered.accounts).toEqual(original);expect(recovered.state).toBe('running');
+});
+
+it('refreshes only the selected platform models and quota, preserving every other platform snapshot',async()=>{
+ const {manager,root,fixture}=await setup();await mkdir(join(root,'cliproxy'),{recursive:true});
+ const entries=[{name:'codex-one.json',provider:'codex',email:'one@example.test',auth_index:'codex-one',status:'active',models:['old-codex']},{name:'codex-two.json',provider:'codex',email:'two@example.test',auth_index:'codex-two',status:'active',models:['old-codex']},{name:'claude.json',provider:'claude',email:'dev@example.test',auth_index:'claude-one',status:'active',models:['old-claude']}];
+ await writeFile(join(root,'cliproxy','fixture-accounts.json'),JSON.stringify(entries));await manager.start();await manager.refreshQuota();
+ const before=manager.snapshot(),beforeCalls=await fixture();const other=before.accounts.find(a=>a.provider==='claude')!;
+ await fixture({modelSets:{codex:['new-codex'],claude:['new-claude']}});
+ const cursor=vi.spyOn(manager.cursor,'refresh');
+ const next=await manager.refreshProvider('codex');
+ expect(next.accounts.filter(a=>a.provider==='codex').map(a=>a.models)).toEqual([['codex/new-codex'],['codex/new-codex']]);
+ expect(next.accounts.find(a=>a.id===other.id)).toEqual(other);expect(next.quotas[other.id]).toEqual(before.quotas[other.id]);expect(next.models.filter(m=>m.provider==='claude')).toEqual(before.models.filter(m=>m.provider==='claude'));
+ const calls=await fixture();expect(calls.modelCalls.slice(beforeCalls.modelCalls.length).sort()).toEqual(['codex-one.json','codex-two.json']);
+ expect(new Set(calls.apiCalls.slice(beforeCalls.apiCalls.length).map((call:{authIndex:string})=>call.authIndex))).toEqual(new Set(['codex-one','codex-two']));expect(cursor).not.toHaveBeenCalled();
+ const cursorStart=await fixture();await manager.refreshProvider('cursor');const cursorEnd=await fixture();expect(cursor).toHaveBeenCalledTimes(1);expect(cursorEnd.modelCalls).toEqual(cursorStart.modelCalls);expect(cursorEnd.apiCalls).toEqual(cursorStart.apiCalls);
+ cursor.mockRestore();
+ // Distinct simultaneous platform refreshes must not accidentally coalesce to one platform.
+ const start=await fixture();await fixture({modelSets:{codex:['latest-codex'],claude:['latest-claude']}});
+ await Promise.all([manager.refreshProvider('codex'),manager.refreshProvider('claude')]);
+ expect(manager.snapshot().accounts.find(a=>a.id===other.id)?.models).toEqual(['claude/latest-claude']);
+ expect(manager.snapshot().accounts.filter(a=>a.provider==='codex').every(a=>a.models?.includes('codex/latest-codex'))).toBe(true);
+ expect((await fixture()).modelCalls.slice(start.modelCalls.length).sort()).toEqual(['claude.json','codex-one.json','codex-two.json']);
+});
+
+it('validates platform refresh requests and keeps the management endpoint administrator-only',async()=>{
+ const {root,port}=await setup();const service=await createDesktopService({root,proxyPort:port,binary,token:'refresh-admin',localKey:'fixture-key',secrets:{get:async()=>'',set:async()=>{}}});cleanup.push(()=>service.app.close());await service.proxy.start();await service.proxy.refreshQuota();
+ const headers={host:'127.0.0.1:9527',authorization:'Bearer refresh-admin'},url='/api/local-agent/providers/codex/refresh';
+ expect((await service.app.inject({method:'POST',url,headers:{host:headers.host},payload:{}})).statusCode).toBe(401);
+ expect((await service.app.inject({method:'POST',url,headers:{...headers,origin:'https://untrusted.test'},payload:{}})).statusCode).toBe(403);
+ expect((await service.app.inject({method:'POST',url:'/api/local-agent/providers/unknown/refresh',headers,payload:{}})).statusCode).toBe(400);
+ expect((await service.app.inject({method:'POST',url,headers,payload:{provider:'claude'}})).statusCode).toBe(400);
+ const refreshed=await service.app.inject({method:'POST',url,headers,payload:{}});expect(refreshed.statusCode,refreshed.body).toBe(200);expect(refreshed.json().state).toBe('running');expect(refreshed.body).not.toContain('fixture-key');
+});
+
+
+it('finishes a platform refresh while another platform is still querying quota in the background',async()=>{
+ const {manager,root}=await setup();await mkdir(join(root,'cliproxy'),{recursive:true});
+ await writeFile(join(root,'cliproxy','fixture-accounts.json'),JSON.stringify(['codex','claude'].map(provider=>({name:`${provider}.json`,provider,auth_index:`idx-${provider}`,status:'active',models:['shared']}))));
+ await manager.start();await manager.refreshQuota();
+ let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(resolve=>release=resolve),started=new Promise<void>(resolve=>entered=resolve);
+ const original=quotaProviders.codex.fetch.bind(quotaProviders.codex);
+ const held=vi.spyOn(quotaProviders.codex,'fetch').mockImplementation(async(...args)=>{entered();await gate;return original(...args);});
+ const global=manager.refreshQuota();await started;
+ try{
+  const result=await Promise.race([manager.refreshProvider('claude'),new Promise<never>((_,reject)=>setTimeout(()=>reject(new Error('Scoped refresh waited for the other provider')),1500))]);
+  expect(result.quotas[result.accounts.find(a=>a.provider==='claude')!.id].status).toBe('ok');expect(result.quotaBusy).toBe(true);
+ }finally{release();await global;held.mockRestore();}
+ expect(manager.snapshot().quotaBusy).toBe(false);
 });

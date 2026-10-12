@@ -7,11 +7,11 @@ it('shows only usable credentials, ranks by lowest remaining window, leaves unkn
  expect(sourceOptions(local)[0].models).toEqual(['codex/model']);
  expect(sourceOptions(local).map(a=>[a.id,a.remaining])).toEqual([['high',75],['low',5],['unknown',null]]);
 });
-it('shares saved API sources with the picker and includes only loaded, enabled models with readable keys',()=>{
+it('keeps saved API models in the picker during catalog reload and excludes disabled or unreadable sources',()=>{
  const local={accounts:[{id:'sdk',provider:'cursor',label:'Cursor SDK',status:'ready',disabled:false,unavailable:false,models:['cursor/shared']}],models:[{id:'api-a/shared',provider:'api'},{id:'api-b/shared',provider:'api'},{id:'cursor/shared',provider:'cursor'}],quotas:{},apiSources:[
   {id:'a',name:'API A',models:['shared','pending'],enabled:true,hasKey:true},
   {id:'b',name:'API B',models:['shared'],enabled:false,hasKey:true},
   {id:'c',name:'API C',models:['shared'],enabled:true,hasKey:false},
  ]} as unknown as LocalAgentSnapshot;
- expect(sourceOptions(local).map(s=>[s.label,s.models])).toEqual([['API A',['api-a/shared']],['Cursor SDK',['cursor/shared']]]);expect(sourceLabel(local,'a')).toBe('API A');
+ expect(sourceOptions(local).map(s=>[s.label,s.models])).toEqual([['API A',['api-a/shared','api-a/pending']],['Cursor SDK',['cursor/shared']]]);expect(sourceLabel(local,'a')).toBe('API A');
 });

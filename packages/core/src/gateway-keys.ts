@@ -5,13 +5,15 @@ import { z } from 'zod';
 
 export const gatewayKeyInput = z.object({
   name: z.string().trim().min(1).max(80),
+  purpose:z.string().trim().max(160).optional(),
   enabled: z.boolean().default(true),
   sourceId: z.string().regex(/^[a-f0-9]{24}$/).optional(),
+  modelSources: z.record(z.string().regex(/^[a-f0-9]{24}$/)).optional(),
   agents: z.array(z.enum(['codex','claude','openai'])).max(3).default(['codex','claude','openai']).transform(ids=>[...new Set(ids)]),
   tokenLimit: z.number().int().min(0).max(1_000_000_000_000).nullable().default(null),
   models: z.array(z.string().min(3).max(300)).max(2000).transform(ids => [...new Set(ids)].sort()),
 }).strict();
-const storedKey = gatewayKeyInput.extend({id:z.string().uuid(), prefix:z.string(), digest:z.string().regex(/^[a-f0-9]{64}$/), createdAt:z.string(), usedTokens:z.number().nonnegative().default(0), unmeteredRequests:z.number().int().nonnegative().default(0), pending:z.array(z.string().uuid()).default([])});
+const storedKey = gatewayKeyInput.extend({exported:z.boolean().optional(),id:z.string().uuid(), prefix:z.string(), digest:z.string().regex(/^[a-f0-9]{64}$/), createdAt:z.string(), usedTokens:z.number().nonnegative().default(0), unmeteredRequests:z.number().int().nonnegative().default(0), pending:z.array(z.string().uuid()).default([])});
 type StoredKey = z.infer<typeof storedKey>;
 export type GatewayKey = Omit<StoredKey, 'digest'|'pending'> & {pendingRequests:number};
 const publicKey=({digest:_digest,pending,...entry}:StoredKey):GatewayKey=>({...structuredClone(entry),pendingRequests:pending.length});
@@ -19,7 +21,7 @@ const denied=(message:string,statusCode=429)=>Object.assign(new Error(message),{
 export const allowsProtocol=(agents:GatewayKey['agents'],path:string)=>path.startsWith('messages')?agents.includes('claude'):path==='chat/completions'?agents.includes('openai'):agents.includes('codex')||agents.includes('openai');
 const hash = (value: string) => createHash('sha256').update(value).digest();
 
-/** Client keys are model-scoped and stored only as hashes. They never grant desktop management access. */
+/** Client keys are model-scoped and verified using hashes. Exported copies may live in system-encrypted storage. They never grant desktop management access. */
 export class GatewayKeys {
   private entries: StoredKey[] = [];
   private pending: Promise<unknown> = Promise.resolve();
@@ -50,11 +52,11 @@ export class GatewayKeys {
     this.pending = task.catch(() => undefined);
     return task;
   }
-  create(input: z.infer<typeof gatewayKeyInput>) {
+  create(input: z.infer<typeof gatewayKeyInput>, exported=false) {
     return this.mutate(entries => {
       if (entries.length >= 100) throw Object.assign(new Error('最多创建 100 个客户端 Key'), {statusCode:400});
       const apiKey = `tfl_${randomBytes(32).toString('hex')}`;
-      const entry:StoredKey = {...input,usedTokens:0,unmeteredRequests:0,pending:[], id:randomUUID(), prefix:apiKey.slice(0,12), digest:hash(apiKey).toString('hex'), createdAt:new Date().toISOString()};
+      const entry:StoredKey = {...input,...(exported?{exported:true}:{}),usedTokens:0,unmeteredRequests:0,pending:[], id:randomUUID(), prefix:apiKey.slice(0,12), digest:hash(apiKey).toString('hex'), createdAt:new Date().toISOString()};
       entries.push(entry);
       return {key:publicKey(entry), apiKey};
     });
@@ -64,6 +66,16 @@ export class GatewayKeys {
       const entry = entries.find(key => key.id === id);
       if (!entry) throw Object.assign(new Error('Key 不存在'), {statusCode:404});
       Object.assign(entry, input);
+      return publicKey(entry);
+    });
+  }
+  updateModels(id:string,models:string[],modelSources:Record<string,string>) {
+    return this.mutate(entries=>{
+      const entry=entries.find(key=>key.id===id);
+      if(!entry)throw Object.assign(new Error('Key 不存在'),{statusCode:404});
+      entry.models=models;entry.modelSources=modelSources;delete entry.sourceId;
+      // Legacy exported keys had no marker; keep them visible after pinning their model sources.
+      entry.exported=true;
       return publicKey(entry);
     });
   }

@@ -3,6 +3,7 @@ import { mkdtemp,mkdir,writeFile,readFile,rm,realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join,resolve } from 'node:path';
 import { createServer } from 'node:net';
+import { QoderLifecycle } from '../packages/core/src/agent-lifecycle.js';
 import { createDesktopService } from '../packages/core/src/service.js';
 it('connects and restores a local Agent through admin APIs without exposing keys or original config',async()=>{
  const root=await mkdtemp(join(await realpath(tmpdir()),'a2a-service-'));
@@ -14,6 +15,22 @@ it('connects and restores a local Agent through admin APIs without exposing keys
  try{
   await service.proxy.start();const headers={host:'127.0.0.1:9527',authorization:'Bearer admin-token'};
   expect((await service.app.inject({url:'/api/a2a',headers:{host:headers.host}})).statusCode).toBe(401);
+  const restart=vi.spyOn(QoderLifecycle.prototype,'restart').mockResolvedValue({message:'Qoder 已重新打开'});
+  try{
+   expect((await service.app.inject({method:'POST',url:'/api/a2a/restart',headers:{host:headers.host},payload:{target:'qoder'}})).statusCode).toBe(401);
+   expect((await service.app.inject({method:'POST',url:'/api/a2a/restart',headers:{...headers,origin:'https://untrusted.test'},payload:{target:'qoder'}})).statusCode).toBe(403);
+   expect((await service.app.inject({method:'POST',url:'/api/a2a/restart',headers,payload:{target:'invalid'}})).statusCode).toBe(400);
+   expect(restart).not.toHaveBeenCalled();
+   expect((await service.app.inject({method:'POST',url:'/api/a2a/restart',headers,payload:{target:'qoder'}})).statusCode).toBe(200);
+   expect(restart).toHaveBeenCalledTimes(1);
+   for(const target of ['codex','workbuddy','claude']){
+    const payload={target,...(target==='claude'?{client:'vscode'}:{})};
+    expect((await service.app.inject({method:'POST',url:'/api/a2a/restart',headers,payload})).statusCode).toBe(200);
+    expect(restart).toHaveBeenLastCalledWith(target);
+   }
+   expect((await service.app.inject({method:'POST',url:'/api/a2a/restart',headers,payload:{target:'claude',client:'terminal'}})).statusCode).toBe(400);
+   expect((await service.app.inject({url:'/api/a2a/terminal-sessions',headers:{host:headers.host}})).statusCode).toBe(401);
+  }finally{restart.mockRestore();}
   await mkdir(join(root,'codex'));const credentials=JSON.stringify({tokens:{access_token:'fixture-access',refresh_token:'fixture-refresh',id_token:'x.e30.x',account_id:'fixture-account'}});await writeFile(join(root,'codex','auth.json'),credentials);
   await service.discoverLocal();expect(service.proxy.snapshot().accounts).toHaveLength(2);
   await service.proxy.importCredential('codex',{account_id:'fixture-account',access_token:'stale-copy'},true);expect(await readFile(join(root,'cliproxy','fixture-accounts.json'),'utf8')).not.toContain('stale-copy');
@@ -22,7 +39,9 @@ it('connects and restores a local Agent through admin APIs without exposing keys
   expect((await service.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:{sourceId,model:'codex/shared-model'}})).statusCode).toBe(200);
   await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
   const response=await service.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload:{target:'claude',sourceId,model:'codex/shared-model',revision:state.targets[1].revision}});expect(response.statusCode).toBe(200);expect(response.body).not.toContain('tfl_');expect(response.body).not.toContain('private-original');
-  expect(response.json().review.status).toBe('running');await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().status).toBe('completed');
+  const record=response.json();
+  expect((await service.app.inject({method:'POST',url:'/api/maintenance/run',headers,payload:{prompt:`请 review 刚完成的 ${record.target} 接入（记录 ${record.id}），仅做只读检查。`,chain:{target:'claude',sourceId,model:'codex/shared-model',connectionId:record.id}}})).statusCode).toBe(200);
+  await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().status).toBe('completed');
   const care=(await service.app.inject({url:'/api/maintenance',headers})).json();expect(care.engine).toBe('pi');expect(care.messages.some((m:{role:string;text:string})=>m.role==='tool'&&m.text.includes('主模型与辅助模型一致'))).toBe(true);expect(JSON.stringify(care)).not.toContain('tfl_');
   expect(care.chain).toMatchObject({target:'claude',sourceId,model:'codex/shared-model'});
   const inspection=JSON.parse(care.messages.find((m:{text:string})=>m.text.startsWith('只读预检: ')).text.slice('只读预检: '.length));

@@ -15,7 +15,7 @@ let aliases = JSON.parse(config.match(/^oauth-model-alias: (.+)/m)?.[1] ?? '{}')
 let accounts = [];try {accounts = JSON.parse(readFileSync(file, 'utf8'));} catch {}
 let aliasWrites=0;let fixtureOptions={};try{fixtureOptions=JSON.parse(readFileSync(join(directory,'fixture-options.json'),'utf8'));}catch{}
 const fixtureStarted=Date.now();
-const sessions = new Map();let fixtureMode = 'wait';let quotaBridgeFailures=0;let quotaBridgeAttempts=0;let cancelCount = 0;let callbackCount = 0;const apiCalls = [];
+const sessions = new Map();let fixtureMode = 'wait';let quotaBridgeFailures=0;let quotaBridgeAttempts=0;let cancelCount = 0;let callbackCount = 0;let apiModelDelayReads=0;const apiCalls = [];const modelCalls=[];
 const saveAccount = session => {
  const name = `${session.provider}-user@example.test.json`;
  accounts = [...accounts.filter(a => a.name !== name), {name, provider:session.provider, auth_index:`idx-${session.provider}`, email:'user@example.test',status:'active',disabled:false,unavailable:false,id_token:{secret:'never-expose',chatgpt_account_id:'acct-fixture',plan_type:'plus'},project_id:session.provider==='antigravity'?'proj-fixture':undefined,access_token:'never-expose',path:'/private/credentials'}];
@@ -25,8 +25,8 @@ const server = createServer(async(req,res) => {
  res.setHeader('content-type','application/json');const url=new URL(req.url,`http://127.0.0.1:${port}`);
  const send=(status,value)=>{res.statusCode=status;res.end(JSON.stringify(value));};
  if(url.pathname==='/fixture') {
-  if(req.method==='POST'){let body='';for await(const c of req)body+=c;const input=JSON.parse(body);fixtureMode=input.mode??fixtureMode;if(input.quotaBridgeFailures!==undefined){quotaBridgeFailures=input.quotaBridgeFailures;quotaBridgeAttempts=0;}if(input.modelSets){for(const a of accounts)if(input.modelSets[a.provider])a.models=input.modelSets[a.provider];writeFileSync(file,JSON.stringify(accounts));}if(input.complete)for(const s of sessions.values()){if(s.status==='wait'){s.status='ok';saveAccount(s);}}}
-  return send(200,{cancelCount,callbackCount,apiCalls,quotaBridgeAttempts});
+  if(req.method==='POST'){let body='';for await(const c of req)body+=c;const input=JSON.parse(body);fixtureMode=input.mode??fixtureMode;if(input.apiModelDelayReads!==undefined)apiModelDelayReads=input.apiModelDelayReads;if(input.accounts)accounts=input.accounts;if(input.staleConfigOnAliasWrite!==undefined)fixtureOptions.staleConfigOnAliasWrite=input.staleConfigOnAliasWrite;if(input.quotaBridgeFailures!==undefined){quotaBridgeFailures=input.quotaBridgeFailures;quotaBridgeAttempts=0;}if(input.modelSets){for(const a of accounts)if(input.modelSets[a.provider])a.models=input.modelSets[a.provider];writeFileSync(file,JSON.stringify(accounts));}if(input.complete)for(const s of sessions.values()){if(s.status==='wait'){s.status='ok';saveAccount(s);}}}
+  return send(200,{cancelCount,callbackCount,apiCalls,quotaBridgeAttempts,modelCalls});
  }
  const management=url.pathname.startsWith('/v0/management/');
  if(req.headers.authorization!==`Bearer ${management?managementKey:key}`)return send(401,{error:'denied'});
@@ -38,10 +38,13 @@ const server = createServer(async(req,res) => {
  const modelTypes={codex:'openai',claude:'claude',antigravity:'antigravity',kimi:'kimi',xai:'xai',qoder:'qoder',workbuddy:'workbuddy',zcode:'zcode',doubao:'doubao',trae:'trae'};
  const accountModels = a => (a.models ?? [`fixture-${a.provider}-model`]).flatMap(entry => {const {id,...meta}=typeof entry==='string'?{id:entry}:entry;return [{id,...meta,object:'model',type:modelTypes[a.provider],owned_by:a.provider==='codex'?'openai':a.provider}, ...(aliases[a.provider] ?? []).filter(alias=>alias.name===id).map(alias=>({id:alias.alias,...meta,object:'model',type:modelTypes[a.provider],owned_by:a.provider}))];});
  if((path==='/models'||path==='/auth-files/models')&&Date.now()-fixtureStarted<(fixtureOptions.modelDelayMs??0))return send(200,path==='/models'?{data:[]}:{models:[]});
- if(path==='/models')return send(200,{data:[...apiModels,...new Map(accounts.filter(a=>!a.disabled).flatMap(accountModels).map(m=>[m.id,m])).values()]});
- if(path==='/auth-files/models')return send(200,{models:accounts.filter(a=>a.name===url.searchParams.get('name')&&!a.disabled).flatMap(accountModels)});
+ if(path==='/models'){
+  const visibleAPIModels=apiModelDelayReads>0?(apiModelDelayReads--,[]):apiModels;
+  return send(200,{data:[...visibleAPIModels,...new Map(accounts.filter(a=>!a.disabled).flatMap(a=>accountModels(a).filter(m=>!a.hiddenModels?.includes(m.id))).map(m=>[m.id,m])).values()]});
+ }
+ if(path==='/auth-files/models'){modelCalls.push(url.searchParams.get('name'));return send(200,{models:accounts.filter(a=>a.name===url.searchParams.get('name')&&!a.disabled).flatMap(accountModels)});}
  if(path==='/oauth-model-alias') {
-  if(req.method==='PUT'){let body='';for await(const c of req)body+=c;aliasWrites++;if(aliasWrites<=(fixtureOptions.failAliasWrites??0))return send(503,{error:'fixture transient alias registration failure'});aliases=JSON.parse(body);}
+  if(req.method==='PUT'){let body='';for await(const c of req)body+=c;aliasWrites++;if(aliasWrites<=(fixtureOptions.failAliasWrites??0))return send(503,{error:'fixture transient alias registration failure'});aliases=JSON.parse(body);if(fixtureOptions.staleConfigOnAliasWrite)writeFileSync(configPath,liveConfig.replace(/^(codex-api-key|claude-api-key|openai-compatibility):.*$/gm,'$1: []'));}
   return send(200,{'oauth-model-alias':aliases});
  }
  if(['/responses','/responses/compact','/messages','/messages/count_tokens','/chat/completions'].includes(path)) {
@@ -51,6 +54,7 @@ const server = createServer(async(req,res) => {
   const account=accounts.find(a=>!a.disabled&&(!req.headers['x-token-flow-auth']||a.name===req.headers['x-token-flow-auth'])&&accountModels(a).some(m=>m.id===input.model));
   if(!account)return send(404,{error:'model unavailable'});
   if(fixtureMode==='region-restricted')return send(400,{error:{message:'User location is not supported for the API use.',debug:'upstream-secret-never-expose'}});
+  if(fixtureMode==='claude-source-policy')return send(400,{type:'error',error:{type:'invalid_request_error',message:'The source rejected this invocation channel under its security policy.'}});
   if(fixtureMode.startsWith('a2a_'))return send(400,{error:{code:fixtureMode,message:'upstream-secret-never-expose',debug:'private diagnostic'}});
   if(path==='/messages/count_tokens')return send(200,{input_tokens:7});
   const usage={input_tokens:7,output_tokens:3};

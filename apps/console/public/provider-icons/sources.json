@@ -1,0 +1,16 @@
+{
+  "description": "Official website icons, bundled for offline provider navigation. Brand marks belong to their respective owners.",
+  "sources": {
+    "codex.ico": "https://cdn.oaistatic.com/assets/favicon-eex17e9e.ico",
+    "claude.ico": "https://claude.ai/favicon.ico",
+    "antigravity.png": "https://antigravity.google/assets/image/antigravity-logo.png",
+    "kimi.ico": "https://www.kimi.com/favicon-light.ico",
+    "xai.svg": "https://docs.x.ai/_next/static/media/favicon-light.1u6watcuoe8mg.svg",
+    "qoder.png": "https://img.alicdn.com/imgextra/i4/O1CN01QkSxiCocd3D0prc8_!!6000000008124-2-tps-412-412.png",
+    "workbuddy.svg": "https://download.codebuddy.cn/web/website/f4728a12fe9cfe5a34da6b2fa827614041c84386/assets/logo.svg",
+    "zcode.png": "https://zcode.z.ai/favicon-192x192.png?v=20260707-transparent",
+    "doubao.png": "https://lf-flow-web-cdn.doubao.com/obj/flow-doubao/favicon/new-doubao/128x128.png",
+    "trae.png": "https://lf16-web-neutral.traecdn.ai/obj/trae-ai-static/trae_website/favicon.png",
+    "cursor.png": "https://cursor.com/marketing-static/icon-192x192-light.png"
+  }
+}

@@ -13,8 +13,10 @@ export class MaintenanceApproval {
  private generation=0;
  private closed=false;
  private task?:Promise<void>;
+ private activeReviews=0;
  constructor(private review:(proposal:RepairProposal,policy:ApprovalPolicy)=>Promise<{decision:'approve'|'reject';reason:string;reviewer:string}>,private settled:()=>Promise<void>,private after:(result:unknown)=>Promise<void>){}
  snapshot(){return structuredClone({policy:this.policy,proposal:this.proposal});}
+ isBusy(){return this.activeReviews>0||this.proposal?.status==='executing';}
  configure(policy:ApprovalPolicy){if(this.proposal?.status==='executing')throw conflict('维修正在执行');this.generation++;this.policy=policy;if(this.proposal?.status==='reviewing')this.proposal.status='pending';if(this.policy.mode==='model'&&this.proposal?.status==='pending')this.launchReview();return this.snapshot();}
  clear(){if(this.proposal?.status==='executing')throw conflict('维修正在执行');this.generation++;this.proposal=undefined;this.execute=undefined;}
  async close(){this.closed=true;this.generation++;await this.task;}
@@ -29,6 +31,7 @@ export class MaintenanceApproval {
  private launchReview(){
    const id=this.proposal!.id;
    const generation=++this.generation;const policy=structuredClone(this.policy);
+   this.activeReviews++;
    this.task=(async()=>{
     await this.settled();if(this.closed||generation!==this.generation)return;
     const proposal=this.require(id);proposal.status='reviewing';
@@ -38,7 +41,7 @@ export class MaintenanceApproval {
      proposal.status='pending';proposal.reviewer=answer.reviewer;proposal.reason=answer.reason;
      if(answer.decision==='approve')await this.decide(id,true);else proposal.status='rejected';
     }catch{if(!this.closed&&generation===this.generation){proposal.status='pending';proposal.reason='模型审批未完成，已转回人工审批。';}}
-   })().catch(()=>{if(this.proposal?.id===id&&generation===this.generation){this.proposal.status='pending';this.proposal.reason='审批未完成，请重新检查并生成人工审批方案。';}});
+   })().catch(()=>{if(this.proposal?.id===id&&generation===this.generation){this.proposal.status='pending';this.proposal.reason='审批未完成，请重新检查并生成人工审批方案。';}}).finally(()=>{this.activeReviews--;});
   }
  private require(id:string){if(!this.proposal||this.proposal.id!==id)throw conflict('维修方案已变更');if(Date.now()>Date.parse(this.proposal.expiresAt))throw conflict('维修方案已过期，请重新生成');return this.proposal;}
  async decide(id:string,approve:boolean){

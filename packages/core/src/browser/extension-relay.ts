@@ -69,14 +69,27 @@ export class ExtensionRelay {
   }
   private acceptClient(ws:WebSocket){
     this.client=ws;this.attached=false;this.children.clear();const generation=++this.generation;
+    const frameDiscovery=new Map<string,{ready:Promise<void>;release:()=>void}>();
     ws.on('error',()=>{});
     ws.on('message',async data=>{
       let message:{id:number;method:string;params?:Record<string,unknown>;sessionId?:string};
       try{message=JSON.parse(data.toString());if(!Number.isInteger(message.id)||typeof message.method!=='string')throw new Error();}catch{ws.close(1008,'Invalid CDP message');return;}
-      try{const result=await this.command(message.method,message.params??{},message.sessionId);if(this.generation===generation)this.send({id:message.id,sessionId:message.sessionId,result});}
+      const session=message.sessionId??'';
+      let frame: {ready:Promise<void>;release:()=>void}|undefined;
+      if(message.method==='Page.getFrameTree'){
+        let release!:()=>void;frame={ready:new Promise<void>(resolve=>{release=resolve;}),release};frameDiscovery.set(session,frame);
+      }
+      try{
+        // Playwright installs Runtime listeners after receiving the frame tree.
+        // chrome.debugger events can overtake that response, so enable Runtime only afterward.
+        if(message.method==='Runtime.enable')await frameDiscovery.get(session)?.ready;
+        if(this.generation!==generation)return;
+        const result=await this.command(message.method,message.params??{},message.sessionId);if(this.generation===generation)this.send({id:message.id,sessionId:message.sessionId,result});
+      }
       catch(error){if(this.generation===generation)this.send({id:message.id,sessionId:message.sessionId,error:{message:error instanceof Error?error.message:'Bridge command failed'}});}
+      finally{if(frame){frame.release();if(frameDiscovery.get(session)===frame)frameDiscovery.delete(session);}}
     });
-    ws.on('close',()=>{if(this.client===ws){this.client=undefined;this.attached=false;this.children.clear();this.generation++;this.rejectPending();}});
+    ws.on('close',()=>{if(this.client===ws){this.client=undefined;this.attached=false;this.children.clear();this.generation++;this.rejectPending();}for(const frame of frameDiscovery.values())frame.release();frameDiscovery.clear();});
   }
   private send(message:unknown){if(this.client?.readyState===WebSocket.OPEN)this.client.send(JSON.stringify(message));}
   private async command(method:string,params:Record<string,unknown>,sessionId?:string):Promise<unknown>{

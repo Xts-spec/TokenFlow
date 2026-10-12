@@ -51,7 +51,7 @@ async function portEvidence(port:number,signal:AbortSignal){
 export type Installation={target:Target;path?:string;version?:string;channel:'npm-global'|'unknown'|'not-found';reason:string;fingerprint?:string;packageRoot?:string;npm?:string;prefix?:string;reference:string};
 export type LocalRun={id:string;kind:'diagnostic'|'upgrade';title:string;startedAt:string;endedAt?:string;status:'running'|'completed'|'failed'|'stopped'|'interrupted';steps:{name:string;status:'passed'|'failed'|'skipped'|'running';message:string;data?:unknown}[]};
 export type UpgradePlan={id:string;target:'codex';currentVersion:string;nextVersion:string;createdAt:string;expiresAt:string;installation:Installation;command:Command;integrity:string;configurationRevision:string;impact:string;rollback:string};
-type Options={runner?:CommandRunner;installation?:()=>Promise<Installation>;latest?:()=>Promise<{version:string;integrity:string}>;source:(id:string)=>Promise<{baseURL:string;name:string}|undefined>;gateway:()=>{port:number;state:string};processes?:(target:Target)=>Promise<number[]>};
+type Options={runner?:CommandRunner;installation?:()=>Promise<Installation>;latest?:()=>Promise<{version:string;integrity:string}>;source:(id:string)=>Promise<{baseURL?:string;name:string;kind?:'account'}|undefined>;gateway:()=>{port:number;state:string};processes?:(target:Target)=>Promise<number[]>};
 const historySchema=z.array(z.object({id:z.string().uuid(),kind:z.enum(['diagnostic','upgrade']),title:z.string().max(200),startedAt:z.string(),endedAt:z.string().optional(),status:z.enum(['running','completed','failed','stopped','interrupted']),steps:z.array(z.object({name:z.string(),status:z.enum(['passed','failed','skipped','running']),message:z.string(),data:z.unknown().optional()}))})).max(50);
 
 /** Lives independently of the model and sidecar. Stores facts, never raw configs or command output. */
@@ -120,8 +120,9 @@ export class LocalMaintenance {
   if(input.check==='processes')return {target:input.target,pids:await this.processes(input.target),message:'只查询进程名称与 PID，不读取命令参数，不终止进程。'};
   if(input.check==='installation')return this.installation(input.target,signal);
   if(input.check==='ports')return {...this.options.gateway(),evidence:await portEvidence(this.options.gateway().port,signal),message:'TCP 可达不代表模型调用成功。'};
-  if(!input.sourceId)throw conflict('网络诊断需要明确选择已保存的 API 来源');
-  const source=await this.options.source(input.sourceId);if(!source)throw conflict('所选 API 来源不存在或已停用');
+  if(!input.sourceId)throw conflict('网络诊断需要明确选择已保存的来源');
+  const source=await this.options.source(input.sourceId);if(!source)throw conflict('所选来源不存在或已停用');
+  if(!source.baseURL)return {sourceId:input.sourceId,stage:'unsupported',message:'已识别登录账号。此来源尚无无密钥网络诊断入口；不能据此判断账号停用或网络故障。'};
   const url=new URL(source.baseURL);url.search='';url.hash='';const started=Date.now();
   // A credential-free HEAD checks the configured endpoint only. Never follow redirects or disable TLS.
   try{const response=await fetch(url,{method:'HEAD',redirect:'manual',signal:AbortSignal.any([signal,AbortSignal.timeout(10000)])});await response.body?.cancel();return {sourceId:input.sourceId,stage:url.protocol==='https:'?'DNS/TCP/TLS/HTTP':'TCP/HTTP',httpStatus:response.status,durationMs:Date.now()-started,message:'已收到 HTTP 响应。未带密钥、未调用模型；401/403/405 也不能据此判定模型权限。'};}
@@ -137,7 +138,10 @@ export class LocalMaintenance {
    finally{run.endedAt=new Date().toISOString();try{await this.persist();}catch{this.warning='维修结果无法保存到磁盘；当前结果仍在本次运行中，请保留资料目录并检查。';}this.abort=undefined;}
   })();return this.snapshot();
  }
- startDiagnostic(target:Target,sourceId?:string){return this.start('diagnostic',`${target} · 本地诊断`,async(run,signal)=>{
+ async startDiagnostic(target:Target,sourceId?:string){
+  this.ensureIdle();
+  if(sourceId&&!await this.options.source(sourceId))throw conflict('所选来源不存在或已停用，请重新选择网络来源或仅运行本地检查。');
+  return this.start('diagnostic',`${target} · 本地诊断`,async(run,signal)=>{
   for(const check of ['configuration','processes','ports','installation',...(sourceId?['network']:[])] as DiagnosticInput['check'][]){
    signal.throwIfAborted();try{const data=await this.diagnostic({check,target,sourceId},signal);signal.throwIfAborted();run.steps.push({name:check,status:'passed',message:'检查已完成，请以具体证据判断。',data});}catch{signal.throwIfAborted();run.steps.push({name:check,status:'failed',message:'该项无法完成，继续检查其他项目。'});}await this.persist();
   }

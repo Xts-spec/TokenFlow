@@ -30,7 +30,9 @@
     "test:sidecar-agents": "node scripts/test-sidecar-qoder.mjs",
     "test:claude-compat": "go -C upstream/CLIProxyAPI test ./internal/translator/codex/claude ./internal/translator/openai/claude && npm run test:sidecar-agents",
     "test:api-sources": "node scripts/api-sources-smoke.mjs",
-    "test:repair": "node scripts/local-repair-smoke.mjs"
+    "test:repair": "node scripts/local-repair-smoke.mjs",
+    "test:frontend": "node scripts/flow-ui-smoke.mjs",
+    "demo": "npm run build && node scripts/record-demo.mjs"
   },
   "dependencies": {
     "@cua-sample/contracts": "*",
@@ -102,6 +104,6 @@
   "engines": {
     "node": ">=22.19.0"
   },
-  "description": "token-flow — local model gateway for your agents",
+  "description": "Local desktop model gateway: manage accounts and APIs, connect models to coding agents, and export scoped client keys.",
   "author": "token-flow contributors"
 }

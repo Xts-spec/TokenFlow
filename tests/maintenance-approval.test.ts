@@ -19,3 +19,9 @@ it('does not execute rejected model plans or expired plans',async()=>{
  queue.configure({mode:'manual'});const p=queue.propose('repair','code',execute);const clock=vi.spyOn(Date,'now').mockReturnValue(Date.parse(p.expiresAt)+1);try{await expect(queue.decide(p.id,true)).rejects.toThrow('过期');}finally{clock.mockRestore();}
 });
 it('reports execution conflicts and does not run post-repair review',async()=>{const {queue,after}=setup();const p=queue.propose('repair','code',async()=>{throw Error('file changed');});await queue.decide(p.id,true);expect(queue.snapshot().proposal?.status).toBe('failed');expect(after).not.toHaveBeenCalled();});
+it('tracks queued and revoked reviews as busy until their model requests settle',async()=>{
+ let release!:(v:typeof verdict)=>void;const {queue,review,execute}=setup(vi.fn(()=>new Promise<typeof verdict>(r=>release=r)));
+ queue.configure({mode:'model'});queue.propose('repair','code',execute);expect(queue.isBusy()).toBe(true);
+ await vi.waitFor(()=>expect(review).toHaveBeenCalledOnce());queue.configure({mode:'manual'});expect(queue.isBusy()).toBe(true);
+ release(verdict);await vi.waitFor(()=>expect(queue.isBusy()).toBe(false));expect(execute).not.toHaveBeenCalled();
+});

@@ -128,3 +128,72 @@ main{min-width:0;min-height:0;overflow:auto;display:flex;flex-direction:column;b
 
 /* Independent local repair facts share the existing conversation drawer. */
 .localRepairTools{padding:18px;margin:0 0 24px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}.localRepairTools h2{font-size:15px}.localRepairTools .hint{font-size:11px;line-height:1.7;margin:8px 0}.localRepairFields{display:flex;gap:12px;flex-wrap:wrap}.localRepairTools label{font-size:12px;margin:10px 0;min-width:0;flex:1}.localRepairTools select{width:100%;max-width:100%;padding:9px}.localRepairTools button{font-size:12px}.localRepairEvidence,.directRepairChoice{border-top:1px solid var(--line);padding-top:14px;margin-top:16px;font-size:12px}.localRepairEvidence>div{margin-top:16px}.localRepairEvidence p,.directRepairChoice p{line-height:1.7}.localRepairEvidence pre,.localRepairTools .repairProposal pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:200px;overflow:auto;font-size:11px}.localRepairEvidence small{display:block;margin-top:8px;color:var(--muted)}.localRepairTools .repairProposal{padding:16px}.localRepairTools .banner{overflow-wrap:anywhere}.localRepairTools .scopeCheck{display:flex;align-items:flex-start;gap:8px;line-height:1.7}.localRepairTools .scopeCheck input{margin-top:3px}@media(max-width:650px){.localRepairTools{padding:14px}.localRepairFields{display:block}}
+
+/* Source tasks stay separate: pool credentials, reusable API and native client login. */
+.sourceTabs{margin-bottom:20px}.sourceExplanation{max-width:72ch;color:var(--muted);font-size:13px;line-height:1.8;margin:0 0 24px}
+.sourceFields{border:0;padding:0;margin:0;min-width:0;display:grid;gap:16px}
+.sourceFields .buttons{flex-wrap:wrap}.apiModelRow .buttons{flex-shrink:0}
+.apiSourcesPane{border:0;padding:0;background:transparent}.apiSourceList article{background:var(--surface)}
+.apiSourceEditor{padding-top:24px}.sourceTabs button{white-space:normal;text-align:left}
+.connectionWizard>.sectionTitle .hint{max-width:65ch;line-height:1.7}
+@media(max-width:640px){.sourceTabs{gap:4px}.sourceTabs button{padding:10px 8px;font-size:12px}.apiSourcesPane{padding:0}.apiModelRow .buttons{flex-wrap:wrap}.sourceExplanation{font-size:12px}}
+
+/* Calm utility surfaces and a compact connection ledger for daily switching. */
+:root{--canvas:oklch(98% .007 260);--surface:oklch(99.8% .002 260);--soft:oklch(96.5% .01 260);--line:oklch(91% .018 260);--accent-soft:oklch(96.4% .02 260);--space-sm:8px;--space-md:16px;--space-lg:24px;--space-xl:32px}
+main{background:var(--surface)}.top{background:var(--surface)}.gatewayHero p,.modelCenterHeading p{line-height:1.8}
+.agentInitial{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex-shrink:0;border:1px solid var(--line);border-radius:7px;background:var(--canvas);font-size:14px;font-weight:650;color:var(--text)}
+.workbenchAgent.hasConnection .agentInitial{color:var(--accent);background:var(--accent-soft);border-color:oklch(88% .055 260)}
+.workbenchAgent.hasConnection .agentCurrentModel{color:var(--accent)}
+.workbenchAgent .agentCardTitle button{font-size:11px}.workbenchAgent .buttons button{min-height:32px}
+.connectionRoute{display:flex;align-items:center;gap:16px;padding:18px 0;margin-top:20px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.connectionRoute>div{display:grid;gap:6px;min-width:0;flex:1}.connectionRoute small{font-size:10px}.connectionRoute strong{font-size:13px;overflow-wrap:anywhere}.connectionRoute span{font-size:11px;color:var(--muted);overflow-wrap:anywhere}.connectionRoute>.uiIcon{color:var(--muted)}
+.sourceTabs{padding-bottom:12px;gap:8px}.sourceTabs button{border:1px solid transparent;border-radius:8px;padding:10px 16px;margin:0;font-size:13px}.sourceTabs button[aria-selected=true]{border-color:oklch(89% .04 260);background:var(--accent-soft);color:var(--accent)}
+.apiSourceList{gap:0;border-top:1px solid var(--line)}.apiSourceList article{border:0;border-bottom:1px solid var(--line);border-radius:0;padding:20px 0;background:transparent}.apiSourceList h3{font-size:15px}.apiSourceList p{font-size:12px}
+.apiSourceEditor>.sectionTitle h3{font-size:18px}.apiSourceEditor input,.apiSourceEditor select,.apiSourceEditor textarea{background:var(--surface)}.apiModelChecks .sectionTitle h3{font-size:15px}.apiModelRow .buttons button{font-size:11px;min-height:32px;padding:7px 10px}
+.accountSwitch .sectionHeading h2{font-size:24px;letter-spacing:-.4px}.nativeAccountStatus{background:var(--canvas);border-color:var(--line)}.nativeAccountCard{box-shadow:none;border-color:var(--line)}.nativeAccountCard.chosen{background:var(--accent-soft);border-color:oklch(76% .10 260)}
+.banner{line-height:1.8}.localRepairTools{background:var(--canvas);border-radius:10px}.repairDrawerHeader{border-bottom:1px solid var(--line)}.repairDrawer .careConversation .gatewayHero{background:var(--canvas)}
+@media(min-width:1280px){
+ .agentCardGrid{display:flex;flex-direction:column;gap:0;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+ .workbenchAgent{display:grid;grid-template-columns:minmax(130px,.8fr) minmax(150px,1fr) minmax(190px,1.2fr) minmax(160px,1fr);column-gap:24px;row-gap:7px;padding:22px 24px;border:0;border-radius:0;align-items:center}
+ .workbenchAgent+.workbenchAgent{border-top:1px solid var(--line)}.workbenchAgent.attention{background:oklch(98% .012 20)}
+ .agentCardTitle{grid-column:1;grid-row:1 / 3;margin:0;flex-wrap:wrap}.agentCardTitle h2{font-size:14px}.agentCardTitle button{width:100%;margin-left:37px;justify-content:flex-start}
+ .agentCurrentModel{grid-column:2;grid-row:1;font-size:15px}.agentSource{grid-column:2;grid-row:2;font-size:11px}
+ .agentEvidence{grid-column:3;grid-row:1;margin:0;font-size:11px}.workbenchAgent>small{grid-column:3;grid-row:2;font-size:10px;max-width:36ch}
+ .workbenchAgent>.buttons{grid-column:4;grid-row:1 / 3;margin:0;padding:0;justify-content:flex-end;gap:10px}
+ .apiSourceEditor{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:24px 32px}
+ .apiSourceEditor>.sectionTitle,.apiSourceEditor>.banner,.apiSourceDelete{grid-column:1 / -1;margin:0}.apiSourceEditor form{grid-column:1;align-self:start}.apiModelChecks{grid-column:2;margin:0;padding:20px;background:var(--canvas);border-radius:12px;align-self:start}.apiModelRow{align-items:flex-start;flex-direction:column;gap:12px}
+}
+@media(prefers-reduced-motion:no-preference){.sourceTabs button,.workbenchAgent,.nativeAccountCard{transition:background 160ms ease-out,border-color 160ms ease-out}}
+@media(max-width:650px){.sourceTabs button{padding:10px;font-size:12px}.connectionRoute{gap:10px}.accountSwitch .sectionHeading h2{font-size:20px}.apiModelRow .buttons{gap:8px}}
+
+/* Source summaries stay in place; details scroll in an independent modal. */
+.sourceTabs{margin-bottom:0}.modelCenterHeading{padding-bottom:24px}.providerDirectory{padding-top:24px}.directoryToolbar{margin-bottom:16px;gap:16px}.providerGrid{align-items:stretch;gap:16px}.providerCard,.providerCard.connected{display:flex;flex-direction:column;min-height:124px;background:var(--surface);border-color:var(--line);padding:16px;border-radius:10px}.providerCard.connected:before{display:none}.providerCardHead{cursor:default}.providerCardHead h2{font-size:15px}.providerNamespace{display:block;margin-top:4px}.providerCard .providerOverview,.providerCard:not(.connected) .providerOverview{display:flex;margin:16px 0 0;min-height:32px;gap:8px}.providerOverview>span{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.providerOverview>button{flex-shrink:0;display:flex;align-items:center;gap:6px;min-height:32px;padding:6px 10px;font-size:12px;border-radius:7px}.providerOverview .textButton{padding:6px 0;color:var(--accent)}.providerConnection{font-size:11px}.directoryNote{margin-top:16px}
+.providerDrawer{position:fixed;inset:0 0 0 auto;margin:0;width:min(520px,100vw);max-width:100vw;height:100dvh;max-height:100dvh;padding:0;border:0;border-left:1px solid var(--line);background:var(--surface);color:var(--text);box-shadow:-12px 0 48px #17243b14;overflow:hidden}.providerDrawer[open]{display:flex;flex-direction:column}.providerDrawer::backdrop{background:#17243b24}.providerDrawerHeader{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:24px;border-bottom:1px solid var(--line);flex-shrink:0}.providerDrawerHeader h2{font-size:18px;margin:0}.providerDrawerHeader p{color:var(--muted);font-size:12px;margin:8px 0 0}.providerDrawerHeader .iconButton{width:36px;min-height:36px}.providerDrawerBody{padding:16px 24px;flex:1;min-height:0;overflow:auto;overscroll-behavior:contain}.providerHelp{font-size:12px;color:var(--muted);margin-bottom:16px}.providerHelp summary{cursor:pointer}.providerAccounts .accountRow:first-child{border-top:0;padding-top:0}.providerAccounts .accountRow{padding:16px 0}.providerAccounts .account{align-items:center}.providerAccounts .accountLabel{font-size:13px}.providerAccounts .accountLabel small{font-size:11px;margin-top:4px}.providerAccounts .buttons button{font-size:11px;min-height:30px;padding:5px 8px}.accountMore{position:relative;font-size:11px}.accountMore summary{cursor:pointer;list-style:none;padding:7px 8px;border-radius:6px}.accountMore[open]>button{position:absolute;right:0;top:32px;z-index:1;white-space:nowrap;background:var(--surface);box-shadow:0 4px 16px #17243b14}.providerAccounts .quotaObserved{display:block;margin-top:6px}.providerDrawer .loginPanel{padding:16px;margin:16px 0;border-radius:8px}.providerDrawer .loginPanel h2{font-size:14px}.providerDrawer .loginPanel p{font-size:12px}.providerDrawer .loginPanel .buttons{flex-wrap:wrap}.providerDrawer .providerCardFoot{margin:0;padding:16px 24px;border-top:1px solid var(--line);flex-shrink:0;flex-wrap:wrap;background:var(--surface)}.providerDrawer .providerCardFoot button{min-height:34px;font-size:12px}.providerDrawer .providerModels{padding:16px 0}.providerModels h3{font-size:13px}.modelChip{min-height:32px;font-size:12px}.providerDrawer .providerAccounts .quotaWindow{margin-bottom:12px}
+@media(max-width:650px){.providerDirectory{padding-top:16px}.providerDrawerHeader{padding:20px 16px}.providerDrawerBody,.providerDrawer .providerCardFoot{padding:16px}.providerAccounts .account{flex-wrap:wrap}.providerDrawer .providerCardFoot .buttons{flex-wrap:wrap}.providerCard .providerConnection{font-size:10px}}
+
+/* Keep the normal manual-setup path focused; less common choices stay nearby. */
+.terminalSettings{margin:16px 0;border:1px solid var(--line);border-radius:7px;padding:11px 13px;background:#fafbfe}
+.terminalSettings summary,.agentConfigHelp summary,.agentAuthCheck summary{cursor:pointer;font-size:12px;font-weight:550;color:#526881}
+.terminalSettings[open] summary,.agentConfigHelp[open] summary,.agentAuthCheck[open] summary{margin-bottom:12px}
+.terminalSettings label{margin-top:10px}.terminalSettings .hint{margin:0}.terminalSettings select{width:100%}
+.agentConfigHelp{margin-top:18px;border-top:1px solid var(--line);padding-top:15px}
+.agentConfigHelp .agentRoute{margin-top:14px;padding-top:14px}
+.agentAuthCheck{padding-bottom:3px}.agentAuthCheck>label{margin-top:15px}
+/* Native modal scroll locking must not shift cards on systems with classic scrollbars. */
+.app>main{scrollbar-gutter:stable}
+.workbenchGettingStarted{margin:0 0 28px;padding:24px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.workbenchGettingStarted ol{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;list-style:none;margin:0 0 20px;padding:0}
+.workbenchGettingStarted li{display:grid;gap:8px;line-height:1.7}.workbenchGettingStarted li[aria-current=step] strong{color:var(--accent)}
+.workbenchGettingStarted strong{font-size:14px}.workbenchGettingStarted span{font-size:12px;color:var(--muted)}
+.maintenanceUnlink{padding:16px 0;border-bottom:1px solid var(--line)}.maintenanceUnlink .hint{margin-bottom:12px}
+@media(max-width:650px){.workbenchGettingStarted{padding:20px}.workbenchGettingStarted ol{grid-template-columns:1fr;gap:16px}}
+
+/* Compact source choices keep account identity explicit; full quota evidence lives in the account drawer. */
+.a2aSourceOption{min-width:0;display:flex;flex-direction:column;align-items:stretch;gap:4px}
+.a2aSourceOption .a2aSource{width:100%;min-height:112px;gap:6px;padding:14px;text-align:left}
+.a2aSourceOption .a2aSource strong{font-size:13px;overflow-wrap:anywhere}
+.a2aSourceOption .sourceQuotaSummary{font-size:11px;line-height:1.5;color:var(--muted)}
+.a2aSourceOption .sourceDetails{align-self:flex-start;font-size:10px;padding:4px 2px;min-height:26px}
+.connectionWizard>.sectionTitle h2{scroll-margin-top:24px}
+.connectionWizard>.sectionTitle h2:focus-visible{outline:2px solid var(--accent);outline-offset:5px;border-radius:3px}
+@media(max-width:1000px),(max-height:720px){.repairBubble{display:none}}

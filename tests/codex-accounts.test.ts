@@ -7,6 +7,14 @@ import { CodexAccounts } from '../packages/core/src/codex-accounts.js';
 const roots:string[]=[];afterEach(async()=>{for(const root of roots.splice(0))await rm(root,{recursive:true,force:true});});
 const oauth=(id:string)=>({account_id:id,access_token:`secret-access-${id}`,refresh_token:`secret-refresh-${id}`,id_token:`x.${Buffer.from(JSON.stringify({email:`${id}@example.test`})).toString('base64url')}.x`});
 async function setup(){const root=await mkdtemp(join(await realpath(tmpdir()),'codex-switch-'));roots.push(root);await mkdir(join(root,'codex'));const config=join(root,'codex/config.toml'),auth=join(root,'codex/auth.json');let pids:number[]=[];return {root,config,auth,manager:new CodexAccounts(root,config,async()=>pids),running:(value:number[])=>pids=value};}
+it('switches between two members of the same ChatGPT workspace',async()=>{
+ const {config,auth,manager}=await setup();await writeFile(config,'model = "gpt-5"\n');
+ const member=(name:string)=>({...oauth('team'),access_token:`secret-access-${name}`,id_token:`x.${Buffer.from(JSON.stringify({email:`${name}@example.test`})).toString('base64url')}.x`});
+ await manager.switch({revision:(await manager.status()).revision,allowRunning:false,model:'codex/gpt-5'},member('alice'));
+ await manager.switch({revision:(await manager.status()).revision,allowRunning:false,model:'codex/gpt-5'},member('bob'));
+ expect(JSON.parse(await readFile(auth,'utf8')).tokens.access_token).toBe('secret-access-bob');expect((await manager.status()).email).toBe('bob@example.test');
+});
+
 it('switches two accounts and default models, retains original backup and restores after restart',async()=>{
  const {root,config,auth,manager}=await setup();const original='cli_auth_credentials_store = "keyring"\nmodel = "original"\nprofile = "work"\n[profiles.work]\nmodel = "profile-model"\n';await writeFile(config,original);await writeFile(auth,'{"original":"secret-native"}');
  expect((await manager.status()).email).toBeNull();
@@ -53,13 +61,20 @@ it('switches back after Codex changes its model and settings without losing thos
  expect(JSON.parse(await readFile(auth,'utf8')).tokens.account_id).toBe('a');expect(parse(await readFile(config,'utf8')).model_reasoning_effort).toBe('high');
  await manager.restore({revision:(await manager.status()).revision,allowRunning:false});expect(parse(await readFile(config,'utf8'))).toMatchObject({model:'original',model_reasoning_effort:'high'});
 });
-it('accepts formatting-only rewrites but blocks another provider and preserves original backup',async()=>{
+it('accepts formatting-only rewrites and preserves the original backup',async()=>{
  const {manager,config}=await setup();await writeFile(config,'model = "original"\n');
  await manager.switch({revision:(await manager.status()).revision,allowRunning:false,model:'codex/gpt-6-sol'},oauth('a'));
  await writeFile(config,'# rewritten by Codex\n'+(await readFile(config,'utf8')).replaceAll(' = ','='));
  await manager.switch({revision:(await manager.status()).revision,allowRunning:false,model:'codex/gpt-6-astra'},oauth('b'));
- const native=await readFile(config,'utf8');await writeFile(config,native.replace('model_provider = "openai"','model_provider = "another"'));
- await expect(manager.switch({revision:(await manager.status()).revision,allowRunning:false,model:'codex/gpt-6-sol'},oauth('a'))).rejects.toThrow('已被修改');
- await expect(manager.restore({revision:(await manager.status()).revision,allowRunning:false})).rejects.toThrow('其他修改');
- await writeFile(config,'# another format rewrite\n'+native);await manager.restore({revision:(await manager.status()).revision,allowRunning:false});expect(await readFile(config,'utf8')).toBe('model = "original"\n');
+ await writeFile(config,'# another format rewrite\n'+await readFile(config,'utf8'));await manager.restore({revision:(await manager.status()).revision,allowRunning:false});expect(await readFile(config,'utf8')).toBe('model = "original"\n');
+});
+it('keeps switching after the login or provider changed outside token-flow, restoring to that newer state',async()=>{
+ const {manager,config,auth}=await setup();await writeFile(config,'model = "original"\n');
+ await manager.switch({revision:(await manager.status()).revision,allowRunning:false,model:'codex/gpt-6-sol'},oauth('a'));
+ await writeFile(config,(await readFile(config,'utf8')).replace('model_provider = "openai"','model_provider = "another"'));
+ await writeFile(auth,JSON.stringify({tokens:oauth('relogin')}));
+ await manager.switch({revision:(await manager.status()).revision,allowRunning:false,model:'codex/gpt-6-sol'},oauth('b'));
+ expect(JSON.parse(await readFile(auth,'utf8')).tokens.account_id).toBe('b');
+ await manager.restore({revision:(await manager.status()).revision,allowRunning:false});
+ expect(parse(await readFile(config,'utf8')).model_provider).toBe('another');expect(JSON.parse(await readFile(auth,'utf8')).tokens.account_id).toBe('relogin');
 });

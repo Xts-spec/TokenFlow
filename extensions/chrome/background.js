@@ -14,7 +14,7 @@ async function connect(connectionURL, tabId) {
   connecting=true;
   try {
     const url=new URL(connectionURL);
-    if(url.protocol!=='ws:'||url.hostname!=='127.0.0.1'||!url.port||url.pathname!=='/extension'||url.username||url.password||url.hash||!/^\d+$/.test(url.port)||!/^[a-f0-9]{64}$/.test(url.searchParams.get('token')??''))throw new Error('请粘贴桌面端生成的本机连接码');
+    if(url.protocol!=='ws:'||url.hostname!=='127.0.0.1'||!url.port||url.pathname!=='/extension'||url.username||url.password||url.hash||!/^\d+$/.test(url.port)||!/^[a-f0-9]{64}$/.test(url.searchParams.get('token')??''))throw new Error('请粘贴工作台生成的本机连接码');
     const tab=await chrome.tabs.get(tabId);
     if(!/^https?:\/\//.test(tab.url??''))throw new Error('请切换到普通网站标签页，Chrome 内部页无法连接');
     await disconnect();status='正在连接';

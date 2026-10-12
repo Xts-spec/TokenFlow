@@ -50,9 +50,10 @@ export class NativeAccounts {
   async switch(input:{revision:string;model?:string},raw:unknown){
     const parsed=nativeCredentialSchema.safeParse(raw);if(!parsed.success)throw nativeConflict('账号缺少完整 OAuth 凭据，请重新授权。');
     return this.locked(async()=>{
-      const before=await this.check(input.revision),previous=await this.journal();
+      const before=await this.check(input.revision);let previous=await this.journal();
       if(previous?.state==='prepared')throw nativeConflict('上次切换未完成，请先还原原登录。');
-      if(previous?.state==='applied'&&this.store.describe(before).email!==this.store.describe(previous.after).email)throw nativeConflict('本机已登录其他账号，请先检查或还原原登录。');
+      // Signed in elsewhere since the last switch: that login becomes the new original.
+      if(previous?.state==='applied'&&this.store.describe(before).email!==this.store.describe(previous.after).email)previous=null;
       const after=this.store.prepare(before,parsed.data,input.model);
       const journal={before:previous?.state==='applied'?previous.before:before,after,createdAt:new Date().toISOString(),state:'prepared' as 'prepared'|'applied'|'restored'};
       await writePrivate(this.backupPath,JSON.stringify(journal));

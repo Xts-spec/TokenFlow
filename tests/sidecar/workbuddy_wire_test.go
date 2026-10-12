@@ -458,3 +458,104 @@ func TestWorkBuddyPartialToolStreamIsNotReplayed(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkBuddyClaudeClientProfilePreservesInstructions(t *testing.T) {
+	identities := []string{
+		"You are Claude Code, Anthropic's official CLI for Claude.",
+		"You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK.",
+	}
+	const compatible = "You are a Claude agent, built on Anthropic's Claude Agent SDK."
+	for _, identity := range identities {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%d/%v", len(identity), stream), func(t *testing.T) {
+				quoted := "Quoted user text: " + identity
+				rules := "Require approval before writes. Never disclose credentials.\n" + identity
+				var calls int
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					calls++
+					body, _ := io.ReadAll(r.Body)
+					var system, user gjson.Result
+					for _, m := range gjson.GetBytes(body, "messages").Array() {
+						if m.Get("role").String() == "system" && m.Get("content").IsArray() {
+							system = m.Get("content")
+						}
+						if m.Get("role").String() == "user" {
+							user = m.Get("content")
+						}
+					}
+					parts := system.Array()
+					if len(parts) != 2 || parts[0].Get("text").String() != compatible || parts[1].Get("text").String() != rules {
+						t.Errorf("fixed introduction was not normalized while keeping all rules: %s", system.Raw)
+					}
+					if !strings.Contains(user.String(), quoted) {
+						t.Error("user content changed")
+					}
+					if gjson.GetBytes(body, "tools.0.function.name").String() != "Read" {
+						t.Error("tool definition changed")
+					}
+					if r.Header.Get("Authorization") != "Bearer synthetic" {
+						t.Error("source authorization changed")
+					}
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprint(w, "data: {\"id\":\"fixture\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"OK\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+				}))
+				defer server.Close()
+				payload := fmt.Sprintf(`{"model":"glm-5.1","system":[{"type":"text","text":%q},{"type":"text","text":%q,"cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":%q}],"tools":[{"name":"Read","input_schema":{"type":"object","properties":{"path":{"type":"string"}}}}],"max_tokens":64}`, identity, rules, quoted)
+				req := cliproxyexecutor.Request{Model: "glm-5.1", Payload: []byte(payload)}
+				opts := cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatClaude, OriginalRequest: req.Payload}
+				auth := &cliproxyauth.Auth{Provider: "workbuddy", Metadata: map[string]any{"access_token": "synthetic"}, Attributes: map[string]string{"chat_url": server.URL}}
+				executor := NewWorkBuddyExecutor(&config.Config{})
+				if stream {
+					result, err := executor.ExecuteStream(context.Background(), auth, req, opts)
+					if err != nil {
+						t.Fatal(err)
+					}
+					for chunk := range result.Chunks {
+						if chunk.Err != nil {
+							t.Fatal(chunk.Err)
+						}
+					}
+				} else {
+					if _, err := executor.Execute(context.Background(), auth, req, opts); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if calls != 1 {
+					t.Errorf("unexpected retries: %d", calls)
+				}
+				if string(req.Payload) != payload || string(opts.OriginalRequest) != payload {
+					t.Error("original client request mutated")
+				}
+			})
+		}
+	}
+}
+
+func TestWorkBuddyClaudeProfileScope(t *testing.T) {
+	const identity = "You are Claude Code, Anthropic's official CLI for Claude."
+	for _, format := range []sdktranslator.Format{sdktranslator.FormatOpenAI, sdktranslator.FormatOpenAIResponse, sdktranslator.FormatCodex} {
+		payload := fmt.Sprintf(`{"system":%q,"messages":[{"role":"user","content":%q}]}`, identity, identity)
+		req := cliproxyexecutor.Request{Payload: []byte(payload)}
+		got := workBuddyClaudeProfile(req, cliproxyexecutor.Options{SourceFormat: format})
+		if string(got.Payload) != payload {
+			t.Fatalf("changed non-Claude protocol %s", format)
+		}
+	}
+	for _, value := range []string{identity + "\nRequire approval.", "Quoted: " + identity, "Custom project rules.", ""} {
+		payload := fmt.Sprintf(`{"system":[{"type":"text","text":%q}],"messages":[{"role":"user","content":%q}]}`, value, identity)
+		req := cliproxyexecutor.Request{Payload: []byte(payload)}
+		got := workBuddyClaudeProfile(req, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatClaude})
+		if string(got.Payload) != payload {
+			t.Fatalf("changed custom system or user content")
+		}
+	}
+	payload := fmt.Sprintf(`{"system":%q}`, identity)
+	req := cliproxyexecutor.Request{Payload: []byte(payload)}
+	got := workBuddyClaudeProfile(req, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatClaude})
+	if gjson.GetBytes(got.Payload, "system").String() != "You are a Claude agent, built on Anthropic's Claude Agent SDK." {
+		t.Fatal("standalone string introduction not normalized")
+	}
+	if string(req.Payload) != payload {
+		t.Fatal("original request mutated")
+	}
+}

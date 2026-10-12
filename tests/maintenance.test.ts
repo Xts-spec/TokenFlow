@@ -75,3 +75,30 @@ it('keeps the P1 model file readable, preserves explicit channel across restart 
  await writeFile(join(root,'maintenance-model.json'),JSON.stringify({sourceId:'other',model:'other/model'}));const interrupted=new GatewayMaintenance(root);await interrupted.load();expect(interrupted.snapshot().selection).toBeUndefined();expect(interrupted.snapshot().channelWarning).toContain('未调用模型或自动切换');await interrupted.close();
  }finally{await care.close();await rm(root,{recursive:true,force:true});}
 });
+
+it('clears direct selection without losing completed dialogue and refuses to clear while checking or running',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'pi-clear-'));let release!:()=>void;let held=false;const pending=new Promise<void>(r=>release=r);
+ const care=new GatewayMaintenance(root,async()=>{if(held)await pending;return answer([{type:'text',text:'已完成检查'}]);});
+ const actions={inspect:async()=>({}),refresh:async()=>({}),restore:async()=>({})};
+ try{
+  await care.select({sourceId:'account',model:'qoder/test',channel:'direct'});care.start('保留历史',transport,actions,false,{target:'codex',sourceId:'account',model:'qoder/test'});await care.settled();const before=care.snapshot();
+  held=true;care.check(transport);await expect(care.clearSelection()).rejects.toMatchObject({statusCode:409});release();await care.settled();held=false;
+  const cleared=await care.clearSelection();expect(cleared.selection).toBeUndefined();expect(cleared.messages).toEqual(before.messages);expect(cleared.chain).toEqual(before.chain);
+  const reopened=new GatewayMaintenance(root);await reopened.load();expect(reopened.snapshot().selection).toBeUndefined();await reopened.close();
+  await care.select({sourceId:'account',model:'qoder/test'});let finish!:()=>void;const inspect=new Promise<void>(r=>finish=r);care.start('运行中',transport,{...actions,inspect:async()=>{await inspect;return {};}});await expect(care.clearSelection()).rejects.toMatchObject({statusCode:409});finish();await care.settled();
+ }finally{release();await care.close();await rm(root,{recursive:true,force:true});}
+});
+
+it('lets the repair model inspect all Agent choices and propose a concrete routing change without executing it',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'pi-agent-config-'));let turns=0;let proposal:unknown;
+ const care=new GatewayMaintenance(root,(_model,context)=>{
+  if(++turns===1)return answer([{type:'toolCall',id:'choices',name:'inspect_agent_configurations',arguments:{}}]);
+  if(turns===2){expect(JSON.stringify(context)).toContain('saved-source');return answer([{type:'toolCall',id:'configure',name:'propose_agent_configuration',arguments:{target:'qoder',sourceId:'saved-source',model:'codex/test'}}]);}
+  expect(JSON.stringify(context)).toContain('pending');return answer([{type:'text',text:'已生成 Qoder 接口、Key 和模型的修改方案，等待确认。'}]);
+ });
+ try{
+  await care.select({sourceId:'repair',model:'codex/test'});
+  care.start('请修改 Qoder 的接口、Key 和模型配置',transport,{inspect:async()=>({}),refresh:async()=>({}),restore:async()=>({}),configurations:async()=>({targets:['codex','claude','workbuddy','qoder'],sources:[{sourceId:'saved-source',models:['codex/test']}]}),configure:async input=>{proposal=input;return {status:'pending'};}});
+  await care.settled();expect(care.snapshot().status).toBe('completed');expect(proposal).toEqual({target:'qoder',sourceId:'saved-source',model:'codex/test'});
+ }finally{await care.close();await rm(root,{recursive:true,force:true});}
+});

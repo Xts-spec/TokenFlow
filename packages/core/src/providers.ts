@@ -5,11 +5,15 @@ import type { ResponsesClient, ResponsesApiResponse } from './responses-loop.js'
 export const providerSchema = z.object({
   kind: z.enum(['cliproxy','openai','custom']),
   engine: z.enum(['legacy','pi']).optional(),
-  baseURL: z.string().url().refine(value => {
-    const url = new URL(value);
-    return !url.username && !url.password && !url.search && !url.hash &&
-      (url.protocol === 'https:' || (url.protocol === 'http:' && ['127.0.0.1','localhost','[::1]'].includes(url.hostname)));
-  }, 'Use HTTPS, or HTTP on loopback only.'),
+  baseURL: z.string().trim().superRefine((value,ctx) => {
+    let url:URL;
+    try { url = new URL(value); }
+    catch { ctx.addIssue({code:z.ZodIssueCode.custom,message:'请输入完整的 API 地址，例如 https://api.example.com/v1。'});return; }
+    if(url.username || url.password || url.search || url.hash)
+      ctx.addIssue({code:z.ZodIssueCode.custom,message:'API 地址不能包含用户名、密码、查询参数或片段。'});
+    else if(url.protocol !== 'https:' && !(url.protocol === 'http:' && ['127.0.0.1','localhost','[::1]'].includes(url.hostname)))
+      ctx.addIssue({code:z.ZodIssueCode.custom,message:'请使用 HTTPS 地址；HTTP 仅支持本机回环地址。'});
+  }),
   model: z.string().trim().max(200),
   historyMode: z.enum(['stateless','previous_response_id']).default('stateless'),
   reasoning: z.enum(['off','low','medium','high']).default('off'),

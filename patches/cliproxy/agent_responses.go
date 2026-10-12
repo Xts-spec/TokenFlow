@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -140,6 +142,8 @@ func startAgentResponses(ctx context.Context, auth *cliproxyauth.Auth, req clipr
 		return nil, nil, err
 	}
 	translated.Payload = preserveAgentParameters(req.Payload, translated.Payload, true)
+	var restoreNames func([]byte) []byte
+	translated.Payload, restoreNames = agentChatToolNames(translated.Payload)
 	upstream, err := native(ctx, auth, translated, opts)
 	if err != nil {
 		return nil, nil, err
@@ -169,7 +173,7 @@ func startAgentResponses(ctx context.Context, auth *cliproxyauth.Auth, req clipr
 				send(chunk)
 				return
 			}
-			if !translate(chunk.Payload) {
+			if !translate(restoreNames(chunk.Payload)) {
 				return
 			}
 		}
@@ -181,6 +185,57 @@ func startAgentResponses(ctx context.Context, auth *cliproxyauth.Auth, req clipr
 	headers.Set("Content-Type", "text/event-stream")
 	headers.Del("Content-Length")
 	return &cliproxyexecutor.StreamResult{Headers: headers, Chunks: out}, canonical, nil
+}
+
+// Chat function names have a 64-byte limit. Namespace flattening can exceed it.
+// Alias only names, including history and forced choices; never alter arguments,
+// IDs, tool results or instructions. Restore names before the Responses codec.
+func agentChatToolNames(payload []byte) ([]byte, func([]byte) []byte) {
+	paths := map[string]string{}
+	for i, tool := range gjson.GetBytes(payload, "tools").Array() {
+		paths[fmt.Sprintf("tools.%d.function.name", i)] = tool.Get("function.name").String()
+	}
+	for i, message := range gjson.GetBytes(payload, "messages").Array() {
+		for j, call := range message.Get("tool_calls").Array() {
+			paths[fmt.Sprintf("messages.%d.tool_calls.%d.function.name", i, j)] = call.Get("function.name").String()
+		}
+	}
+	if name := gjson.GetBytes(payload, "tool_choice.function.name").String(); name != "" {
+		paths["tool_choice.function.name"] = name
+	}
+	aliases, reverse, reserved := map[string]string{}, map[string]string{}, map[string]bool{}
+	for _, name := range paths {
+		reserved[name] = true
+	}
+	for path, name := range paths {
+		if len(name) <= 64 {
+			continue
+		}
+		alias := aliases[name]
+		if alias == "" {
+			for nonce := 0; ; nonce++ {
+				sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%d", name, nonce)))
+				alias = fmt.Sprintf("tf_%x", sum)[:63]
+				if !reserved[alias] {
+					break
+				}
+			}
+			reserved[alias] = true
+			aliases[name] = alias
+			reverse[alias] = name
+		}
+		payload, _ = sjson.SetBytes(payload, path, alias)
+	}
+	return payload, func(chunk []byte) []byte {
+		for i, choice := range gjson.GetBytes(chunk, "choices").Array() {
+			for j, call := range choice.Get("delta.tool_calls").Array() {
+				if name, ok := reverse[call.Get("function.name").String()]; ok {
+					chunk, _ = sjson.SetBytes(chunk, fmt.Sprintf("choices.%d.delta.tool_calls.%d.function.name", i, j), name)
+				}
+			}
+		}
+		return chunk
+	}
 }
 
 // Chat-backed sources can execute client function/custom tools, but have no
@@ -403,7 +458,11 @@ func readAgentChatStream(ctx context.Context, resp *http.Response, provider stri
 			}
 			chunk := gjson.Parse(data)
 			if chunk.Get("error").Exists() {
-				fail("model response reported an error")
+				if chunk.Get("error.code").String() == "invalid_parameter_error" || chunk.Get("error.type").String() == "invalid_request_error" {
+					send(cliproxyexecutor.StreamChunk{Err: statusErr{code: 400, msg: `{"error":{"type":"invalid_request_error","code":"a2a_invalid_request","message":"The source rejected request parameters."}}`}})
+				} else {
+					fail("model response reported an error")
+				}
 				return
 			}
 			if !chunk.Get("choices").IsArray() {

@@ -13,9 +13,9 @@ type Storage = {
 export function createSecrets(root:string, storage:Storage, platform=process.platform) {
   const unreadable=new Set<string>();
   const warnings=new Map<string,string>();
-  const label=(name:string)=>name.startsWith('source-')?'API 来源':({cliproxy:'内部网关',openai:'OpenAI',custom:'自定义接口','cursor-account':'Cursor 账号'}[name]??name);
+  const label=(name:string)=>name.startsWith('gateway-key-')?'导出 Key':name.startsWith('source-')?'API 来源':({cliproxy:'内部网关',openai:'OpenAI',custom:'自定义接口','cursor-account':'Cursor 账号'}[name]??name);
   const path=(name:string)=>{
-    if(!['cliproxy','openai','custom','cursor-account'].includes(name)&&!/^source-[a-f0-9]{24}-[a-f0-9]{16}$/.test(name))throw new Error('未知密钥类型');
+    if(!['cliproxy','openai','custom','cursor-account'].includes(name)&&!/^source-[a-f0-9]{24}-[a-f0-9]{16}$/.test(name)&&!/^gateway-key-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(name))throw new Error('未知密钥类型');
     return join(root,'secrets',`${name}.bin`);
   };
   const canEncrypt=()=>storage.isEncryptionAvailable()&&!(platform==='linux'&&storage.getSelectedStorageBackend?.()==='basic_text');

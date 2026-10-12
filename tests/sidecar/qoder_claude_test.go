@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -174,5 +175,54 @@ func TestQoderToolCallAndInvalidStream(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestQoderLongToolNamesRoundTrip(t *testing.T) {
+	name := "mcp__fixture__" + strings.Repeat("long_tool_", 9)
+	payload, _ := json.Marshal(map[string]any{"model": "kmodel_latest", "input": []any{
+		map[string]any{"type": "function_call", "call_id": "old", "name": name, "arguments": "{}"},
+		map[string]any{"type": "function_call_output", "call_id": "old", "output": "previous result"},
+	}, "tools": []any{map[string]any{"type": "function", "name": name, "parameters": map[string]any{"type": "object"}}}, "tool_choice": map[string]any{"type": "function", "name": name}})
+	native := func(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+		short := gjson.GetBytes(req.Payload, "tools.0.function.name").String()
+		if len(short) > 64 {
+			t.Fatalf("Qoder rejects tool name length %d", len(short))
+		}
+		if gjson.GetBytes(req.Payload, "tool_choice.function.name").String() != short || gjson.GetBytes(req.Payload, "messages.0.tool_calls.0.function.name").String() != short {
+			t.Fatal("tool selection/history did not use the same alias")
+		}
+		chunks := make(chan cliproxyexecutor.StreamChunk, 2)
+		first, _ := json.Marshal(map[string]any{"id": "fixture", "choices": []any{map[string]any{"index": 0, "delta": map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": "new", "type": "function", "function": map[string]any{"name": short, "arguments": "{}"}}}}, "finish_reason": "tool_calls"}}})
+		chunks <- cliproxyexecutor.StreamChunk{Payload: first}
+		close(chunks)
+		return &cliproxyexecutor.StreamResult{Headers: http.Header{}, Chunks: chunks}, nil
+	}
+	opts := cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAIResponse, OriginalRequest: payload}
+	result, err := executeAgentResponse(context.Background(), nil, cliproxyexecutor.Request{Model: "kmodel_latest", Payload: payload}, opts, native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gjson.GetBytes(result.Payload, "output.0.name").String() != name {
+		t.Fatal("tool name was not restored")
+	}
+}
+
+func TestQoderInvalidParameterIsRequestFault(t *testing.T) {
+	body := `data: {"body":"{\"error\":{\"code\":\"invalid_parameter_error\",\"type\":\"invalid_request_error\",\"message\":\"The length of the tool name cannot exceed 64. private-payload\"}}"}` + "\n\n"
+	resp := &http.Response{Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}
+	stream := readAgentChatStream(context.Background(), resp, "qoder")
+	var failure error
+	for chunk := range stream.Chunks {
+		if chunk.Err != nil {
+			failure = chunk.Err
+		}
+	}
+	typed, ok := failure.(interface{ StatusCode() int })
+	if !ok || typed.StatusCode() != 400 {
+		t.Fatalf("parameter error poisoned source health: %v", failure)
+	}
+	if !strings.Contains(failure.Error(), "a2a_invalid_request") || strings.Contains(failure.Error(), "private-payload") {
+		t.Fatal("missing safe request category or exposed diagnostic")
 	}
 }

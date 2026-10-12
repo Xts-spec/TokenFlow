@@ -23,6 +23,19 @@ it('diagnoses offline without a model and persists only facts across restart',as
  const reopened=new LocalMaintenance(root,connections,options);await reopened.load();expect(reopened.snapshot().runs).toEqual(snapshot.runs);await reopened.close();
  await expect(care.diagnostic({check:'configuration',target:'codex',path:'/etc/passwd'} as never,new AbortController().signal)).rejects.toThrow();
 });
+it('rejects an unavailable network source before creating a diagnostic run',async()=>{
+ const {care,options}=await fixture();
+ const fetch=vi.spyOn(globalThis,'fetch');const installation=vi.spyOn(options,'installation');
+ await expect(care.startDiagnostic('codex','abcdefabcdefabcdefabcdef')).rejects.toMatchObject({statusCode:409,message:expect.stringContaining('重新选择')});
+ expect(care.snapshot().runs).toEqual([]);expect(care.snapshot().active).toBeUndefined();
+ expect(installation).not.toHaveBeenCalled();expect(fetch).not.toHaveBeenCalled();
+});
+it('keeps local-only diagnosis free of network source lookups and requests',async()=>{
+ const {care,options}=await fixture();const source=vi.spyOn(options,'source');const fetch=vi.spyOn(globalThis,'fetch');
+ await care.startDiagnostic('codex');await expect.poll(()=>care.snapshot().active).toBeUndefined();
+ expect(care.snapshot().runs[0].steps.map(step=>step.name)).toEqual(['configuration','processes','ports','installation']);
+ expect(source).not.toHaveBeenCalled();expect(fetch).not.toHaveBeenCalled();
+});
 it('only prepares a pinned npm-global upgrade and executes once with protected backup and real postconditions',async()=>{
  const {root,care,runner,paths}=await fixture();const plan=await care.prepareUpgrade();expect(runner).not.toHaveBeenCalled();plan.command.args.push('INJECTED');
  expect(care.snapshot().plan?.command.args).not.toContain('INJECTED');await expect(care.executeUpgrade('stale')).rejects.toThrow('过期');

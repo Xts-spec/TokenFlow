@@ -1,13 +1,19 @@
+import {ClaudeTerminalLifecycle} from './claude-terminal-lifecycle.js';
 import { LocalMaintenance } from './local-maintenance.js';
-import { ApiSources, apiSourceInput, apiModelID } from './api-sources.js';
+import { ApiSources, parseApiSourceInput, apiModelID } from './api-sources.js';
+import { detectProtocol, validateQuickSource, sourceNameFromURL } from './api-protocol.js';
 import { NativeAccounts, nativeProviderSchema, type NativeProvider } from './native-accounts.js';
 import { ClaudeAccountStore, type CredentialStore } from './claude-accounts.js';
 import { AntigravityAccountStore, antigravityDatabasePath } from './antigravity-accounts.js';
 import { upstreamIdle } from './upstream-idle.js';
 import { GatewayContext, GatewayContextError } from './gateway-context.js';
+import {CodexContext,codexContextScope,portableCodexItem} from './codex-context.js';
 import { CodexAccounts } from './codex-accounts.js';
-import { AgentConnections, agentProcesses, targetSchema, type AgentPaths, type Target } from './agent-connections.js';
+import { AgentConnections, modelSelectionsSchema, type ModelSelection, agentProcesses, targetSchema, type AgentPaths, type Target } from './agent-connections.js';
+import { modelLabel } from './model-label.js';
+import { QoderLifecycle } from './agent-lifecycle.js';
 import { localCredential } from './local-credentials.js';
+import { upstreamError,readUpstreamError } from './upstream-errors.js';
 import { MaintenanceApproval,approvalPolicy } from './maintenance-approval.js';
 import { GatewayMaintenance, maintenanceSelection, maintenanceChain, type MaintenanceChain } from './gateway-maintenance.js';
 import { mkdir, readFile, readdir, writeFile, chmod } from 'node:fs/promises';
@@ -25,7 +31,7 @@ import { launchJavaScriptSession, type JavaScriptSession } from './browser/javas
 import { runResponsesCodeLoop } from './responses-loop.js';
 import { ResponsesProvider, providerSchema, defaultProvider, type ProviderConfig, type ProbeResult } from './providers.js';
 import { GatewayActivity, observeUsage } from './gateway-activity.js';
-import { GatewayKeys, gatewayKeyInput, allowsProtocol } from './gateway-keys.js';
+import { GatewayKeys, gatewayKeyInput, allowsProtocol, type GatewayKey } from './gateway-keys.js';
 import { CLIProxyManager, type LocalAgentSnapshot, type LocalModel } from './cliproxy.js';
 import { isLoginProvider, loginProviderIds } from './login/index.js';
 import { RunnerCoreError } from './errors.js';
@@ -40,11 +46,6 @@ const clientCredential=(headers:{authorization?:string;'x-api-key'?:string|strin
   return {value:bearer||apiKey,conflict:!!bearer&&!!apiKey&&bearer!==apiKey};
 };
 const same=(a:string,b:string)=>{const left=Buffer.from(a),right=Buffer.from(b);return left.length===right.length && timingSafeEqual(left,right);};
-const a2aCapabilityErrors:Record<string,string>={
-  a2a_source_policy_blocked:'来源端安全策略不允许这次调用渠道。请使用来源明确支持的渠道或联系其支持；重新登录和更改审批权限不能解决此限制。',
-  a2a_structured_output_unsupported:'该来源暂不支持严格 JSON 或 JSON Schema 输出。请使用普通文本，或选择支持结构化输出的来源。',
-  a2a_server_tool_unsupported:'该来源支持客户端函数工具，暂不支持服务端内置工具。请关闭内置网页搜索等服务端工具，或选择支持它们的来源。',
-};
 export async function createDesktopService(options:ServiceOptions) {
   const proxyPort=z.number().int().min(1).max(65535).parse(options.proxyPort??8317);
   const root=resolve(options.root);
@@ -70,14 +71,14 @@ export async function createDesktopService(options:ServiceOptions) {
   }
   const apiSources=await ApiSources.open(root,options.secrets,config);
   const host=new BrowserHost(root,options.headless);
-  const proxy=new CLIProxyManager(root,options.binary,options.localKey,proxyPort,{openExternal:options.openExternal,secrets:options.secrets,apiConfig:()=>apiSources.sidecarConfig()});
+  const proxy=new CLIProxyManager(root,options.binary,options.localKey,proxyPort,{openExternal:options.openExternal,secrets:options.secrets,apiConfig:()=>apiSources.sidecarConfig(),apiModelIDs:()=>apiSources.sidecarModelIDs()});
   const localSnapshot=async():Promise<LocalAgentSnapshot>=>{
     const local=proxy.snapshot();const sources=await apiSources.list();
     return {...local,apiSources:sources,models:[...local.models,...sources.filter(s=>s.enabled&&s.hasKey).flatMap(s=>s.models.filter(model=>proxy.apiModelAvailable(apiModelID(s.id,model))).map(model=>({id:apiModelID(s.id,model),displayName:model,provider:'api' as const})))]};
   };
-  const resolveSource=(id:string,model:string)=>{
+  const resolveSource=(id:string,model:string,retryKnownModel=false)=>{
     if(apiSources.has(id)){if(proxy.snapshot().state!=='running')throw Object.assign(new Error('网关未启动'),{statusCode:409});apiSources.assert(id,model);if(!proxy.apiModelAvailable(model))throw new RunnerCoreError('API 模型路由暂不可用，请重新保存来源或重启网关。',{code:'api_model_unavailable',statusCode:409});return '';}
-    return proxy.sourceAuth(id,model);
+    return proxy.sourceAuth(id,model,retryKnownModel);
   };
   const extension=new ExtensionRelay();
   let browserSource: 'dedicated'|'extension'='dedicated';
@@ -144,7 +145,9 @@ export async function createDesktopService(options:ServiceOptions) {
   const app=createServer({dataRoot:root,manager,allowedOrigins:[]});
   const idle=async()=>{if(await manager.getActiveRunDetail())throw Object.assign(new Error('任务运行时不能切换 Provider 或停止 Local Agent'),{statusCode:409});};
   let mutationOwner:string|undefined;
-  app.addHook('onResponse',async req=>{if(mutationOwner===req.id)mutationOwner=undefined;});
+  let selectionClearOwner:string|undefined;
+  const maintenanceRequests=new Set<string>();
+  app.addHook('onResponse',async req=>{if(mutationOwner===req.id)mutationOwner=undefined;if(selectionClearOwner===req.id)selectionClearOwner=undefined;maintenanceRequests.delete(req.id);});
   app.addHook('onRequest',async(req,reply)=>{
     const hostHeader=req.headers.host??'';
     if(!/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(hostHeader))return reply.code(403).send({error:'Invalid Host'});
@@ -164,10 +167,12 @@ export async function createDesktopService(options:ServiceOptions) {
   app.addHook('preValidation',async(req,reply)=>{
     const route=req.routeOptions.url;
     if(req.method!=='GET'&&route?.startsWith('/api/maintenance')){
+      if(selectionClearOwner||(route==='/api/maintenance/selection'&&maintenanceRequests.size))return reply.code(409).send({error:'维修设置正在处理，请稍后重试。'});
+      maintenanceRequests.add(req.id);if(route==='/api/maintenance/selection')selectionClearOwner=req.id;
       const localRun=localMaintenance.snapshot();
       if(localRun.active&&localRun.runs[0]?.kind==='upgrade'&&!['/api/maintenance/stop','/api/maintenance/local/stop'].includes(route))return reply.code(409).send({error:'升级正在执行，请等待完成后启动维修或修改权限。'});
     }
-    if((req.method==='PUT'&&(route==='/api/settings'||route==='/api/local-agent/gateway'||route==='/api/sources/:id'))||(req.method==='DELETE'&&(route==='/api/local-agent/accounts/:id'||route==='/api/sources/:id'))||(req.method==='POST'&&['/api/maintenance/local/upgrade','/api/sources','/api/sources/:id/models','/api/sources/:id/check','/api/native-accounts/:provider/switch','/api/native-accounts/:provider/restore','/api/codex-accounts/switch','/api/codex-accounts/restore','/api/a2a/connect','/api/a2a/restore','/api/a2a/delete','/api/a2a/import','/api/browser/source','/api/desktop','/api/desktop/permissions','/api/browser/extension/pair','/api/browser/open','/api/runs','/api/providers/probe','/api/local-agent/:action','/api/local-agent/login/:action','/api/local-agent/accounts/:id','/api/local-agent/import-local/:provider'].includes(route??''))) {
+    if((req.method==='PUT'&&(route==='/api/settings'||route==='/api/local-agent/gateway'||route==='/api/sources/:id'))||(req.method==='DELETE'&&(route==='/api/local-agent/accounts/:id'||route==='/api/sources/:id'||route==='/api/maintenance/selection'))||(req.method==='POST'&&['/api/maintenance/local/upgrade','/api/sources','/api/sources/quick','/api/sources/:id/models','/api/sources/:id/check','/api/native-accounts/:provider/switch','/api/native-accounts/:provider/restore','/api/codex-accounts/switch','/api/codex-accounts/restore','/api/a2a/connect','/api/a2a/restart','/api/a2a/restore','/api/a2a/delete','/api/a2a/import','/api/browser/source','/api/desktop','/api/desktop/permissions','/api/browser/extension/pair','/api/browser/open','/api/runs','/api/providers/probe','/api/local-agent/:action','/api/local-agent/login/:action','/api/local-agent/accounts/:id','/api/local-agent/import-local/:provider'].includes(route??''))) {
       if(localMaintenance.snapshot().active)return reply.code(409).send({error:'本地诊断或升级正在运行，请等待完成后修改配置。'});
       if(mutationOwner)return reply.code(409).send({error:'另一个启动或配置操作正在进行，请稍后重试。'});
       mutationOwner=req.id;
@@ -204,6 +209,12 @@ export async function createDesktopService(options:ServiceOptions) {
     catch(error){throw new RunnerCoreError(error instanceof Error?error.message:'Local Agent 操作失败',{code:'local_agent_error',statusCode:400});}
   };
   const connections=new AgentConnections(root,options.agentPaths,options.agentProcesses);
+  // A managed Agent uses the model selected here even if an existing conversation retains an older model ID.
+  // Bind by saved connection key, never by its editable display name or by an arbitrary single-model key.
+  const fixedRoutes=new Map((await connections.status()).flatMap(t=>t.connection?.state==='applied'?[[t.connection.keyId,{target:t.id,sourceId:t.connection.sourceId,model:t.connection.model,selections:t.connection.selections}] as const]:[]));
+  const codexContext=new CodexContext(root,connections.paths.codex,gatewayContext);
+  const codexContextScopes=async()=>((await connections.status()).find(t=>t.id==='codex')?.backups??[]).flatMap(record=>(record.selections??[record]).map(item=>({owner:record.keyId,source:item.sourceId,model:item.model})));
+  const prepareCodexOfficial=async()=>codexContext.prepareOfficial(await codexContextScopes(),async()=>options.agentProcesses?options.agentProcesses('codex'):agentProcesses('codex'));
   const codexAccounts=new CodexAccounts(root,connections.paths.codex,options.agentProcesses?()=>options.agentProcesses!('codex'):undefined);
   const nativeAccounts={
     claude:new NativeAccounts(join(root,'claude-account-backup.json'),new ClaudeAccountStore(connections.paths.claude,options.claudeCredentialStore),()=>options.nativeProcesses?options.nativeProcesses('claude'):options.agentProcesses?options.agentProcesses('claude'):agentProcesses('claude')),
@@ -226,7 +237,7 @@ export async function createDesktopService(options:ServiceOptions) {
       // Once per startup, after local authorization discovery; polling never spends quota.
       const deadline=Date.now()+30000;
       const checkWhenDiscovered=async()=>{
-        if(serviceClosing||!maintenance.snapshot().selection||maintenance.snapshot().readiness.status!=='unchecked')return;
+        if(serviceClosing||selectionClearOwner||!maintenance.snapshot().selection||maintenance.snapshot().readiness.status!=='unchecked')return;
         try{maintenance.check(await maintenanceTransport());}
         catch{if(Date.now()<deadline)startupCheckTimer=setTimeout(checkWhenDiscovered,500);}
       };
@@ -234,7 +245,12 @@ export async function createDesktopService(options:ServiceOptions) {
     }
   })();
   const maintenance=new GatewayMaintenance(root);await maintenance.load();
-  const localMaintenance=new LocalMaintenance(root,connections,{processes:options.agentProcesses,gateway:()=>({port:proxy.port,state:proxy.snapshot().state}),source:async id=>{const source=(await apiSources.list()).find(s=>s.id===id&&s.enabled);return source?{baseURL:source.baseURL,name:source.name}:undefined;}});await localMaintenance.load();
+  const localMaintenance=new LocalMaintenance(root,connections,{processes:options.agentProcesses,gateway:()=>({port:proxy.port,state:proxy.snapshot().state}),source:async id=>{
+    const source=(await apiSources.list()).find(s=>s.id===id&&s.enabled);if(source)return {baseURL:source.baseURL,name:source.name};
+    const account=proxy.snapshot().accounts.find(a=>a.id===id&&!a.disabled);if(!account)return;
+    const endpoints:Record<string,string>={qoder:'https://api3.qoder.sh',workbuddy:'https://copilot.tencent.com'};
+    return {baseURL:endpoints[account.provider],name:account.provider,kind:'account' as const};
+  }});await localMaintenance.load();
   const directKeys=new Set<string>();
   const validateSelection=async(selected:{sourceId:string;model:string;channel?:string})=>{
     if(selected.channel!=='direct')return resolveSource(selected.sourceId,selected.model);
@@ -242,15 +258,15 @@ export async function createDesktopService(options:ServiceOptions) {
     if(source.protocol!=='responses'||!(await apiSources.list()).find(s=>s.id===selected.sourceId)?.hasKey)throw Object.assign(new Error('备用通道仅支持有可读取密钥的 Responses API 来源'),{statusCode:409});
     return '';
   };
-  const restoreConnection=async(id:string,approval?:{revision:string;allowRunning:boolean})=>{const record=await connections.restore(id,approval);if(gatewayKeys.list().some(key=>key.id===record.keyId))await gatewayKeys.remove(record.keyId);return record;};
+  const restoreConnection=async(id:string,approval?:{revision:string;allowRunning:boolean})=>{const target=(await connections.status()).find(t=>t.backups.some(b=>b.id===id));if(target?.id==='codex')await prepareCodexOfficial();const record=await connections.restore(id,approval);fixedRoutes.delete(record.keyId);if(gatewayKeys.list().some(key=>key.id===record.keyId))await gatewayKeys.remove(record.keyId);return record;};
   const inspectConnections=async()=>({discovery,gateway:{state:proxy.snapshot().state,models:(await localSnapshot()).models},targets:await connections.status()});
   const inspectMaintenance=async(chain?:MaintenanceChain)=>{
     const all=await inspectConnections();const local=await localSnapshot();
     const snapshot={...all,targets:chain?all.targets.filter(t=>t.id===chain.target):all.targets};
     const reviews=await Promise.all(snapshot.targets.filter(t=>t.connection).map(async t=>{
       const record=t.connection!;let review;try{review=await connections.review(record.id);}catch{return {id:record.id,target:t.id,checks:[{name:'读取接入配置失败，其他链路信息仍可检查',ok:false}],liveCallVerified:false};}const key=gatewayKeys.list().find(k=>k.id===record.keyId);
-      let sourceAvailable=true;try{resolveSource(record.sourceId,record.model);}catch{sourceAvailable=false;}
-      review.checks.push({name:'Key 已启用且授权模型与目标协议',ok:!!key?.enabled&&key.models.includes(record.model)&&allowsProtocol(key.agents,t.id==='claude'?'messages':t.id==='workbuddy'?'chat/completions':'responses')&&key.sourceId===record.sourceId},{name:'源账号与模型可用',ok:sourceAvailable});
+      let sourceAvailable=true;try{for(const item of record.selections??[record])resolveSource(item.sourceId,item.model);}catch{sourceAvailable=false;}
+      review.checks.push({name:'Key 已启用且授权模型与目标协议',ok:!!key?.enabled&&(record.selections??[record]).every(item=>key.models.includes(item.model))&&allowsProtocol(key.agents,t.id==='claude'?'messages':t.id==='workbuddy'?'chat/completions':'responses')&&(record.selections?record.selections.every(item=>key.modelSources?.[item.model]===item.sourceId):key.sourceId===record.sourceId)},{name:'源账号与模型可用',ok:sourceAvailable});
       review.checks.push({name:'Key 额度可用',ok:!!key&&(key.tokenLimit===null||(!key.unmeteredRequests&&key.usedTokens<key.tokenLimit))});
       return review;
     }));
@@ -260,7 +276,12 @@ export async function createDesktopService(options:ServiceOptions) {
     const source=local.accounts.find(a=>a.id===sourceId)??local.apiSources?.find(s=>s.id===sourceId);
     let sourceAvailable=false;if(sourceId&&model)try{resolveSource(sourceId,model);sourceAvailable=true;}catch{}
     const keys=gatewayKeys.list().filter(k=>chain?(k.id===record?.keyId||k.sourceId===sourceId&&!!model&&k.models.includes(model)):false);
-    return {...snapshot,reviews,targets:snapshot.targets.map(t=>({...t,backups:t.backups.filter((b,i)=>i<5||b.id===chain?.connectionId)})),gateway:{state:local.state,selectedModel:local.models.find(m=>m.id===model),modelCount:local.models.length},
+    const login=async(read:()=>Promise<Record<string,unknown>>)=>{try{const {revision:_,...status}=await read();return status;}catch(error){return {error:error instanceof Error?error.message:'读取失败'};}};
+    const nativeLogin=!chain||chain.target==='codex'||chain.target==='claude'?{
+      ...(!chain||chain.target==='codex'?{codex:await login(()=>codexAccounts.status())}:{}),
+      ...(!chain||chain.target==='claude'?{claude:await login(()=>nativeAccounts.claude.status())}:{}),
+    }:undefined;
+    return {...snapshot,reviews,nativeLogin,targets:snapshot.targets.map(t=>({...t,backups:t.backups.filter((b,i)=>i<5||b.id===chain?.connectionId)})),gateway:{state:local.state,selectedModel:local.models.find(m=>m.id===model),modelCount:local.models.length},
       chain:chain?{requested:chain,source:source?{...source,models:undefined}:null,sourceAvailable,quota:sourceId?local.quotas[sourceId]:undefined,
         selectedModel:model,record:record??null,matchesInstalled:!!target?.connection&&target.connection.sourceId===sourceId&&target.connection.model===model,
         targetProtocol:chain.target==='claude'?'messages':chain.target==='workbuddy'?'chat/completions':'responses',
@@ -269,11 +290,28 @@ export async function createDesktopService(options:ServiceOptions) {
 
   };
   const internalKeys=new Map<string,Promise<{key:{id:string};apiKey:string}>>();
+  // Unbinding retires credentials, not the direct channel's per-run allowance.
+  const directBudgets=new Map<string,number>();
+  const ownedInternalKeys=async(reviewerCacheID?:string)=>{
+    const owned=await Promise.all([...internalKeys].filter(([cacheID])=>cacheID!==reviewerCacheID).map(async([cacheID,saved])=>({cacheID,created:await saved.catch(()=>undefined)})));
+    if(owned.some(({created})=>created&&gatewayKeys.list().find(key=>key.id===created.key.id)?.pendingRequests))throw Object.assign(new Error('内部模型请求尚未结算，请稍后再取消。'),{statusCode:409});
+    return owned;
+  };
+  const releaseInternalKeys=async(owned:Awaited<ReturnType<typeof ownedInternalKeys>>)=>{
+    for(const {cacheID,created} of owned){
+      const current=created&&gatewayKeys.list().find(key=>key.id===created.key.id);
+      if(current){
+        if(directKeys.has(current.id))directBudgets.set(cacheID,current.unmeteredRequests?0:Math.max(0,(current.tokenLimit??32000)-current.usedTokens));
+        await gatewayKeys.remove(current.id);
+      }
+      if(created)directKeys.delete(created.key.id);internalKeys.delete(cacheID);
+    }
+  };
   const apiTransport=async(selected:{sourceId:string;model:string;channel?:string},owner:string)=>{
     await validateSelection(selected);
     const cacheID=`${owner}:${selected.sourceId}:${selected.model}:${selected.channel??'gateway'}`;
     let saved=internalKeys.get(cacheID);
-    if(!saved){saved=gatewayKeys.create(gatewayKeyInput.parse({name:`内部 · ${owner}`,models:[selected.model],sourceId:selected.sourceId,...(selected.channel==='direct'?{tokenLimit:32000,agents:['openai']}:{} )}));internalKeys.set(cacheID,saved);}
+    if(!saved){saved=gatewayKeys.create(gatewayKeyInput.parse({name:`内部 · ${owner}`,models:[selected.model],sourceId:selected.sourceId,...(selected.channel==='direct'?{tokenLimit:directBudgets.get(cacheID)??32000,agents:['openai']}:{} )}));internalKeys.set(cacheID,saved);}
     const created=await saved;if(selected.channel==='direct')directKeys.add(created.key.id);const gateway=proxy.gateway();
     const transportFetch:typeof fetch=async(input,init)=>{
       const request=new Request(input,init);const url=new URL(request.url);
@@ -302,25 +340,33 @@ export async function createDesktopService(options:ServiceOptions) {
     const record=result as {id:string;target:Target;model:string;sourceId:string;state:string};
     await startMaintenance('审批后的维修已执行。请重新读取当前配置和接入状态，确认是否正确；明确区分配置检查与真实客户端调用，说明是否需要重启或选模型。',false,{target:record.target,sourceId:record.sourceId,model:record.model,...(record.state!=='restored'?{connectionId:record.id}:{})},true);
   });
-  const applyConnection=async(input:{target:Target;sourceId:string;model:string;revision:string;tokenLimit:number|null;allowRunning:boolean;replaceId?:string},origin:string)=>{
-    resolveSource(input.sourceId,input.model);
-    const created=await gatewayKeys.create(gatewayKeyInput.parse({name:`A2A · ${input.target}`,models:[input.model],agents:[['workbuddy','qoder'].includes(input.target)?'openai':input.target],sourceId:input.sourceId,tokenLimit:input.tokenLimit}));
+  const applyConnection=async(input:{target:Target;sourceId:string;model:string;revision:string;tokenLimit:number|null;allowRunning:boolean;replaceId?:string;rewrite?:boolean;selections?:ModelSelection[]},origin:string)=>{
+    const selections=input.selections??[{sourceId:input.sourceId,model:input.model}];
+    if(!selections.some(item=>item.sourceId===input.sourceId&&item.model===input.model))throw Object.assign(new Error('默认模型必须在已选模型中'),{statusCode:400});
+    for(const selected of selections)resolveSource(selected.sourceId,selected.model,!!input.rewrite);
+    const created=await gatewayKeys.create(gatewayKeyInput.parse({name:`A2A · ${input.target}`,models:selections.map(item=>item.model),agents:[['workbuddy','qoder'].includes(input.target)?'openai':input.target],...(input.selections?{modelSources:Object.fromEntries(selections.map(item=>[item.model,item.sourceId]))}:{sourceId:input.sourceId}),tokenLimit:input.tokenLimit}));
     try{
-      const record=await connections.apply({...input,keyId:created.key.id,key:created.apiKey,origin});
-      if(input.replaceId){const previous=(await connections.status()).flatMap(t=>t.backups).find(r=>r.id===input.replaceId);if(previous&&gatewayKeys.list().some(k=>k.id===previous.keyId))await gatewayKeys.remove(previous.keyId);}
+      const catalog=(await localSnapshot()).models;
+      const record=await connections.apply({...input,modelLabels:Object.fromEntries(selections.map(item=>[item.model,modelLabel(catalog,item.model)])),keyId:created.key.id,key:created.apiKey,origin});
+      fixedRoutes.set(record.keyId,{target:record.target,sourceId:record.sourceId,model:record.model,selections:record.selections});
+      if(input.replaceId){const previous=(await connections.status()).flatMap(t=>t.backups).find(r=>r.id===input.replaceId);if(previous){fixedRoutes.delete(previous.keyId);if(gatewayKeys.list().some(k=>k.id===previous.keyId))await gatewayKeys.remove(previous.keyId);}}
       const verification=await connections.review(record.id);if(!verification.checks.every(c=>c.ok))throw new Error('写入后的配置复查未通过，接入记录和备份已保留，请生成维修方案。');return {...record,verification};
     }catch(error){const owned=(await connections.status()).some(t=>t.backups.some(b=>b.keyId===created.key.id));if(!owned)await gatewayKeys.remove(created.key.id);throw error;}
   };
-  const proposeRepair=async(chain:MaintenanceChain|undefined,origin:string)=>{
+  const proposeRepair=async(chain:MaintenanceChain|undefined,origin:string,rewrite=false)=>{
     if(!chain||!chain.sourceId||!chain.model)throw new Error('请先在 A2A 选择完整的源模型和可自动配置的目标。');
-    const target=targetSchema.parse(chain.target);resolveSource(chain.sourceId,chain.model);
+    const target=targetSchema.parse(chain.target);resolveSource(chain.sourceId,chain.model,true);
     const current=(await connections.status()).find(t=>t.id===target)!;
-    if(current.connection?.model===chain.model&&current.connection.sourceId===chain.sourceId&&current.configurationState==='configured')return {needed:false,message:'所选模型与磁盘配置一致，无需重复写入。'};
-    const preview=await connections.preview(target,origin,chain.model);
+    if(!rewrite&&current.connection?.model===chain.model&&current.connection.sourceId===chain.sourceId&&current.configurationState==='configured'){
+      const call=activity.snapshot().recent.find(c=>c.keyId===current.connection!.keyId&&c.model===chain.model);
+      return {needed:false,reason:call&&call.status>=400?(call.error?.code??'call_failed'):'configuration_matches',message:call&&call.status>=400?`接口、Key 和模型配置一致，但最近调用失败。${call.error?.message??`HTTP ${call.status}，请继续检查调用链路。`} 如需更换配置，可使用“修改 Agent 配置”。`:'接口、Key 和模型配置一致。如需更换来源、模型或重新生成 Key，请使用“修改 Agent 配置”。'};
+    }
+    const selections=current.connection?.selections?.some(item=>item.sourceId===chain.sourceId&&item.model===chain.model)?current.connection.selections:undefined;
+    const preview=await connections.preview(target,origin,chain.model,true,selections);
     const oldKey=current.connection?gatewayKeys.list().find(k=>k.id===current.connection!.keyId):undefined;
     const tokenLimit=oldKey?.tokenLimit!=null?(oldKey.unmeteredRequests?0:Math.max(0,oldKey.tokenLimit-oldKey.usedTokens)):null;
-    const input={target,sourceId:chain.sourceId,model:chain.model,revision:preview.revision,replaceId:preview.replaceId,allowRunning:true,tokenLimit};
-    const code=JSON.stringify({operation:'replace_gateway_connection',...input,path:preview.path,previousModel:preview.previousModel,configuration:preview.routing,backup:'写入前保存完整原配置和本次替换前配置',runningProcesses:preview.pids,after:'重新读取配置并复查；请重启目标 Agent 后选用模型',originalProviderLogin:'保留，不修改'},null,2);
+    const input={target,...(selections?{selections}:{}),sourceId:chain.sourceId,model:chain.model,revision:preview.revision,replaceId:preview.replaceId,allowRunning:true,tokenLimit,rewrite:true};
+    const code=JSON.stringify({operation:'replace_gateway_connection',...input,path:preview.path,previousModel:preview.previousModel,configuration:preview.routing,key:'生成仅授权此来源和模型的新 Key，写入成功后撤销旧 Key',scope:'更新此 Agent 的接口地址、Key、主模型与辅助模型；保留无关设置',backup:'写入前保存完整原配置和本次替换前配置，审批后文件变化则停止',runningProcesses:preview.pids,after:'重新读取配置并复查；请重启目标 Agent 后选用模型',originalProviderLogin:'保留，不修改'},null,2);
     return approval.propose(`将 ${current.name} 修复为 ${chain.model}`,code,()=>applyConnection(input,origin));
   };
   const proposeRestore=async(id:string,chain?:MaintenanceChain)=>{
@@ -332,7 +378,9 @@ export async function createDesktopService(options:ServiceOptions) {
   const startMaintenance=async(prompt:string,_allowRestore=false,chain:MaintenanceChain|undefined=maintenance.snapshot().chain,preserveApproval=false)=>{
     if(!preserveApproval&&JSON.stringify(chain)!==JSON.stringify(maintenance.snapshot().chain))approval.clear();
     const inspect=()=>inspectMaintenance(chain);const origin=maintenanceOrigin;
-    return maintenance.start(prompt,await maintenanceTransport(),{inspect,diagnose:(input,signal)=>{if(chain&&input.target!==chain.target)throw new Error('请在当前链路范围内诊断；切换检查对象需要用户选择。');if(chain&&input.sourceId&&!([chain.sourceId,maintenance.snapshot().selection?.sourceId].includes(input.sourceId)))throw new Error('该网络目标不属于本次维修链路');return localMaintenance.diagnostic(input,signal);},upgrade:()=>{if(chain&&chain.target!=='codex')throw new Error('当前链路不是 Codex，请由用户选择 Codex 后检查升级。');return localMaintenance.prepareUpgrade();},propose:()=>proposeRepair(chain,origin),refresh:async()=>{await proxy.refreshAccounts();return inspect();},repair:async()=>proposeRepair(chain,origin),restore:async id=>proposeRestore(id,chain)},false,chain);
+    return maintenance.start(prompt,await maintenanceTransport(),{inspect,configurations:async()=>{
+      const local=await localSnapshot();return {targets:await connections.status(),gatewayOrigin:origin,sources:[...local.accounts.filter(a=>!a.disabled).map(a=>({sourceId:a.id,name:a.provider,models:a.models??[]})),...(local.apiSources??[]).filter(s=>s.enabled&&s.hasKey).map(s=>({sourceId:s.id,name:s.name,models:s.models.map(m=>apiModelID(s.id,m))}))],keyHandling:'服务端生成专用 Key；不要索取或输出用户密钥。'};
+    },configure:input=>proposeRepair(input,origin,true),diagnose:(input,signal)=>localMaintenance.diagnostic(input,signal),upgrade:()=>{if(chain&&chain.target!=='codex')throw new Error('当前链路不是 Codex，请由用户选择 Codex 后检查升级。');return localMaintenance.prepareUpgrade();},propose:()=>proposeRepair(chain,origin),refresh:async()=>{await proxy.refreshAccounts();return inspect();},repair:async()=>proposeRepair(chain,origin),restore:async id=>proposeRestore(id,chain)},false,chain);
   };
 
   const codexAccountStatus=async()=>({...await codexAccounts.status(),accounts:await proxy.codexNativeAccounts(),gatewayConnected:!!(await connections.status()).find(t=>t.id==='codex')?.connection});
@@ -341,14 +389,24 @@ export async function createDesktopService(options:ServiceOptions) {
   app.post('/api/codex-accounts/switch',async req=>{
     await idle();
     const input=nativeSwitchInput.extend({sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(1).max(300)}).strict().parse(req.body);
-    if((await codexAccountStatus()).gatewayConnected)throw Object.assign(new Error('Codex 当前已接入 A2A，请先还原接口，再切换本机登录。'),{statusCode:409});
-    await codexAccounts.switch(input,await proxy.codexCredential(input.sourceId,input.model));
+    const credential=await proxy.codexCredential(input.sourceId,input.model);
+    // Verify the chosen login before disconnecting a working gateway.
+    await codexAccounts.checkSwitch(input,credential);
+    await prepareCodexOfficial();
+    const target=(await connections.status()).find(t=>t.id==='codex')!;
+    if(target.connection)await restoreConnection(target.connection.id,{revision:target.revision,allowRunning:input.allowRunning});
+    await codexAccounts.switch({...input,revision:target.connection?(await codexAccounts.status()).revision:input.revision},credential);
     return codexAccountStatus();
   });
   app.post('/api/codex-accounts/restore',async req=>{
     await idle();
-    if((await codexAccountStatus()).gatewayConnected)throw Object.assign(new Error('请先还原 Codex 的 A2A 接口，再还原本机登录。'),{statusCode:409});
-    await codexAccounts.restore(nativeSwitchInput.strict().parse(req.body));return codexAccountStatus();
+    const input=nativeSwitchInput.strict().parse(req.body);const status=await codexAccounts.status();
+    if(status.revision!==input.revision)throw Object.assign(new Error('本机登录或配置已变化，请刷新后重试。'),{statusCode:409});
+    if(!status.backup)throw Object.assign(new Error('没有可还原的账号切换备份。'),{statusCode:409});
+    await prepareCodexOfficial();
+    const target=(await connections.status()).find(t=>t.id==='codex')!;
+    if(target.connection)await restoreConnection(target.connection.id,{revision:target.revision,allowRunning:input.allowRunning});
+    await codexAccounts.restore({...input,revision:target.connection?(await codexAccounts.status()).revision:input.revision});return codexAccountStatus();
   });
   const nativeStatus=async(provider:NativeProvider)=>({...await nativeAccounts[provider].status(),accounts:await proxy.nativeAccounts(provider),gatewayConnected:provider==='claude'&&!!(await connections.status()).find(t=>t.id==='claude')?.connection});
   app.get('/api/native-accounts/:provider',async req=>nativeStatus(nativeProviderSchema.parse((req.params as {provider:string}).provider)));
@@ -362,21 +420,26 @@ export async function createDesktopService(options:ServiceOptions) {
     return nativeStatus(provider);
   });
   app.get('/api/a2a',inspectConnections);
+  const qoderLifecycle=new QoderLifecycle();const claudeTerminal=new ClaudeTerminalLifecycle();
+  app.get('/api/a2a/terminal-sessions',async()=>({sessions:await claudeTerminal.sessions()}));
+  app.post('/api/a2a/restart',async req=>{
+    await idle();
+    const input=z.discriminatedUnion('target',[z.object({target:z.enum(['codex','qoder','workbuddy'])}).strict(),z.object({target:z.literal('claude'),client:z.enum(['vscode','terminal']),session:z.object({pid:z.number().int().positive(),tty:z.string().regex(/^ttys[0-9]+$/),cwd:z.string().min(1).max(4096)}).strict().optional()}).strict()]).parse(req.body);
+    if(input.target==='claude'&&input.client==='terminal'){if(!input.session)throw Object.assign(new Error('请选择终端会话'),{statusCode:400});return claudeTerminal.restart(input.session);}
+    return qoderLifecycle.restart(input.target);
+  });
   app.post('/api/a2a/import',async req=>{
     await idle();const {target}=z.object({target:z.enum(['codex','claude'])}).strict().parse(req.body);
     try{return await proxy.importCredential(target,await localCredential(target,connections.paths));}
-    catch(error){throw Object.assign(new Error(error instanceof z.ZodError?'本地凭据不是支持的 OAuth 格式，请通过模型来源授权。':error instanceof Error?error.message:'导入失败'),{statusCode:400});}
+    catch(error){throw Object.assign(new Error(error instanceof z.ZodError?'本地凭据不是支持的 OAuth 格式，请在账号授权页重新授权。':error instanceof Error?error.message:'导入失败'),{statusCode:400});}
   });
   app.post('/api/a2a/connect',async req=>{
     await idle();
-    const input=z.object({replaceId:z.string().uuid().optional(),allowRunning:z.boolean().default(false),target:targetSchema,sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(1).max(300),revision:z.string().regex(/^[a-f0-9]{64}$/),tokenLimit:z.number().int().min(0).max(1e12).nullable().default(null)}).strict().parse(req.body);
+    const input=z.object({replaceId:z.string().uuid().optional(),allowRunning:z.boolean().default(false),target:targetSchema,selections:modelSelectionsSchema.optional(),sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(1).max(300),revision:z.string().regex(/^[a-f0-9]{64}$/),tokenLimit:z.number().int().min(0).max(1e12).nullable().default(null)}).strict().parse(req.body);
     if(input.replaceId)approval.clear();
     const record=await applyConnection(input,`http://${req.headers.host}`);
     maintenanceOrigin=`http://${req.headers.host}`;
-    let review:{status:string;message:string}={status:'not_configured',message:'可先指定维修师傅，再检查这次接入。'};
-    if(maintenance.snapshot().selection)review={status:'deferred',message:'接入已完成。维修模型还未通过检测，可在维修抽屉点击“检测维修模型”。'};
-    if(maintenance.snapshot().readiness.status==='ready'){try{await startMaintenance(`请 review 刚完成的 ${record.target} 接入（记录 ${record.id}），核对所选模型、接口、辅助模型、Key 权限与备份，并说明是否需要重启或手动选模型。仅做只读检查，不要还原。`,false,{target:record.target,sourceId:record.sourceId,model:record.model,connectionId:record.id});review={status:'running',message:'维修师傅正在检查这次接入。'};}catch{review={status:'deferred',message:'配置已接入，维修检查暂未开始，可点击“请师傅复查”重试。'};}}
-    return {...record,review};
+    return record;
   });
   app.post('/api/a2a/restore',async req=>{
     await idle();
@@ -391,11 +454,24 @@ export async function createDesktopService(options:ServiceOptions) {
     const previous=(await connections.status()).flatMap(t=>t.backups);
     const record=await connections.remove(input.id,input.revision);
     for(const keyId of [record.keyId,previous.find(r=>r.id===record.supersedes)?.keyId]){
+      if(keyId)fixedRoutes.delete(keyId);
       if(keyId&&gatewayKeys.list().some(k=>k.id===keyId))await gatewayKeys.remove(keyId);
     }
     return record;
   });
   app.get('/api/maintenance',async()=>({...maintenance.snapshot(),...approval.snapshot()}));
+  app.delete('/api/maintenance/selection',async()=>{
+    await idle();
+    const state=maintenance.snapshot();
+    if(state.status==='running'||state.readiness.status==='checking'||approval.isBusy())throw Object.assign(new Error('维修检测、模型审批或执行正在运行，请结束后再取消维修模型。'),{statusCode:409});
+    const reviewer=approval.snapshot().policy.reviewer;
+    const owned=await ownedInternalKeys(reviewer?`审批模型:${reviewer.sourceId}:${reviewer.model}:${reviewer.channel??'gateway'}`:undefined);
+    await maintenance.clearSelection();
+    if(approval.snapshot().proposal?.status==='pending')approval.clear();
+    if(!reviewer)approval.configure({mode:'manual'});
+    await releaseInternalKeys(owned);
+    return {...maintenance.snapshot(),...approval.snapshot()};
+  });
   app.post('/api/maintenance/reset',async()=>{approval.clear();return maintenance.reset();});
   app.post('/api/maintenance/stop',async()=>{await Promise.all([maintenance.close(),localMaintenance.stop()]);return maintenance.snapshot();});
   app.put('/api/maintenance',async req=>{const input=maintenanceSelection.parse(req.body);await validateSelection(input);approval.clear();await maintenance.select(input);return maintenance.check(await maintenanceTransport());});
@@ -404,9 +480,9 @@ export async function createDesktopService(options:ServiceOptions) {
     const policy=approvalPolicy.parse(req.body);if(policy.reviewer)await validateSelection(policy.reviewer);return approval.configure(policy);
   });
   app.post('/api/maintenance/propose',async req=>{
-    const {chain}=z.object({chain:maintenanceChain.optional()}).strict().parse(req.body);
+    const {chain,rewrite}=z.object({chain:maintenanceChain.optional(),rewrite:z.boolean().default(false)}).strict().parse(req.body);
     if(chain&&JSON.stringify(chain)!==JSON.stringify(maintenance.snapshot().chain))approval.clear();
-    return proposeRepair(chain??maintenance.snapshot().chain,`http://${req.headers.host}`);
+    return proposeRepair(chain??maintenance.snapshot().chain,`http://${req.headers.host}`,rewrite);
   });
   app.post('/api/maintenance/approve',async req=>{await idle();const input=z.object({id:z.string().uuid(),approve:z.boolean()}).strict().parse(req.body);return approval.decide(input.id,input.approve);});
   app.post('/api/maintenance/run',async req=>{
@@ -423,45 +499,127 @@ export async function createDesktopService(options:ServiceOptions) {
   app.post('/api/maintenance/local/upgrade',async req=>{await idle();const input=z.object({id:z.string().uuid(),approve:z.literal(true)}).strict().parse(req.body);if(maintenance.snapshot().status==='running'||maintenance.snapshot().readiness.status==='checking'||['reviewing','executing'].includes(approval.snapshot().proposal?.status??''))throw Object.assign(new Error('维修或审批正在运行，请结束后再升级'),{statusCode:409});return localMaintenance.executeUpgrade(input.id);});
   app.get('/api/gateway/activity',async()=>activity.snapshot());
   app.get('/api/gateway-keys', async()=>({keys:gatewayKeys.list()}));
-  const scopedInput = async (body: unknown, existingId?: string) => {
+  const scopedInput = async (body: unknown, existingId?: string, modelOnly=false) => {
     const existing=existingId?gatewayKeys.list().find(key=>key.id===existingId):undefined;
-    const input = gatewayKeyInput.parse({...((existing)?{agents:existing.agents,tokenLimit:existing.tokenLimit,sourceId:existing.sourceId}:{}),...(typeof body==='object'&&body?body:{})});
+    const input = gatewayKeyInput.parse({...((existing)?{agents:existing.agents,tokenLimit:existing.tokenLimit,sourceId:existing.sourceId,modelSources:existing.modelSources}:{}),...(typeof body==='object'&&body?body:{})});
     const previous = existingId ? gatewayKeys.list().find(key=>key.id===existingId)?.models ?? [] : [];
     const known = new Set([...(await localSnapshot()).models.map(m=>m.id), ...previous]);
     if(input.models.some(id=>!known.has(id))) throw Object.assign(new Error('请选择已加载的模型；新模型需在账号连接后授权。'),{statusCode:400});
-    if(input.sourceId)for(const model of input.models)resolveSource(input.sourceId,model);
+    // Offline edits may only retain or restrict authority; every expansion must validate the source again.
+    const sameSources=existing&&(input.modelSources?input.models.every(model=>input.modelSources?.[model]===(existing.modelSources?.[model]??existing.sourceId)):input.sourceId===existing.sourceId);
+    const reduction=existing&&sameSources&&(!input.enabled||existing.enabled)
+      &&input.models.every(model=>existing.models.includes(model))&&input.agents.every(agent=>existing.agents.includes(agent))
+      &&(existing.tokenLimit===null||input.tokenLimit!==null&&input.tokenLimit<=existing.tokenLimit);
+    if(input.modelSources){
+      if(input.sourceId||input.models.some(model=>!input.modelSources?.[model]))throw Object.assign(new Error('逐模型来源必须完整，不能同时指定单一来源'),{statusCode:400});
+      for(const model of input.models){const source=input.modelSources[model];if((!modelOnly&&!reduction)||!existing?.models.includes(model)||(existing.modelSources?.[model]??existing.sourceId)!==source)resolveSource(source,model);}
+    }else if(input.sourceId&&!reduction)for(const model of input.models)resolveSource(input.sourceId,model);
     return input;
   };
-  app.post('/api/gateway-keys', async req=>gatewayKeys.create(await scopedInput(req.body)));
+  app.post('/api/gateway-keys', async(req,reply)=>{
+    const created=await gatewayKeys.create(await scopedInput(req.body),true);
+    const keyStored=options.secrets.persistent!==false;
+    if(keyStored)try{await options.secrets.set(`gateway-key-${created.key.id}`,created.apiKey);}catch{
+      await gatewayKeys.remove(created.key.id);
+      throw Object.assign(new Error('Key 未生成：系统加密存储不可用，请解锁后重试。'),{statusCode:409});
+    }
+    reply.header('cache-control','no-store');return {...created,keyStored};
+  });
+  app.post('/api/gateway-keys/:id/reveal',async(req,reply)=>{
+    const id=z.string().uuid().parse((req.params as {id:string}).id);
+    const key=gatewayKeys.list().find(key=>key.id===id);
+    if(!key)throw Object.assign(new Error('Key 不存在'),{statusCode:404});
+    if(!key.exported)throw Object.assign(new Error('旧 Key 未保存可恢复副本，请使用当时保存的 Key；地址和模型仍可复制。'),{statusCode:409});
+    reply.header('cache-control','no-store');
+    const apiKey=await options.secrets.get(`gateway-key-${id}`);
+    if(!apiKey)throw Object.assign(new Error('无法读取完整 Key：旧版仅保存校验哈希，或系统加密存储暂不可用。请使用原先保存的 Key，或创建新 Key。'),{statusCode:409});
+    if(!gatewayKeys.list().some(key=>key.id===id))throw Object.assign(new Error('Key 已删除'),{statusCode:404});
+    return {apiKey};
+  });
+  const keyUpdates=new Map<string,Promise<unknown>>();
+  const updateKey=async(id:string,work:()=>Promise<GatewayKey>)=>{
+    const update=(keyUpdates.get(id)??Promise.resolve()).catch(()=>{}).then(work);
+    keyUpdates.set(id,update);
+    try{return await update;}finally{if(keyUpdates.get(id)===update)keyUpdates.delete(id);}
+  };
+  app.put('/api/gateway-keys/:id/models',async req=>{
+    const id=z.string().uuid().parse((req.params as {id:string}).id);
+    const {selections}=z.object({selections:z.array(z.object({sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(3).max(300)}).strict()).max(2000)}).strict().parse(req.body);
+    if(new Set(selections.map(item=>item.model)).size!==selections.length)throw Object.assign(new Error('同一模型只能选择一个来源账号'),{statusCode:400});
+    return updateKey(id,async()=>{
+      const existing=gatewayKeys.list().find(key=>key.id===id);
+      if(!existing)throw Object.assign(new Error('Key 不存在'),{statusCode:404});
+      if(!existing.exported&&(existing.sourceId||existing.modelSources))throw Object.assign(new Error('此 Key 由本地 Agent 或维修流程管理，请在对应入口修改模型。'),{statusCode:409});
+      const input=await scopedInput({name:existing.name,purpose:existing.purpose,enabled:existing.enabled,sourceId:undefined,models:selections.map(item=>item.model),modelSources:Object.fromEntries(selections.map(item=>[item.model,item.sourceId]))},id,true);
+      return gatewayKeys.updateModels(id,input.models,input.modelSources??{});
+    });
+  });
   app.put('/api/gateway-keys/:id', async req=>{
     const id=z.string().uuid().parse((req.params as {id:string}).id);
-    return gatewayKeys.update(id,await scopedInput(req.body,id));
+    return updateKey(id,async()=>gatewayKeys.update(id,await scopedInput(req.body,id)));
   });
   app.post('/api/gateway-keys/:id/reset-usage',async req=>gatewayKeys.resetUsage(z.string().uuid().parse((req.params as {id:string}).id)));
-  app.delete('/api/gateway-keys/:id', async req=>gatewayKeys.remove(z.string().uuid().parse((req.params as {id:string}).id)));
+  app.delete('/api/gateway-keys/:id', async req=>{const id=z.string().uuid().parse((req.params as {id:string}).id);const result=await gatewayKeys.remove(id);await options.secrets.remove?.(`gateway-key-${id}`);return result;});
   const sourceDependencies=async(id:string)=>{
-    const targets=(await connections.status()).filter(t=>t.connection?.sourceId===id).map(t=>({id:t.id,name:t.name,model:t.connection!.model}));
-    const keys=gatewayKeys.list().filter(k=>k.sourceId===id||k.models.some(m=>m.startsWith(`api-${id}/`))).map(k=>({id:k.id,name:k.name,models:k.models}));
+    const targets=(await connections.status()).filter(t=>t.connection&&(t.connection.selections??[t.connection]).some(item=>item.sourceId===id)).map(t=>({id:t.id,name:t.name,model:t.connection!.model}));
+    const keys=gatewayKeys.list().filter(k=>k.sourceId===id||Object.values(k.modelSources??{}).includes(id)||k.models.some(m=>m.startsWith(`api-${id}/`))).map(k=>({id:k.id,name:k.name,models:k.models}));
     return {targets,keys,repair:maintenance.snapshot().selection?.sourceId===id,reviewer:approval.snapshot().policy.reviewer?.sourceId===id};
   };
   const sourceID=(req:{params:unknown})=>z.string().regex(/^[a-f0-9]{24}$/).parse((req.params as {id:string}).id);
   const synchronizeSources=async()=>{try{await proxy.synchronizeAPIModels((await apiSources.list()).filter(s=>s.enabled).flatMap(s=>s.models.map(m=>apiModelID(s.id,m))));return undefined;}catch{return '来源已保存，但模型路由暂未同步。请稍后重新保存或重启网关。';}};
+  app.post('/api/sources/:id/reveal-key',async(req,reply)=>{
+    const id=z.string().regex(/^[a-f0-9]{24}$/).parse((req.params as {id:string}).id);
+    reply.header('cache-control','no-store');
+    if(!apiSources.has(id))throw Object.assign(new Error('来源不存在'),{statusCode:404});
+    const apiKey=await apiSources.keyFor(id);
+    if(!apiKey)throw Object.assign(new Error('密钥暂不可读取，请解锁系统安全存储后重试。'),{statusCode:409});
+    return {apiKey};
+  });
   app.get('/api/sources',async()=>({sources:await apiSources.list()}));
   app.get('/api/sources/:id/usage',async req=>sourceDependencies(sourceID(req)));
-  app.post('/api/sources',async req=>{await idle();const source=await apiSources.save(apiSourceInput.parse(req.body));const routingError=await synchronizeSources();return {...source,...(routingError?{routingError}:{})};});
-  app.put('/api/sources/:id',async req=>{
-    await idle();const id=sourceID(req);const input=apiSourceInput.parse(req.body);const deps=await sourceDependencies(id);
+  app.post('/api/sources',async req=>{await idle();const source=await apiSources.save(parseApiSourceInput(req.body));const routingError=await synchronizeSources();return {...source,...(routingError?{routingError}:{})};});
+  const assertSourceEditable=async(id:string,acknowledge?:boolean)=>{
+    const deps=await sourceDependencies(id);
     const used=deps.targets.length||deps.keys.length||deps.repair||deps.reviewer;
-    if(used&&!input.acknowledge)throw new RunnerCoreError('此来源仍被连接或密钥使用。请查看影响后确认修改；也可以先停用。',{statusCode:409,code:'api_source_in_use'});
+    if(used&&!acknowledge)throw new RunnerCoreError('此来源仍被连接或密钥使用。请查看影响后确认修改；也可以先停用。',{statusCode:409,code:'api_source_in_use'});
     if(maintenance.snapshot().status==='running'||maintenance.snapshot().readiness.status==='checking'||['reviewing','executing'].includes(approval.snapshot().proposal?.status??''))throw new RunnerCoreError('维修或审批正在调用模型，请结束后再修改来源。',{statusCode:409,code:'api_source_busy'});
+  };
+  app.put('/api/sources/:id',async req=>{
+    await idle();const id=sourceID(req);const input=parseApiSourceInput(req.body);await assertSourceEditable(id,input.acknowledge);
     const source=await apiSources.save(input,id);const routingError=await synchronizeSources();return {...source,...(routingError?{routingError}:{})};
+  });
+  // Discover the protocol from URL + key + model; the optional name is a display label.
+  app.post('/api/sources/quick',async(req,reply)=>{
+    await idle();
+    const input=z.object({id:z.string().regex(/^[a-f0-9]{24}$/).optional(),name:z.string().trim().min(1).max(80).optional(),baseURL:z.string().max(2048),apiKey:z.string().max(4096).optional(),model:z.string().max(20000),acknowledge:z.boolean().optional()}).strict().safeParse(req.body);
+    if(!input.success)throw new RunnerCoreError('请填写 URL、API Key 和模型名称。',{statusCode:400,code:'api_source_invalid'});
+    const {id,acknowledge}=input.data;const old=id?(await apiSources.list()).find(s=>s.id===id):undefined;
+    if(id&&!old)throw new RunnerCoreError('API 来源已变更，请刷新。',{statusCode:409,code:'api_source_conflict'});
+    const models=[...new Set(input.data.model.split(/[\n,，]/).map(m=>m.trim()).filter(Boolean))];
+    if(old&&!input.data.apiKey?.trim()&&input.data.baseURL.trim()===old.baseURL&&JSON.stringify(models)===JSON.stringify(old.models)){
+      return apiSources.save({name:input.data.name??old.name,baseURL:old.baseURL,protocol:old.protocol,enabled:old.enabled,models:old.models},id);
+    }
+    const apiKey=input.data.apiKey?.trim()||(id?await apiSources.keyFor(id):'');
+    if(!apiKey)throw new RunnerCoreError(id?'API 密钥暂不可读取，请重新填写 API Key。':'请填写 API Key。',{statusCode:400,code:'api_source_invalid'});
+    const checked=validateQuickSource({baseURL:input.data.baseURL,apiKey,model:input.data.model});
+    if(id)await assertSourceEditable(id,acknowledge);
+    const controller=new AbortController();const cancel=()=>{if(!reply.raw.writableEnded)controller.abort();};reply.raw.once('close',cancel);
+    try{
+      const found=await detectProtocol({baseURL:checked.baseURL,apiKey,model:checked.models[0]},controller.signal);
+      const source=await apiSources.save({name:input.data.name??old?.name??sourceNameFromURL(found.baseURL),baseURL:found.baseURL,protocol:found.protocol,enabled:old?.enabled??true,models:checked.models,...(input.data.apiKey?.trim()?{apiKey}:{})},id);
+      const routingError=await synchronizeSources();return {...source,...(routingError?{routingError}:{})};
+    }finally{reply.raw.off('close',cancel);}
   });
   app.delete('/api/sources/:id',async req=>{
     await idle();const id=sourceID(req);const deps=await sourceDependencies(id);
     if(deps.targets.length||deps.keys.length||deps.repair||deps.reviewer)throw new RunnerCoreError('此来源仍被连接、客户端 Key 或维修模型使用。请先切换或还原、移除关联 Key；可先停用。',{statusCode:409,code:'api_source_in_use'});
     await apiSources.remove(id);await synchronizeSources();return {deleted:true};
   });
-  app.post('/api/sources/:id/models',async req=>({models:await apiSources.models(sourceID(req))}));
+  app.post('/api/sources/:id/models',async(req,reply)=>{
+    const controller=new AbortController();const cancel=()=>{if(!reply.raw.writableEnded)controller.abort();};reply.raw.once('close',cancel);
+    try{return {models:await apiSources.models(sourceID(req),controller.signal)};}
+    finally{reply.raw.off('close',cancel);if(mutationOwner===req.id)mutationOwner=undefined;}
+  });
   app.post('/api/sources/:id/check',async req=>{
     const id=sourceID(req);const {model}=z.object({model:z.string().min(1).max(300)}).strict().parse(req.body);resolveSource(id,model);
     const created=await gatewayKeys.create(gatewayKeyInput.parse({name:'来源最小验证',models:[model],sourceId:id,tokenLimit:4096}));
@@ -484,6 +642,12 @@ export async function createDesktopService(options:ServiceOptions) {
     return gateway;
   });
   // 登录层动作（codex/claude/antigravity/kimi/xai）与服务生命周期动作共用一个入口。
+  app.post('/api/local-agent/providers/:provider/refresh',async req=>{
+    await idle();
+    const provider=z.enum([...loginProviderIds,'cursor']).parse((req.params as {provider:string}).provider);
+    z.object({}).strict().parse(req.body??{});
+    return localOperation(()=>proxy.refreshProvider(provider));
+  });
   app.post('/api/local-agent/:action',async req=>{await idle();const action=z.enum(['start','stop','restart','refresh','quota','cursor',...loginProviderIds]).parse((req.params as {action:string}).action);if(action==='cursor'||isLoginProvider(action))return localOperation(()=>proxy.login(action));if(action==='refresh')return localOperation(async()=>{await proxy.cursor.refresh();return proxy.refreshAccounts();});if(action==='quota')return localOperation(async()=>{await proxy.refreshAccounts();return proxy.refreshQuota();});if(action==='restart')return localOperation(async()=>{await proxy.stop();return proxy.start();});return localOperation(()=>proxy[action]());});
   app.post('/api/local-agent/login/:action',async req=>{
     await idle();
@@ -519,11 +683,17 @@ export async function createDesktopService(options:ServiceOptions) {
     const bearer=clientCredential(req.headers).value;
     const client=gatewayKeys.authenticate(bearer);
     if(bearer && !same(bearer,options.token) && !client) return reply.code(401).send({error:{message:'Invalid or disabled API key',type:'authentication_error'}});
-    const started=Date.now();let recorded=false;
+    const fixed=client&&fixedRoutes.get(client.id);
+    if(path!=='models'&&fixed&&!fixed.selections&&client.sourceId===fixed.sourceId&&client.models.length===1&&client.models[0]===fixed.model){
+      z.object({model:z.string().min(1).max(300)}).parse(req.body);
+      req.body={...(req.body as Record<string,unknown>),model:fixed.model};
+      reply.header('X-Token-Flow-Model',fixed.model);
+    }
+    const started=Date.now();let recorded=false;let callError:{code:string;message:string}|undefined;
     const record=(status:number,usage:{inputTokens:number|null;outputTokens:number|null}={inputTokens:null,outputTokens:null})=>{
       if(recorded||path==='models')return;recorded=true;
       const rawModel=(req.body as {model?:unknown})?.model;
-      activity.record({keyId:client?.id??'workspace',agent:client?.name??'工作台调试',model:typeof rawModel==='string'&&(client?.models.includes(rawModel)||proxy.snapshot().models.some(m=>m.id===rawModel)||!client)?rawModel.slice(0,300):'未授权模型',protocol:path,startedAt:new Date(started).toISOString(),durationMs:Date.now()-started,status,inputTokens:usage.inputTokens,outputTokens:usage.outputTokens});
+      activity.record({keyId:client?.id??'workspace',agent:client?.name??'工作台调试',model:typeof rawModel==='string'&&(client?.models.includes(rawModel)||proxy.snapshot().models.some(m=>m.id===rawModel)||!client)?rawModel.slice(0,300):'未授权模型',protocol:path,startedAt:new Date(started).toISOString(),durationMs:Date.now()-started,status,inputTokens:usage.inputTokens,outputTokens:usage.outputTokens,...(callError?{error:callError}:{})});
     };
     let reservation:string|undefined;let settled=false;
     const settle=async(usage:{inputTokens:number|null;outputTokens:number|null},uncertain:boolean)=>{
@@ -535,14 +705,31 @@ export async function createDesktopService(options:ServiceOptions) {
       const direct=directKeys.has(client.id)&&path.startsWith('responses');
       const directSource=direct&&client.sourceId?(await apiSources.list()).find(s=>s.id===client.sourceId&&s.enabled&&s.hasKey&&s.protocol==='responses'):undefined;
       const available:LocalModel[]=[...(await localSnapshot()).models,...(directSource?directSource.models.map(id=>({id:apiModelID(directSource.id,id),provider:'api' as const})):[])].filter(model=>client.models.includes(model.id));
-      if(client.sourceId){
-        try{for(const model of client.models)selectedAuth=directSource?(apiSources.assert(client.sourceId,model),''):resolveSource(client.sourceId,model);}catch{record(503);return reply.code(503).send({error:{message:'Selected source account is unavailable',type:'source_unavailable'}});}
+      if(client.modelSources){
+        if(path==='models'){
+          for(let index=available.length-1;index>=0;index--){const sourceId=client.modelSources[available[index].id];try{if(!sourceId)throw new Error('Not selected');resolveSource(sourceId,available[index].id);}catch{available.splice(index,1);}}
+        }else{
+          const model=z.object({model:z.string().min(1).max(300)}).parse(req.body).model;
+          const sourceId=client.modelSources[model];
+          if(client.models.includes(model)){
+            if(!sourceId){record(403);return reply.code(403).send({error:{message:'Model is not configured for this Agent',type:'model_not_allowed'}});}
+            try{selectedAuth=resolveSource(sourceId,model,true);}catch{record(503);return reply.code(503).send({error:{message:'Selected source account is unavailable',type:'source_unavailable'}});}
+          }
+        }
+      }else if(client.sourceId){
+        const sourceAuth=(model:string)=>directSource?(apiSources.assert(client.sourceId!,model),''):resolveSource(client.sourceId!,model,path!=='models');
+        if(path==='models'){
+          for(let index=available.length-1;index>=0;index--)try{sourceAuth(available[index].id);}catch{available.splice(index,1);}
+        }else{
+          const model=z.object({model:z.string().min(1).max(300)}).parse(req.body).model;
+          if(client.models.includes(model))try{selectedAuth=sourceAuth(model);}catch{record(503);return reply.code(503).send({error:{message:'Selected source account is unavailable',type:'source_unavailable'}});}
+        }
       }
       if(path==='models') return {object:'list',data:available.map(model=>({id:model.id,object:'model',owned_by:model.provider,...(model.displayName?{display_name:model.displayName}:{}),...(model.capabilities?{capabilities:model.capabilities}:model.textOnly?{capabilities:{text:true,tools:false,images:false}}:{})}))};
       if(!allowsProtocol(client.agents,path)){record(403);return reply.code(403).send({error:{message:'This API key does not allow this agent protocol',type:'agent_not_allowed'}});}
       const model=z.object({model:z.string().min(1).max(300)}).parse(req.body).model;
       if(!client.models.includes(model)){record(403);return reply.code(403).send({error:{message:`此 Key 未授权请求模型。请将主模型、辅助模型及项目级配置统一为已授权的模型 ID（含提供商前缀）：${client.models.slice(0,5).join('、')||'暂无授权模型'}。无需重新登录厂商账号。`,type:'model_not_allowed'}});}
-      if(!available.some(item=>item.id===model)){record(503);return reply.code(503).send({error:{message:'Model is currently unavailable; check the provider account and gateway',type:'model_unavailable'}});}
+      if(!selectedAuth&&!available.some(item=>item.id===model)){record(503);return reply.code(503).send({error:{message:'Model is currently unavailable; check the provider account and gateway',type:'model_unavailable'}});}
       if(path!=='messages/count_tokens'){
         try{reservation=await gatewayKeys.reserve(client.id,model,path);}catch(error){const code=(error as {statusCode?:number}).statusCode??503;record(code);return reply.code(code).send({error:{message:error instanceof Error?error.message:'Quota check failed',type:'key_quota_error'}});}
       }
@@ -563,17 +750,16 @@ export async function createDesktopService(options:ServiceOptions) {
         return abort.watch(await fetch(`${upstreamURL.replace(/\/$/,'')}/${route}`,{method:req.method,headers:{...(selectedAuth?{'X-Token-Flow-Auth':selectedAuth}:{}),Authorization:`Bearer ${upstreamKey}`,'Content-Type':'application/json',...(typeof req.headers['anthropic-version']==='string'?{'anthropic-version':req.headers['anthropic-version']}:{}),...(typeof req.headers['anthropic-beta']==='string'?{'anthropic-beta':req.headers['anthropic-beta']}:{}),...(typeof req.headers['x-stainless-lang']==='string'?{'x-stainless-lang':req.headers['x-stainless-lang']}:{})},body:req.method==='POST'?JSON.stringify(body):undefined,redirect:'error',signal:abort.signal}));
       };
       const model=(req.body as {model?:string})?.model;
-      const bridgeContext=(path==='responses'||path==='responses/compact')&&!!(client||config.kind==='cliproxy'||apiSource)&&typeof model==='string'&&(/^(qoder|workbuddy|cursor)\//.test(model)||!!apiSource);
+      const bridgeContext=(path==='responses'||path==='responses/compact')&&!!(client||config.kind==='cliproxy'||apiSource)&&typeof model==='string'&&(fixed?.target==='codex'||/^(qoder|workbuddy|cursor)\//.test(model)||!!apiSource);
       const dispatch=cursorModel?async(route:string,body:unknown)=>abort.watch(await proxy.cursor.response(route,body,abort.signal)):send;
-      const response=bridgeContext?await gatewayContext.response(path,req.body as {model:string},client?.id??'workspace',client?.sourceId??apiSource?.id??upstreamURL,dispatch):await dispatch(path,req.body);
+      const response=bridgeContext?await gatewayContext.response(path,req.body as {model:string},client?.id??'workspace',client?.modelSources?.[model]??client?.sourceId??apiSource?.id??upstreamURL,dispatch,fixed?.target==='codex'?{scope:codexContextScope,normalize:portableCodexItem,recover:async item=>codexContext.recover(item,await codexContextScopes())}:undefined):await dispatch(path,req.body);
       if(!response.ok){
-        record(response.status);await settle({inputTokens:null,outputTokens:null},response.status>=500);
-        if(cursorModel){abort.close();return reply.code(response.status).send(await response.json());}
-        const diagnostic=response.status===400?await response.text():'';
-        let capabilityCode='';try{const code=JSON.parse(diagnostic)?.error?.code;if(typeof code==='string'&&Object.hasOwn(a2aCapabilityErrors,code))capabilityCode=code;}catch{/* Only known capability codes are public. */}
-        const regionRestricted=diagnostic.includes('User location is not supported for the API use');
+        await settle({inputTokens:null,outputTokens:null},response.status>=500);
+        if(cursorModel){record(response.status);abort.close();return reply.code(response.status).send(await response.json());}
+        const error=upstreamError(response.status,await readUpstreamError(response));
+        callError={code:error.type==='source_policy_blocked'?'source_policy_blocked':error.code??error.type,message:error.message};record(response.status);
         await response.body?.cancel().catch(()=>{});abort.close();
-        return reply.code(response.status).send({error:{message:capabilityCode?a2aCapabilityErrors[capabilityCode]:regionRestricted?'所选账号的上游服务不支持当前地区使用 API。请查看提供商的地区支持说明；重新登录不能解决此限制。':'Upstream provider request failed',type:capabilityCode==='a2a_source_policy_blocked'?'source_policy_blocked':capabilityCode?'unsupported_feature':regionRestricted?'region_not_supported':'provider_error',...(capabilityCode?{code:capabilityCode}:{})}});
+        return reply.code(response.status).send({...(path==='messages'?{type:'error'}:{}),error});
       }
       if(cursorModel&&response.headers.has('x-token-flow-output-limit'))reply.header('X-Token-Flow-Output-Limit',response.headers.get('x-token-flow-output-limit')!);
       if(bridgeContext&&response.headers.has('x-token-flow-compaction'))reply.header('X-Token-Flow-Compaction',response.headers.get('x-token-flow-compaction')!);

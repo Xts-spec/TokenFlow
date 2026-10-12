@@ -2,7 +2,7 @@ import { Transform } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { randomUUID } from 'node:crypto';
 
-export type GatewayCall={id:string;keyId:string;agent:string;model:string;protocol:string;startedAt:string;durationMs:number;status:number;inputTokens:number|null;outputTokens:number|null};
+export type GatewayCall={id:string;keyId:string;agent:string;model:string;protocol:string;startedAt:string;durationMs:number;status:number;inputTokens:number|null;outputTokens:number|null;error?:{code:string;message:string}};
 const number=(value:unknown)=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=0?value:null;
 /** Observe usage without changing payloads or retaining prompts / completions. */
 export function observeUsage(sse:boolean,onEnd:(usage:{inputTokens:number|null;outputTokens:number|null;failed:boolean})=>void|Promise<void>) {
@@ -32,8 +32,10 @@ export function observeUsage(sse:boolean,onEnd:(usage:{inputTokens:number|null;o
  const stream=new Transform({transform(chunk,_encoding,callback){consume(decoder.write(chunk));callback(null,chunk);},flush(callback){void finish().then(()=>callback(),error=>callback(error));}});
  stream.once('close',()=>{void finish().catch(()=>undefined);});return stream;
 }
+export type GatewayUsage={keyId:string;model:string;requests:number;failed:number;inputTokens:number;outputTokens:number;last:string};
 export class GatewayActivity {
  private recent:GatewayCall[]=[];
+ private usage=new Map<string,GatewayUsage>();
  private total=0;private failed=0;private measured=0;private input=0;private output=0;
  readonly since=new Date().toISOString();
  record(call:Omit<GatewayCall,'id'>){
@@ -41,7 +43,10 @@ export class GatewayActivity {
   if(call.inputTokens!==null||call.outputTokens!==null)this.measured++;
   this.input+=call.inputTokens??0;this.output+=call.outputTokens??0;
   this.recent.unshift({...call,id:randomUUID()});this.recent=this.recent.slice(0,100);
+  const id=`${call.keyId}\n${call.model}`;const row=this.usage.get(id)??{keyId:call.keyId,model:call.model,requests:0,failed:0,inputTokens:0,outputTokens:0,last:call.startedAt};
+  row.requests++;if(call.status>=400)row.failed++;row.inputTokens+=call.inputTokens??0;row.outputTokens+=call.outputTokens??0;if(call.startedAt>row.last)row.last=call.startedAt;
+  this.usage.set(id,row);
  }
- snapshot(){return {since:this.since,total:this.total,failed:this.failed,measured:this.measured,inputTokens:this.input,outputTokens:this.output,recent:structuredClone(this.recent)};}
+ snapshot(){return {since:this.since,total:this.total,failed:this.failed,measured:this.measured,inputTokens:this.input,outputTokens:this.output,recent:structuredClone(this.recent),usage:[...this.usage.values()].map(row=>({...row}))};}
 }
 export type GatewayActivitySnapshot=ReturnType<GatewayActivity['snapshot']>;

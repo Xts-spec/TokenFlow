@@ -4,7 +4,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createDesktopService } from '../packages/core/src/service.js';
-import { GatewayKeys } from '../packages/core/src/gateway-keys.js';
+import { GatewayKeys, gatewayKeyInput } from '../packages/core/src/gateway-keys.js';
 const cleanup:Array<()=>Promise<unknown>>=[];
 afterEach(async()=>{for(const fn of cleanup.splice(0).reverse())await fn();});
 async function setup() {
@@ -158,4 +158,15 @@ it('reports only known capability codes without exposing upstream diagnostics',a
   expect(response.json().error.type).toBe(code==='a2a_unknown'?'provider_error':code==='a2a_source_policy_blocked'?'source_policy_blocked':'unsupported_feature');
   expect(response.json().error.code).toBe(code==='a2a_unknown'?undefined:code);
  }
+});
+
+
+it('keeps a legacy unpinned key visible and authenticates the original secret after model edits and reopen',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'legacy-key-models-'));cleanup.push(()=>rm(root,{recursive:true,force:true}));
+ const store=await GatewayKeys.open(root);const {key,apiKey}=await store.create(gatewayKeyInput.parse({name:'Legacy app',models:['codex/shared-model'],tokenLimit:100}));
+ const reservation=await store.reserve(key.id,'codex/shared-model','responses');await store.settle(key.id,reservation,{inputTokens:7,outputTokens:3},false);
+ const sourceId='a'.repeat(24);await store.updateModels(key.id,['codex/second-model'],{'codex/second-model':sourceId});
+ const saved=(await GatewayKeys.open(root)).authenticate(apiKey);
+ expect(saved).toMatchObject({id:key.id,exported:true,usedTokens:10,tokenLimit:100,models:['codex/second-model'],modelSources:{'codex/second-model':sourceId}});
+ expect(saved?.sourceId).toBeUndefined();expect(await readFile(join(root,'gateway-keys.json'),'utf8')).not.toContain(apiKey);
 });

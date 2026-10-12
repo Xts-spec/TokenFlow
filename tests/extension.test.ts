@@ -18,6 +18,38 @@ it('rejects browser-origin pairing and unauthenticated CDP clients',async()=>{
  }finally{await relay.close();}
 });
 
+it.each([false,true])('delivers frame discovery before runtime contexts, including frame errors (%s), without blocking other sessions',async frameError=>{
+ const relay=new ExtensionRelay();let extension:WebSocket|undefined,client:WebSocket|undefined;
+ const open=(socket:WebSocket)=>new Promise<void>((resolve,reject)=>{socket.once('open',resolve);socket.once('error',reject);});
+ try{
+  const pair=await relay.pair();extension=new WebSocket(pair.connectionURL,{origin:`chrome-extension://${'a'.repeat(32)}`});await open(extension);
+  const sendExtension=(message:unknown)=>extension!.send(JSON.stringify(message));let frameRequest=0;
+  extension.on('message',data=>{
+   const command=JSON.parse(data.toString());if(command.type!=='command')return;
+   if(command.method==='Page.getFrameTree'){frameRequest=command.id;return;}
+   if(command.method==='Runtime.enable')sendExtension({type:'event',method:'Runtime.executionContextCreated',sessionId:command.sessionId,params:{context:{id:1,auxData:{isDefault:true}}}});
+   sendExtension({id:command.id,result:{}});
+   if(command.method==='Runtime.enable'&&command.sessionId==='fixture-child')sendExtension(frameError?{id:frameRequest,error:'Fixture frame discovery failure'}:{id:frameRequest,result:{frameTree:{frame:{id:'fixture-tab',url:'http://127.0.0.1/fixture'}}}});
+  });
+  sendExtension({type:'hello',target:{targetId:'fixture-tab',type:'page',url:'http://127.0.0.1/fixture'}});await expect.poll(()=>relay.state().running).toBe(true);
+  client=new WebSocket(relay.endpoint());const received:Array<{id?:number;method?:string;params?:{sessionId?:string};sessionId?:string;error?:{message:string}}>=[];
+  client.on('message',data=>received.push(JSON.parse(data.toString())));await open(client);
+  const sendClient=(message:unknown)=>client!.send(JSON.stringify(message));
+  sendClient({id:1,method:'Target.setAutoAttach',params:{autoAttach:true}});await expect.poll(()=>received.some(message=>message.id===1)).toBe(true);
+  sendExtension({type:'event',method:'Target.attachedToTarget',params:{sessionId:'fixture-child',targetInfo:{targetId:'iframe',type:'iframe'}}});
+  await expect.poll(()=>received.some(message=>message.params?.sessionId==='fixture-child')).toBe(true);
+  sendClient({id:2,method:'Page.getFrameTree',sessionId:'selected-tab'});
+  sendClient({id:3,method:'Runtime.enable',sessionId:'selected-tab'});
+  sendClient({id:4,method:'Runtime.enable',sessionId:'fixture-child'});
+  // The independent session releases frame discovery, so serializing all CDP would deadlock.
+  await expect.poll(()=>received.some(message=>message.id===3)&&received.some(message=>message.id===4)&&received.some(message=>message.id===2)).toBe(true);
+  const frame=received.findIndex(message=>message.id===2);
+  expect(received.findIndex(message=>message.method==='Runtime.executionContextCreated'&&message.sessionId==='selected-tab')).toBeGreaterThan(frame);
+  expect(received.findIndex(message=>message.method==='Runtime.executionContextCreated'&&message.sessionId==='fixture-child')).toBeLessThan(frame);
+  expect(!!received[frame].error).toBe(frameError);
+ }finally{client?.close();extension?.close();await relay.close();}
+});
+
 it('connects a real extension to the selected logged-in tab, runs Playwright and detaches without closing Chrome',async()=>{
  const root=await mkdtemp(join(tmpdir(),'browser-extension-'));
  const relay=new ExtensionRelay();

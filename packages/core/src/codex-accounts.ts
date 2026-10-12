@@ -12,7 +12,10 @@ const credential=z.object({access_token:token,refresh_token:token,id_token:token
 const journalSchema=z.object({before:z.object({auth:z.string().nullable(),config:z.string().nullable()}),after:z.object({auth:z.string(),config:z.string()}),accountId:z.string(),createdAt:z.string(),state:z.enum(['prepared','applied','restored'])});
 type Journal=z.infer<typeof journalSchema>;
 function identity(auth:string|null){try{const value=JSON.parse(auth??'{}');return typeof value.tokens?.account_id==='string'?value.tokens.account_id:null;}catch{return null;}}
-function email(auth:string|null){try{const token=JSON.parse(auth??'{}').tokens.id_token;const claims=JSON.parse(Buffer.from(token.split('.')[1],'base64url').toString());return typeof claims.email==='string'?claims.email:null;}catch{return null;}}
+function tokenEmail(token:unknown){try{const claims=JSON.parse(Buffer.from(String(token).split('.')[1],'base64url').toString());return typeof claims.email==='string'?claims.email:null;}catch{return null;}}
+function email(auth:string|null){try{return tokenEmail(JSON.parse(auth??'{}').tokens.id_token);}catch{return null;}}
+// account_id is the ChatGPT workspace, shared by everyone in a team; the email tells members apart.
+const sameLogin=(auth:string|null,accountId:string,mail:string|null)=>identity(auth)===accountId&&email(auth)===mail;
 
 const ownedFields=['model','model_provider','cli_auth_credentials_store','profile'] as const;
 function sameValue(a:unknown,b:unknown):boolean {
@@ -70,21 +73,27 @@ export class CodexAccounts {
     if(digest(await this.files())!==revision)throw conflict('本机登录或配置已变化，请刷新后重试。');
     const pids=await this.processes();if(pids.length&&!allowRunning)throw conflict('检测到 Codex 仍在运行，请确认切换后重启。');
   }
-  async switch(input:{revision:string;allowRunning:boolean;model:string},raw:unknown){
-    const parsed=credential.safeParse(raw);if(!parsed.success)throw conflict('账号缺少完整 OAuth 凭据，请重新授权。');
-    let c=parsed.data;
+  async checkSwitch(input:{revision:string;allowRunning:boolean;model:string},raw:unknown){
+    await this.check(input.revision,input.allowRunning);
+    const c=credential.safeParse(raw);if(!c.success)throw conflict('账号缺少完整 OAuth 凭据，请重新授权。');
     if(!/^codex\/[a-zA-Z0-9._-]+$/.test(input.model)||/(?:gpt-image-|codex-auto-review)/.test(input.model))throw conflict('请选择 Codex 支持的模型。');
+    if((await this.journal())?.state==='prepared')throw conflict('上次切换尚未完成，请先还原原登录。');
+    const config=parse((await this.files()).config??'');
+    if(config.forced_login_method&&config.forced_login_method!=='chatgpt')throw conflict('Codex 配置限制了登录方式，请先解除该限制。');
+    if(config.forced_chatgpt_workspace_id&&config.forced_chatgpt_workspace_id!==c.data.account_id)throw conflict('所选账号与 Codex 限定的工作空间不一致。');
+    if(config.model_providers&&typeof config.model_providers==='object'&&'openai' in config.model_providers)throw conflict('OpenAI 提供商有自定义覆盖，请先检查接口配置，未写入登录凭据。');
+    return c.data;
+  }
+  async switch(input:{revision:string;allowRunning:boolean;model:string},raw:unknown){
     return this.locked(async()=>{
-      await this.check(input.revision,input.allowRunning);
-      const before=await this.files();const previous=await this.journal();
+      let c=await this.checkSwitch(input,raw);
+      const before=await this.files();let previous=await this.journal();
       if(previous?.state==='prepared')throw conflict('上次切换尚未完成，请先还原原登录。');
-      if(previous?.state==='applied'&&(!nativeRouting(parse(before.config??''))||identity(before.auth)!==previous.accountId))throw conflict('上次切换后本机配置或登录已被修改，请先检查或还原。');
+      // Login or config changed outside token-flow since the last switch: the current state becomes the new original.
+      if(previous?.state==='applied'&&(!nativeRouting(parse(before.config??''))||!sameLogin(before.auth,previous.accountId,email(previous.after.auth))))previous=null;
       // Prefer the running client's refreshed tokens when selecting the same native account.
-      if(identity(before.auth)===c.account_id){const native=credential.safeParse(JSON.parse(before.auth!).tokens);if(native.success)c={...native.data,last_refresh:JSON.parse(before.auth!).last_refresh??undefined};}
+      if(sameLogin(before.auth,c.account_id,tokenEmail(c.id_token))){const native=credential.safeParse(JSON.parse(before.auth!).tokens);if(native.success)c={...native.data,last_refresh:JSON.parse(before.auth!).last_refresh??undefined};}
       const config=parse(before.config??'');
-      if(config.forced_login_method&&config.forced_login_method!=='chatgpt')throw conflict('Codex 配置限制了登录方式，请先解除该限制。');
-      if(config.forced_chatgpt_workspace_id&&config.forced_chatgpt_workspace_id!==c.account_id)throw conflict('所选账号与 Codex 限定的工作空间不一致。');
-      if(config.model_providers&&typeof config.model_providers==='object'&&'openai' in config.model_providers)throw conflict('OpenAI 提供商有自定义覆盖，请先检查接口配置，未写入登录凭据。');
       config.model=input.model.slice('codex/'.length);config.model_provider='openai';config.cli_auth_credentials_store='file';delete config.profile;
       const after={auth:JSON.stringify({auth_mode:'chatgpt',OPENAI_API_KEY:null,tokens:{access_token:c.access_token,refresh_token:c.refresh_token,id_token:c.id_token,account_id:c.account_id},last_refresh:c.last_refresh??null},null,2)+'\n',config:stringify(config)};
       // Retain the original login across repeated A -> B switches.
@@ -112,7 +121,7 @@ export class CodexAccounts {
       const journal=await this.journal();if(!journal||journal.state==='restored')throw conflict('没有可还原的账号切换备份。');
       const current=await this.files();
       // Refreshed tokens for the same account are expected; a different native login is not.
-      if(!sameValue(parse(current.config??''),parse(journal.before.config??''))&&!nativeRouting(parse(current.config??''))||current.auth!==journal.before.auth&&identity(current.auth)!==journal.accountId)throw conflict('本机登录或配置已有其他修改，已保留备份，未覆盖。');
+      if(!sameValue(parse(current.config??''),parse(journal.before.config??''))&&!nativeRouting(parse(current.config??''))||current.auth!==journal.before.auth&&!sameLogin(current.auth,journal.accountId,email(journal.after.auth)))throw conflict('本机登录或配置已有其他修改，已保留备份，未覆盖。');
       await this.write(this.authPath,journal.before.auth);
       await this.write(this.configPath,restoredConfig(current.config,journal));
       journal.state='restored';await this.save(journal);

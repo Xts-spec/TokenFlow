@@ -27,6 +27,15 @@ it('switches only permitted Codex accounts via admin API and preserves the gatew
   const targets=(await service.app.inject({url:'/api/a2a',headers})).json().targets;
   expect((await service.app.inject({url:'/api/a2a/connect',method:'POST',headers,payload:{target:'codex',revision:targets.find((t:{id:string})=>t.id==='codex').revision,sourceId:source.id,model:'codex/model-a'}})).statusCode).toBe(200);
   status=(await service.app.inject({url:'/api/codex-accounts',headers})).json();expect(status.gatewayConnected).toBe(true);
-  const blocked=await service.app.inject({url:'/api/codex-accounts/switch',method:'POST',headers,payload:{...payload,revision:status.revision,model:'codex/model-a'}});expect(blocked.statusCode).toBe(409);expect(blocked.body).toContain('先还原接口');
+  const native=await service.app.inject({url:'/api/codex-accounts/switch',method:'POST',headers,payload:{...payload,revision:status.revision,model:'codex/model-a'}});
+  expect(native.statusCode,native.body).toBe(200);expect(native.json()).toMatchObject({gatewayConnected:false,accountId:'account-a',provider:'openai'});
+  expect((await service.app.inject({url:'/api/a2a',headers})).json().targets.find((t:{id:string})=>t.id==='codex').connection).toBeNull();
+  const again=(await service.app.inject({url:'/api/a2a',headers})).json().targets.find((t:{id:string})=>t.id==='codex');
+  expect((await service.app.inject({url:'/api/a2a/connect',method:'POST',headers,payload:{target:'codex',revision:again.revision,sourceId:source.id,model:'codex/model-a'}})).statusCode).toBe(200);
+  status=(await service.app.inject({url:'/api/codex-accounts',headers})).json();
+  const restored=await service.app.inject({url:'/api/codex-accounts/restore',method:'POST',headers,payload:{revision:status.revision}});
+  expect(restored.statusCode,restored.body).toBe(200);expect(restored.json()).toMatchObject({gatewayConnected:false,accountId:null,backup:null});
+  await expect(readFile(paths.codex)).rejects.toMatchObject({code:'ENOENT'});
+  expect(await readFile(join(root,'cliproxy/auth/a.json'),'utf8')).toBe(a);
  }finally{await service.app.close();await rm(root,{recursive:true,force:true});}
 });

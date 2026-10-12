@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { parse } from 'smol-toml';
 import { AgentConnections,connectedConfig } from '../packages/core/src/agent-connections.js';
 import { agentConfig } from '../apps/console/src/agent-config.js';
+import { connectionEvidence } from '../apps/console/src/connection-evidence.js';
 const roots:string[]=[];afterEach(async()=>{for(const root of roots.splice(0))await rm(root,{recursive:true,force:true});});
 async function setup(){const root=await mkdtemp(join(await realpath(tmpdir()),'agent-connect-test-'));roots.push(root);const paths={qoder:join(root,'qoder/settings.json'),codex:join(root,'codex','config.toml'),claude:join(root,'claude','settings.json'),workbuddy:join(root,'workbuddy','models.json')};let pids:number[]=[];const connections=new AgentConnections(root,paths,async()=>pids);await mkdir(join(root,'codex'));await mkdir(join(root,'claude'));return {root,paths,connections,running:(next:number[])=>pids=next};}
 it('backs up exact original config, preserves providers and unrelated settings, restores and recovers across reopen',async()=>{
@@ -14,6 +15,27 @@ it('backs up exact original config, preserves providers and unrelated settings, 
  const text=await readFile(paths.codex,'utf8');const parsed=parse(text);expect(parsed.profile).toBe('work');expect(parsed.model_provider).toBe('token_flow');expect(parsed.model_providers).toHaveProperty('original');expect(parsed.profiles).toHaveProperty('work.model','codex/model');
  expect((await stat(paths.codex)).mode&0o777).toBe(0o600);expect(JSON.stringify(await connections.status())).not.toContain('fixture-key');
  await new AgentConnections(root,paths,async()=>[]).restore(record.id);expect(await readFile(paths.codex,'utf8')).toBe(original);
+});
+
+it('stays configured when the client adds its own settings, but not when a connected field changes',async()=>{
+ const {paths,connections}=await setup();await writeFile(paths.codex,'model = "old"\n');
+ const record=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:'codex/model',sourceId:'source',keyId:randomUUID(),key:'fixture-key'});
+ await writeFile(paths.codex,await readFile(paths.codex,'utf8')+'\n[projects."/work/app"]\ntrust_level = "trusted"\n');
+ let codex=(await connections.status())[0];expect([codex.configurationState,codex.drift]).toEqual(['configured',false]);expect((await connections.review(record.id)).checks.find(c=>c.name==='配置与接入备份一致')?.ok).toBe(true);
+ await writeFile(paths.codex,(await readFile(paths.codex,'utf8')).replace('model = "codex/model"','model = "other"'));
+ codex=(await connections.status())[0];expect([codex.configurationState,codex.drift]).toEqual(['changed',true]);
+});
+
+it('allows restore and model replacement when Codex changed only its selected token-flow model',async()=>{
+ const {paths,connections}=await setup();await writeFile(paths.codex,'model = "native"\napproval_policy = "untrusted"\n');
+ const first=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:'qoder/first',sourceId:'source',keyId:randomUUID(),key:'fixture-key'});
+ await writeFile(paths.codex,(await readFile(paths.codex,'utf8')).replaceAll('qoder/first','qoder/changed-in-codex'));
+ expect((await connections.status())[0].configurationState).toBe('changed');
+ const preview=await connections.preview('codex','http://127.0.0.1:9527','qoder/second');
+ const second=await connections.apply({target:'codex',revision:preview.revision,replaceId:first.id,origin:'http://127.0.0.1:9527',model:'qoder/second',sourceId:'source',keyId:randomUUID(),key:'second-key'});
+ expect(parse(await readFile(paths.codex,'utf8'))).toMatchObject({model:'qoder/second',model_provider:'token_flow',approval_policy:'untrusted'});
+ await connections.restore(second.id);
+ expect(parse(await readFile(paths.codex,'utf8'))).toEqual({model:'native',approval_policy:'untrusted'});
 });
 
 it('preserves Codex local policy and active legacy profile through model switches, reviews and rollback',async()=>{
@@ -129,6 +151,48 @@ it('reviews actual Claude routing without exposing keys and detects stale auxili
  const config=JSON.parse(await readFile(paths.claude,'utf8'));config.env.ANTHROPIC_SMALL_FAST_MODEL='stale';await writeFile(paths.claude,JSON.stringify(config));const drift=await connections.review(record.id);expect(drift.checks.find(c=>c.name==='主模型与辅助模型一致')?.ok).toBe(false);expect(drift.checks.find(c=>c.name==='配置与接入备份一致')?.ok).toBe(false);
 });
 
+it.each(['opus','sonnet','haiku','opusplan'])('keeps equivalent Claude model alias %s configured without a false alarm',async(alias)=>{
+ const {paths,connections}=await setup();
+ const record=await connections.apply({target:'claude',revision:(await connections.status())[1].revision,origin:'http://127.0.0.1:9527',model:'qoder/kmodel_latest',sourceId:'s',keyId:randomUUID(),key:'fixture-key'});
+ const config=JSON.parse(await readFile(paths.claude,'utf8'));config.model=alias;
+ const current=JSON.stringify(config);await writeFile(paths.claude,current);
+ const target=(await connections.status())[1];
+ expect([target.configurationState,target.drift]).toEqual(['configured',false]);
+ expect((await connections.review(record.id)).checks.every(check=>check.ok)).toBe(true);
+ expect(connectionEvidence(target,[],[{id:'s',models:[record.model]}]).tone).toBe('neutral');
+ await connections.repair(record.id);
+ expect(await readFile(paths.claude,'utf8')).toBe(current);
+ await connections.restore(record.id);
+ expect(await readFile(paths.claude,'utf8').catch(()=>null)).toBeNull();
+});
+
+it('still flags real Claude routing changes when a model alias is selected',async()=>{
+ const {paths,connections}=await setup();
+ const record=await connections.apply({target:'claude',revision:(await connections.status())[1].revision,origin:'http://127.0.0.1:9527',model:'qoder/kmodel_latest',sourceId:'s',keyId:randomUUID(),key:'fixture-key'});
+ const config=JSON.parse(await readFile(paths.claude,'utf8'));config.model='opus';
+ for(const [field,value] of [['ANTHROPIC_DEFAULT_OPUS_MODEL','other'],['ANTHROPIC_SMALL_FAST_MODEL','other'],['ANTHROPIC_BASE_URL','http://127.0.0.1:9999'],['ANTHROPIC_AUTH_TOKEN','other-key']]){
+  await writeFile(paths.claude,JSON.stringify({...config,env:{...config.env,[field]:value}}));
+  expect((await connections.status())[1].configurationState).toBe('changed');
+  expect((await connections.review(record.id)).checks.some(check=>!check.ok)).toBe(true);
+  await expect(connections.restore(record.id)).rejects.toThrow('外部修改');
+  await expect(connections.repair(record.id)).rejects.toThrow('外部修改');
+ }
+ await writeFile(paths.claude,JSON.stringify({...config,model:'unknown-alias'}));
+ expect((await connections.status())[1].configurationState).toBe('changed');
+ await expect(connections.restore(record.id)).rejects.toThrow('外部修改');
+});
+
+it('switches Claude models after an equivalent alias edit while preserving unrelated settings and original rollback',async()=>{
+ const {paths,connections}=await setup();const original=JSON.stringify({model:'original',env:{KEEP:'yes'},permissions:{defaultMode:'default'}});await writeFile(paths.claude,original);
+ const first=await connections.apply({target:'claude',revision:(await connections.status())[1].revision,origin:'http://127.0.0.1:9527',model:'qoder/first',sourceId:'s',keyId:randomUUID(),key:'first-key'});
+ const config=JSON.parse(await readFile(paths.claude,'utf8'));config.model='opus';config.language='chinese';await writeFile(paths.claude,JSON.stringify(config));
+ const preview=await connections.preview('claude','http://127.0.0.1:9527','qoder/second');
+ const next=await connections.apply({target:'claude',revision:preview.revision,replaceId:first.id,origin:'http://127.0.0.1:9527',model:'qoder/second',sourceId:'s',keyId:randomUUID(),key:'next-key'});
+ expect(JSON.parse(await readFile(paths.claude,'utf8'))).toMatchObject({model:'qoder/second',language:'chinese',env:{KEEP:'yes'},permissions:{defaultMode:'default'}});
+ await connections.restore(next.id);
+ expect(JSON.parse(await readFile(paths.claude,'utf8'))).toEqual({...JSON.parse(original),language:'chinese'});
+});
+
 it('refuses lossy WorkBuddy object conversion and reviews native arrays',async()=>{
  expect(()=>connectedConfig('workbuddy','{"models":[],"availableModels":[]}','http://127.0.0.1:9527','qoder/test','fixture-key')).toThrow('额外设置');
  const {paths,connections}=await setup();const status=(await connections.status())[2];const record=await connections.apply({target:'workbuddy',revision:status.revision,origin:'http://127.0.0.1:9527',model:'qoder/test',sourceId:'s',keyId:randomUUID(),key:'fixture-key'});
@@ -193,6 +257,19 @@ it('restores and switches Codex routing while preserving unrelated client edits'
  await writeFile(paths.codex,'sandbox_mode = "workspace-write"\n'+await readFile(paths.codex,'utf8'));
  await connections.restore(next.id);expect(parse(await readFile(paths.codex,'utf8'))).toEqual({model:'original',approval_policy:'on-request',sandbox_mode:'workspace-write'});
 });
+it('exports the selected Codex model to its picker and allows model-only edits before another switch',async()=>{
+ const {paths,connections}=await setup();const original='model = "original"\nmodel_catalog_json = "/fixture/original-models.json"\n';await writeFile(paths.codex,original);
+ const first=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:'qoder/kmodel_latest',sourceId:'s',keyId:randomUUID(),key:'fixture-key'});
+ const doc=parse(await readFile(paths.codex,'utf8'));
+ const catalog=JSON.parse(await readFile(String(doc.model_catalog_json),'utf8'));
+ expect(catalog.models.map((m:{slug:string})=>m.slug)).toEqual(['qoder/kmodel_latest']);
+ await writeFile(paths.codex,'model_reasoning_effort = "high"\n'+(await readFile(paths.codex,'utf8')).replace('model = "qoder/kmodel_latest"','model = "gpt-5"'));
+ const preview=await connections.preview('codex','http://127.0.0.1:9527','qoder/next');
+ const next=await connections.apply({target:'codex',revision:preview.revision,replaceId:first.id,origin:'http://127.0.0.1:9527',model:'qoder/next',sourceId:'s',keyId:randomUUID(),key:'next-key'});
+ expect(parse(await readFile(paths.codex,'utf8')).model).toBe('qoder/next');
+ await connections.restore(next.id);
+ expect(parse(await readFile(paths.codex,'utf8'))).toEqual({model:'original',model_catalog_json:'/fixture/original-models.json',model_reasoning_effort:'high'});
+});
 it('deletes stale records after reinstall without touching the new config, and keeps history selectable',async()=>{
  const {root,paths,connections}=await setup();await writeFile(paths.codex,'model = "original"\n');
  const first=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:'antigravity/old',sourceId:'s',keyId:randomUUID(),key:'first-key'});
@@ -214,4 +291,71 @@ it('restores a missing file without requiring a maintenance model',async()=>{
 it('requires a public HTTPS endpoint for manual Cursor setup and never invents a writable settings file',()=>{
  for(const url of ['http://127.0.0.1:9527','https://localhost','https://10.0.0.1','https://192.168.1.2','https://gateway.example.com/v1','https://user:password@gateway.example.com'])expect(()=>agentConfig('cursor',url,'antigravity/gemini-3-flash')).toThrow();
  expect(JSON.parse(agentConfig('cursor','https://gateway.example.com','antigravity/gemini-3-flash'))).toMatchObject({overrideOpenAIBaseURL:'https://gateway.example.com/v1',customModel:'antigravity/gemini-3-flash'});
+});
+
+it('writes multiple client menu entries and accepts an authorized client model switch without losing rollback',async()=>{
+ const {paths,connections}=await setup();
+ const selections=[{sourceId:'a'.repeat(24),model:'codex/first'},{sourceId:'b'.repeat(24),model:'claude/second'}];
+ for(const target of ['codex','claude','workbuddy','qoder'] as const){
+  const status=(await connections.status()).find(t=>t.id===target)!;
+  const record=await connections.apply({target,revision:status.revision,origin:'http://127.0.0.1:9527',...selections[0],selections,keyId:randomUUID(),key:'fixture-key'});
+  expect((await connections.review(record.id)).checks.every(c=>c.ok)).toBe(true);
+  const text=await readFile(paths[target],'utf8');
+  const menu=target==='codex'?await readFile(String(parse(text).model_catalog_json),'utf8'):text;
+  for(const selection of selections)expect(menu).toContain(selection.model);
+  if(target==='codex'){
+   await writeFile(paths[target],text.replace('model = "codex/first"','model = "claude/second"'));
+   expect((await connections.status()).find(t=>t.id===target)?.configurationState).toBe('configured');
+   expect((await connections.review(record.id)).checks.every(c=>c.ok)).toBe(true);
+  }
+  if(target==='claude'){
+   const config=JSON.parse(text);expect(config.modelPicker.options.map((m:{model:string})=>m.model)).toEqual(selections.map(s=>s.model));
+   config.model=selections[1].model;await writeFile(paths[target],JSON.stringify(config));
+   expect((await connections.status()).find(t=>t.id===target)?.configurationState).toBe('configured');
+   expect((await connections.review(record.id)).checks.every(c=>c.ok)).toBe(true);
+  }
+  await connections.restore(record.id);
+  expect((await connections.status()).find(t=>t.id===target)?.exists).toBe(false);
+ }
+});
+
+it('makes Codex subagents inherit the selected parent model and restores their original defaults',async()=>{
+ const {paths,connections}=await setup();
+ const original='model = "native"\nprofile = "work"\n[agents]\ndefault_subagent_model = "native-small"\ndefault_subagent_reasoning_effort = "high"\nmax_threads = 3\nenabled = true\n[agents.reviewer]\ndescription = "Review changes"\n[profiles.work]\nmodel = "native-work"\n[profiles.work.agents]\ndefault_subagent_model = "native-profile-small"\ndefault_subagent_reasoning_effort = "low"\nmax_threads = 2\n';
+ await writeFile(paths.codex,original);
+ for(const model of ['qoder/kmodel_latest','workbuddy/hy4-preview']){
+  const state=(await connections.status())[0];
+  await connections.apply({target:'codex',revision:state.revision,replaceId:state.connection?.id,origin:'http://127.0.0.1:9527',model,sourceId:'source',keyId:randomUUID(),key:'fixture-key'});
+  const doc=parse(await readFile(paths.codex,'utf8')) as any;
+  expect(doc.agents).toEqual({max_threads:3,enabled:true,reviewer:{description:'Review changes'}});
+  expect(doc.profiles.work.agents).toEqual({max_threads:2});
+  expect(doc.model).toBe(model);
+ }
+ await connections.restore((await connections.status())[0].connection!.id);
+ expect(await readFile(paths.codex,'utf8')).toBe(original);
+});
+
+it('exports catalog display names without changing Qoder routing IDs and restores original configs',async()=>{
+ const {paths,connections}=await setup();
+ const model='qoder/kmodel_latest';const modelLabels={[model]:'qoder/Kimi-K3'};
+ for(const target of ['claude','codex','qoder','workbuddy'] as const){
+  const original=target==='codex'?'model = "native"\n':target==='workbuddy'?'[]\n':'{}\n';
+  await mkdir(join(paths[target],'..'),{recursive:true});await writeFile(paths[target],original);
+  const status=(await connections.status()).find(item=>item.id===target)!;
+  const record=await connections.apply({target,revision:status.revision,origin:'http://127.0.0.1:9527',model,sourceId:'a'.repeat(24),keyId:randomUUID(),key:'fixture-key',selections:[{model,sourceId:'a'.repeat(24)}],modelLabels});
+  const text=await readFile(paths[target],'utf8');
+  if(target==='codex'){
+   const config=parse(text);expect(config.model).toBe(model);
+   const catalog=JSON.parse(await readFile(String(config.model_catalog_json),'utf8'));
+   expect(catalog.models[0]).toMatchObject({slug:model,display_name:'qoder/Kimi-K3'});
+  }else{
+   const config=JSON.parse(text);
+   if(target==='claude'){
+    expect(config.env.ANTHROPIC_MODEL).toBe(model);expect(config.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe(model);
+    expect(config.modelPicker.options).toEqual([{model,label:'token-flow · qoder/Kimi-K3'}]);
+   }else if(target==='qoder')expect(config.providers['token-flow'].models).toEqual([{model,displayName:'token-flow · qoder/Kimi-K3'}]);
+   else expect(config[0]).toMatchObject({id:model,name:'token-flow · qoder/Kimi-K3'});
+  }
+  await connections.restore(record.id);expect(await readFile(paths[target],'utf8')).toBe(original);
+ }
 });

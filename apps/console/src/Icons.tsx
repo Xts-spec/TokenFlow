@@ -1,7 +1,7 @@
 // Reused from the user's youzhao desktop app.
 import type { CSSProperties, ReactNode } from 'react';
 
-export type IconName='workspace'|'model'|'plug'|'history'|'browser'|'arrow'|'plus'|'briefcase'|'resume'|'shield'|'chevron'|'send'|'sliders'|'message'|'menu'|'close';
+export type IconName='workspace'|'model'|'plug'|'history'|'browser'|'arrow'|'plus'|'briefcase'|'resume'|'shield'|'chevron'|'send'|'sliders'|'message'|'menu'|'close'|'search'|'user'|'wrench'|'checkCircle'|'alertCircle'|'refresh'|'copy';
 const paths:Record<IconName,ReactNode>={
   workspace:<><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></>,
   model:<><rect x="6" y="6" width="12" height="12" rx="3"/><path d="M9 2v4m6-4v4M9 18v4m6-4v4M2 9h4m-4 6h4m12-6h4m-4 6h4"/><path d="m9 14 3-5 3 5m-5-1h4"/></>,
@@ -18,7 +18,14 @@ const paths:Record<IconName,ReactNode>={
   sliders:<><path d="M4 7h7m4 0h5M4 17h3m4 0h9"/><circle cx="13" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></>,
   message:<path d="M21 11a8 8 0 0 1-8 8H8l-5 3V6a3 3 0 0 1 3-3h7a8 8 0 0 1 8 8Z"/>,
   menu:<path d="M4 6h16M4 12h16M4 18h16"/>,
+  refresh:<><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 6a8 8 0 0 1 13 3m-1 9a8 8 0 0 1-13-3"/></>,
+  search:<><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></>,
+  copy:<><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></>,
   close:<path d="M18 6 6 18M6 6l12 12"/>,
+  checkCircle:<><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></>,
+  alertCircle:<><circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 4h.01"/></>,
+  user:<><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></>,
+  wrench:<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4 2.5-2.5Z"/>,
 };
 export function Icon({name,size=18,style}: {name:IconName;size?:number;style?:CSSProperties}) {
   return <svg className="uiIcon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={style}>{paths[name]}</svg>;

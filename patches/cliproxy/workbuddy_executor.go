@@ -17,6 +17,7 @@ import (
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // WorkBuddyExecutor implements the executor for Tencent WorkBuddy (CodeBuddy) API.
@@ -62,11 +63,39 @@ func (e *WorkBuddyExecutor) HttpRequest(ctx context.Context, auth *cliproxyauth.
 
 // Execute routes this source through the shared Responses representation.
 func (e *WorkBuddyExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	req = workBuddyClaudeProfile(req, opts)
 	return executeAgentResponse(ctx, auth, req, opts, e.executeNativeStream)
 }
 
 func (e *WorkBuddyExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+	req = workBuddyClaudeProfile(req, opts)
 	return executeAgentResponseStream(ctx, auth, req, opts, e.executeNativeStream)
+}
+
+// Use the same fixed introduction emitted by Claude Code's native print/SDK
+// mode. Match only the two known standalone introductions in top-level system
+// content. Task instructions, safety rules, tools, user content and credentials
+// must remain unchanged; never retry an upstream rejection with weaker rules.
+func workBuddyClaudeProfile(req cliproxyexecutor.Request, opts cliproxyexecutor.Options) cliproxyexecutor.Request {
+	if opts.SourceFormat != sdktranslator.FormatClaude {
+		return req
+	}
+	const profile = "You are a Claude agent, built on Anthropic's Claude Agent SDK."
+	known := func(text string) bool {
+		return text == "You are Claude Code, Anthropic's official CLI for Claude." ||
+			text == "You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK."
+	}
+	system := gjson.GetBytes(req.Payload, "system")
+	if system.Type == gjson.String && known(system.String()) {
+		req.Payload, _ = sjson.SetBytes(req.Payload, "system", profile)
+	} else if system.IsArray() {
+		for i, block := range system.Array() {
+			if block.Get("type").String() == "text" && known(block.Get("text").String()) {
+				req.Payload, _ = sjson.SetBytes(req.Payload, fmt.Sprintf("system.%d.text", i), profile)
+			}
+		}
+	}
+	return req
 }
 
 // ExecuteStream performs a streaming chat completion request to WorkBuddy, with auto-refresh on 401.
