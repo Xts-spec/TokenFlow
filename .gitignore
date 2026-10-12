@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 dist/
 release/
 .data/
@@ -77,3 +77,7 @@ local-maintenance.json
 maintenance-channel.json
 codex-upgrade.lock
 **/backups/codex-upgrade-*/
+
+# Publish one product video; keep generated demo screenshots and variants local.
+docs/media/*
+!docs/media/quickstart.mp4

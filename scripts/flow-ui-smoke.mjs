@@ -42,6 +42,22 @@ try{
   await api('/api/local-agent/providers/codex/refresh',{});
   assert.equal((await api('/api/local-agent')).providers.find(p=>p.id==='qoder').label,'Qoder IDE');
 
+  const checkProjectLinks=async()=>{
+    await page.getByRole('button',{name:'设置',exact:true}).evaluate(button=>button.click());
+    await page.getByRole('region',{name:'关于',exact:true}).waitFor();
+    await app.evaluate(({shell})=>{globalThis.projectLinks=[];shell.openExternal=async url=>{globalThis.projectLinks.push(url);};});
+    for(const name of ['使用指南 ↗','项目介绍 ↗','在 GitHub 提交反馈 ↗'])await page.getByRole('link',{name,exact:true}).evaluate(link=>link.click());
+    for(let i=0;i<20&&(await app.evaluate(()=>globalThis.projectLinks.length))<3;i++)await page.waitForTimeout(50);
+    const links=await app.evaluate(()=>globalThis.projectLinks);
+    assert.deepEqual(links,['https://github.com/haruinia/token-flow/blob/main/docs/usage.md','https://github.com/haruinia/token-flow/blob/main/README.md','https://github.com/haruinia/token-flow/issues']);
+    await page.evaluate(()=>{window.open('https://example.test/blocked','_blank');});
+    await page.waitForTimeout(100);
+    assert.deepEqual(await app.evaluate(()=>globalThis.projectLinks),links,'only fixed project URLs may open externally');
+  };
+  if(process.argv.includes('--project-links')){
+    await app.evaluate(({BrowserWindow})=>{const window=BrowserWindow.getAllWindows()[0];window.webContents.setBackgroundThrottling(false);window.hide();});
+    await checkProjectLinks();console.log(JSON.stringify({projectLinks:'passed'}));
+  }else{
   // Sidebar: saved accounts and APIs, then where they are used, and none of the old status noise.
   const nav=page.getByRole('navigation',{name:'主导航'});
   assert.deepEqual(await nav.getByRole('button').allTextContents(),['账号授权','API 接口','本地 Agent','API 代理']);
@@ -411,6 +427,7 @@ try{
   await page.screenshot({path:join(output,'07-notification-480.png')});await page.setViewportSize({width:1320,height:900});
   // Secondary views.
   await page.getByRole('button',{name:'设置',exact:true}).click();await page.getByRole('region',{name:'网关'}).waitFor();
+  await checkProjectLinks();
   await page.getByRole('button',{name:'活动',exact:true}).click();await page.getByRole('heading',{name:'活动'}).waitFor();
   await page.getByRole('button',{name:'打开维修师傅'}).click();const repair=page.getByRole('region',{name:'维修师傅'});await repair.waitFor();
   await repair.getByText('先选一个维修模型',{exact:false}).waitFor();
@@ -484,6 +501,7 @@ try{
   }
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({flowUi:'passed',screenshots:output}));
+  }
 }catch(error){
   if(app){const window=app.windows()[0];if(window){await mkdir(output,{recursive:true});await window.screenshot({path:join(output,'failure.png')}).catch(()=>{});console.error((await window.locator('body').innerText().catch(()=>'')).slice(-3000));}}
   throw error;

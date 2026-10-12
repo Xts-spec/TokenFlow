@@ -46,8 +46,8 @@ async function start() {
     if(window){if(window.isMinimized())window.restore();window.show();window.focus();return;}
     window=new BrowserWindow({width:1320,height:900,minWidth:900,minHeight:640,show:false,backgroundColor:'#ffffff',title:'token-flow',icon,...(process.platform==='darwin'?{titleBarStyle:'hiddenInset' as const,trafficLightPosition:{x:20,y:20}}:{}),webPreferences:{preload:join(here,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
     window.webContents.setWindowOpenHandler(({url})=>{
-      if(url==='https://github.com/haruinia/token-flow/issues')void shell.openExternal(url).catch(()=>{
-        dialog.showErrorBox('无法打开反馈页面','请在浏览器中打开 https://github.com/haruinia/token-flow/issues');
+      if(['https://github.com/haruinia/token-flow/issues','https://github.com/haruinia/token-flow/blob/main/README.md','https://github.com/haruinia/token-flow/blob/main/docs/usage.md'].includes(url))void shell.openExternal(url).catch(()=>{
+        dialog.showErrorBox('无法打开项目页面',`请在浏览器中打开 ${url}`);
       });
       return {action:'deny'};
     });

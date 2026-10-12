@@ -31,8 +31,7 @@
     "test:claude-compat": "go -C upstream/CLIProxyAPI test ./internal/translator/codex/claude ./internal/translator/openai/claude && npm run test:sidecar-agents",
     "test:api-sources": "node scripts/api-sources-smoke.mjs",
     "test:repair": "node scripts/local-repair-smoke.mjs",
-    "test:frontend": "node scripts/flow-ui-smoke.mjs",
-    "demo": "npm run build && node scripts/record-demo.mjs"
+    "test:frontend": "node scripts/flow-ui-smoke.mjs"
   },
   "dependencies": {
     "@cua-sample/contracts": "*",
