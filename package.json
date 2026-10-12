@@ -105,5 +105,5 @@
     "node": ">=22.19.0"
   },
   "description": "Local desktop model gateway: manage accounts and APIs, connect models to coding agents, and export scoped client keys.",
-  "author": "token-flow contributors"
+  "author": "haruinia"
 }
