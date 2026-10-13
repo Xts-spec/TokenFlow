@@ -8,7 +8,7 @@ token-flow 是本地桌面模型网关：集中管理 GPT/Codex 等平台的多�
 
 既可以切换 Agent 自己的官方登录，也可以通过本地网关反代所选来源。你继续在熟悉的客户端工作，token-flow 管理模型选择、配置备份、独立 Key、协议转换和用量记录。
 
-**[观看中文使用演示](docs/media/quickstart.mp4)** · **[查看使用指南](docs/usage.md)**
+**[访问官网](https://token-flow.haruinia.chatgpt.site/)** · **[观看中文使用演示](docs/media/quickstart.mp4)** · **[查看使用指南](docs/usage.md)**
 
 视频演示多账号授权与切换、重启后加载配置、WorkBuddy / Qoder 额度查看与反代接入、独立 Key 请求和用量核对。账号、额度及上游响应使用隔离模拟数据；模拟客户端加载配置并调用真实本机网关，不代表真实厂商或客户端的完整验证。
 
