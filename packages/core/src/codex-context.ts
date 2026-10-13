@@ -84,8 +84,38 @@ export class CodexContext {
   const candidates:{path:string;before:string;after:string}[]=[];
   for(const {path} of await this.files()){
    await safePath(path);const before=await readFile(path,'utf8');const lines=before.split('\n');let index=-1,event:Item|undefined;let malformed=false;
-   for(let i=0;i<lines.length;i++){try{const row=JSON.parse(lines[i]!);if(row.type==='compacted'){index=i;event=row;}else if(row.type==='response_item'&&row.payload?.type==='compaction'){index=i;event={...row,type:'compacted',payload:{message:'',replacement_history:[row.payload]}};}}catch{if(lines[i]!.trim())malformed=true;}}
-   const history=event?.payload?.replacement_history;if(index<0||!Array.isArray(history))continue;
+   let gatewayTurn=false;const foreignReasoning=new Set<string>();
+   const reasoning=(item:Item):Item[]=>{
+    // Chat-to-Responses translators emit synthetic reasoning IDs and sometimes
+    // an empty ciphertext. Neither is an official encrypted reasoning item.
+    if(item?.type!=='reasoning'||!(gatewayTurn||foreignReasoning.has(item.id)||/^rs_chatcmpl[-_]/.test(String(item.id))))return [item];
+    if(typeof item.id==='string')foreignReasoning.add(item.id);
+    return portableCodexItem(item);
+   };
+   for(let i=0;i<lines.length;i++){
+    let row:Item;try{row=JSON.parse(lines[i]!);}catch{if(lines[i]!.trim())malformed=true;continue;}
+    if(!object(row.payload))continue;
+    if(row.type==='session_meta')gatewayTurn=row.payload.model_provider==='token_flow';
+    if(row.type==='turn_context'&&typeof row.payload.model==='string')gatewayTurn=row.payload.model.includes('/');
+    if(row.type==='response_item'&&row.payload.type==='reasoning'){
+     const normalized=reasoning(row.payload);
+     if(normalized.length!==1||normalized[0]!==row.payload)lines[i]=normalized.map(payload=>JSON.stringify({...row,payload})).join('\n');
+    }
+    if(row.type==='compacted'){
+     const history=row.payload.replacement_history;
+     if(Array.isArray(history)){
+      const normalized=history.flatMap(reasoning);
+      if(JSON.stringify(normalized)!==JSON.stringify(history)){row.payload.replacement_history=normalized;delete row.payload.replacement_history_metadata;lines[i]=JSON.stringify(row);}
+     }
+     index=i;event=row;
+    }else if(row.type==='response_item'&&row.payload.type==='compaction'){index=i;event={...row,type:'compacted',payload:{message:'',replacement_history:[row.payload]}};}
+   }
+   const retainChanges=()=>{
+    const after=lines.join('\n');if(after===before)return;
+    if(malformed)throw new GatewayContextError('会话记录不完整，迁移已停止；请先退出 Codex 后重试，原文件保留。',409);
+    candidates.push({path,before,after});
+   };
+   const history=event?.payload?.replacement_history;if(index<0||!Array.isArray(history)){retainChanges();continue;}
    const recoveredTokens=new Map<string,Item[]>();
    for(const item of history){
     if(item?.type!=='compaction'||typeof item.encrypted_content!=='string')continue;
@@ -93,7 +123,7 @@ export class CodexContext {
     const recovered=token.startsWith('tfctx1.')?this.context.decodeCheckpoint(token,[codexContextScope,...scopes]):await this.cached(token);
     if(recovered)recoveredTokens.set(token,recovered);
    }
-   if(!recoveredTokens.size)continue;
+   if(!recoveredTokens.size){retainChanges();continue;}
    let changed=false;const output:Item[]=[];
    for(const item of history){
     if(item?.type!=='compaction'){output.push(...portableCodexItem(item));continue;}
@@ -111,11 +141,12 @@ export class CodexContext {
     // causes Codex to ignore the rewritten checkpoint on resume. The independent
     // guardian history and retained user/assistant records remain unchanged.
     delete event!.payload.replacement_history_metadata;
-    lines[index]=JSON.stringify(event);candidates.push({path,before,after:lines.join('\n')});
+    lines[index]=JSON.stringify(event);
    }
+   retainChanges();
   }
   if(!candidates.length)return {migrated:0};
-  if((await processes()).length)throw Object.assign(new Error(`有 ${candidates.length} 个压缩会话需要迁移。请先退出 Codex，再切换官方登录；原配置和会话尚未修改。`),{statusCode:409});
+  if((await processes()).length)throw Object.assign(new Error(`有 ${candidates.length} 个会话需要兼容处理。请先退出 Codex，再切换官方登录；原配置和会话尚未修改。`),{statusCode:409});
   const batch=join(this.backups,randomUUID());await mkdir(batch,{recursive:true,mode:0o700});
   const journal=candidates.map((c,i)=>({path:relative(dirname(this.configPath),c.path),backup:`${i}.jsonl`,beforeHash:digest(c.before),afterHash:digest(c.after)}));
   for(let i=0;i<candidates.length;i++)await writeFile(join(batch,`${i}.jsonl`),candidates[i]!.before,{mode:0o600,flag:'wx'});

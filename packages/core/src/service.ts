@@ -1,3 +1,4 @@
+import {CodexSwitchLifecycle} from './codex-switch-lifecycle.js';
 import {WorkBuddySDKProvider} from './codebuddy.js';
 import {CodexThreadMigration} from './codex-thread-migration.js';
 import {PiTerminalLifecycle} from './pi-terminal-lifecycle.js';
@@ -227,6 +228,8 @@ export async function createDesktopService(options:ServiceOptions) {
   const fixedRoutes=new Map((await connections.status()).flatMap(t=>t.connection?.state==='applied'?[[t.connection.keyId,{target:t.id,sourceId:t.connection.sourceId,model:t.connection.model,selections:t.connection.selections}] as const]:[]));
   const codexContext=new CodexContext(root,connections.paths.codex,gatewayContext);
   const codexContextScopes=async()=>((await connections.status()).find(t=>t.id==='codex')?.backups??[]).flatMap(record=>(record.selections??[record]).map(item=>({owner:record.keyId,source:item.sourceId,model:item.model})));
+  const codexLifecycle=new CodexSwitchLifecycle(()=>options.agentProcesses?options.agentProcesses('codex'):agentProcesses('codex'));
+  const codexChange=<T>(restart:boolean,work:()=>Promise<T>)=>restart?codexLifecycle.change(work):work();
   const codexThreads=new CodexThreadMigration(root,connections.paths.codex,()=>options.agentProcesses?options.agentProcesses('codex'):agentProcesses('codex'));
   const prepareCodexOfficial=async()=>codexContext.prepareOfficial(await codexContextScopes(),async()=>options.agentProcesses?options.agentProcesses('codex'):agentProcesses('codex'));
   const codexAccounts=new CodexAccounts(root,connections.paths.codex,options.agentProcesses?()=>options.agentProcesses!('codex'):undefined);
@@ -273,7 +276,8 @@ export async function createDesktopService(options:ServiceOptions) {
     return '';
   };
   const restoreConnection=async(id:string,approval?:{revision:string;allowRunning:boolean},officialModel?:string|(()=>Promise<string|undefined>))=>{const target=(await connections.status()).find(t=>t.backups.some(b=>b.id===id));if(target?.id==='codex'){if(approval&&target.revision!==approval.revision)throw Object.assign(new Error('配置已变化，请刷新后重试。'),{statusCode:409});await prepareCodexOfficial();await codexThreads.restore(officialModel??(()=>connections.officialModel(id)));}const record=await connections.restore(id,approval);fixedRoutes.delete(record.keyId);if(gatewayKeys.list().some(key=>key.id===record.keyId))await gatewayKeys.remove(record.keyId);return record;};
-  const inspectConnections=async()=>{const threadMigration=await codexThreads.status();return {discovery,gateway:{state:proxy.snapshot().state,models:(await localSnapshot()).models},targets:(await connections.status()).map(target=>target.id==='codex'?{...target,threadMigration}:target)};};
+  const migrationStatus=async()=>({...await codexThreads.status(),lifecyclePhase:codexLifecycle.phase});
+  const inspectConnections=async()=>{const threadMigration=await migrationStatus();return {discovery,gateway:{state:proxy.snapshot().state,models:(await localSnapshot()).models},targets:(await connections.status()).map(target=>target.id==='codex'?{...target,threadMigration}:target)};};
   const inspectMaintenance=async(chain?:MaintenanceChain)=>{
     const all=await inspectConnections();const local=await localSnapshot();
     const snapshot={...all,targets:chain?all.targets.filter(t=>t.id===chain.target):all.targets};
@@ -401,31 +405,35 @@ export async function createDesktopService(options:ServiceOptions) {
 
   const codexAccountStatus=async()=>({...await codexAccounts.status(),accounts:await proxy.codexNativeAccounts(),gatewayConnected:!!(await connections.status()).find(t=>t.id==='codex')?.connection});
   app.get('/api/codex-accounts',codexAccountStatus);
-  const nativeSwitchInput=z.object({revision:z.string().regex(/^[a-f0-9]{64}$/),allowRunning:z.boolean().default(false)});
+  const nativeSwitchInput=z.object({revision:z.string().regex(/^[a-f0-9]{64}$/),allowRunning:z.boolean().default(false),restartCodex:z.boolean().default(false)});
   app.post('/api/codex-accounts/switch',async req=>{
     await idle();
     const input=nativeSwitchInput.extend({sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(1).max(300)}).strict().parse(req.body);
     const credential=await proxy.codexCredential(input.sourceId,input.model);
     // Verify the chosen login before disconnecting a working gateway.
     await codexAccounts.checkSwitch(input,credential);
+    return codexChange(input.restartCodex,async()=>{
     await prepareCodexOfficial();
     const target=(await connections.status()).find(t=>t.id==='codex')!;
     if(target.connection)await restoreConnection(target.connection.id,{revision:target.revision,allowRunning:input.allowRunning},input.model.slice('codex/'.length));
     else await codexThreads.restore(input.model.slice('codex/'.length));
     await codexAccounts.switch({...input,revision:target.connection?(await codexAccounts.status()).revision:input.revision},credential);
     return codexAccountStatus();
+    });
   });
   app.post('/api/codex-accounts/restore',async req=>{
     await idle();
     const input=nativeSwitchInput.strict().parse(req.body);const status=await codexAccounts.status();
     if(status.revision!==input.revision)throw Object.assign(new Error('本机登录或配置已变化，请刷新后重试。'),{statusCode:409});
     if(!status.backup)throw Object.assign(new Error('没有可还原的账号切换备份。'),{statusCode:409});
+    return codexChange(input.restartCodex,async()=>{
     await prepareCodexOfficial();
     const target=(await connections.status()).find(t=>t.id==='codex')!;
     const officialModel=()=>codexAccounts.restoreModel();
     if(target.connection)await restoreConnection(target.connection.id,{revision:target.revision,allowRunning:input.allowRunning},officialModel);
     else await codexThreads.restore(officialModel);
     await codexAccounts.restore({...input,revision:target.connection?(await codexAccounts.status()).revision:input.revision});return codexAccountStatus();
+    });
   });
   const nativeStatus=async(provider:NativeProvider)=>({...await nativeAccounts[provider].status(),accounts:await proxy.nativeAccounts(provider),gatewayConnected:provider==='claude'&&!!(await connections.status()).find(t=>t.id==='claude')?.connection});
   app.get('/api/native-accounts/:provider',async req=>nativeStatus(nativeProviderSchema.parse((req.params as {provider:string}).provider)));
@@ -439,8 +447,8 @@ export async function createDesktopService(options:ServiceOptions) {
     return nativeStatus(provider);
   });
   app.get('/api/a2a',inspectConnections);
-  app.get('/api/a2a/codex-migration',()=>codexThreads.status());
-  app.post('/api/a2a/codex-migration/restore',async()=>{await idle();const target=(await connections.status()).find(t=>t.id==='codex')!;if(target.connection)return restoreConnection(target.connection.id,{revision:target.revision,allowRunning:false});return codexThreads.restore();});
+  app.get('/api/a2a/codex-migration',migrationStatus);
+  app.post('/api/a2a/codex-migration/restore',async req=>{await idle();const input=z.object({restartCodex:z.boolean().default(false)}).strict().parse(req.body??{});return codexChange(input.restartCodex,async()=>{const target=(await connections.status()).find(t=>t.id==='codex')!;if(target.connection)return restoreConnection(target.connection.id,{revision:target.revision,allowRunning:false});return codexThreads.restore();});});
   const agentInstallation=new AgentInstallationManager(options.agentProcesses??agentProcesses,options.openExternal);
   const agentUpdates=new AgentUpdates();
   app.get('/api/a2a/program-updates',async()=>({updates:Object.fromEntries(await Promise.all(targetSchema.options.map(async target=>[target,await agentUpdates.check(target,await detectAgent(target))])))}));
@@ -457,7 +465,7 @@ export async function createDesktopService(options:ServiceOptions) {
     const input=z.discriminatedUnion('target',[z.object({target:z.enum(['codex','qoder','workbuddy','deepseek'])}).strict(),z.object({target:z.literal('pi'),session:session.optional()}).strict(),z.object({target:z.literal('claude'),client:z.enum(['vscode','terminal']),session:session.optional()}).strict()]).parse(req.body);
     if(input.target==='pi'){const current=(await connections.status()).find(t=>t.id==='pi');return piTerminal.restart(input.session,current?.connection?.model);}
     if(input.target==='claude'&&input.client==='terminal'){if(!input.session)throw Object.assign(new Error('请选择终端会话'),{statusCode:400});return claudeTerminal.restart(input.session);}
-    return qoderLifecycle.restart(input.target);
+    return input.target==='codex'?codexLifecycle.change(async()=>{if(!(await connections.status()).find(t=>t.id==='codex')?.connection)await prepareCodexOfficial();return {message:'Codex 已重新打开，旧对话兼容处理已完成。'};}):qoderLifecycle.restart(input.target);
   });
   app.post('/api/a2a/import',async req=>{
     await idle();const {target}=z.object({target:z.enum(['codex','claude'])}).strict().parse(req.body);
@@ -466,17 +474,21 @@ export async function createDesktopService(options:ServiceOptions) {
   });
   app.post('/api/a2a/connect',async req=>{
     await idle();
-    const input=z.object({replaceId:z.string().uuid().optional(),allowRunning:z.boolean().default(false),target:targetSchema,selections:modelSelectionsSchema.optional(),sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(1).max(300),revision:z.string().regex(/^[a-f0-9]{64}$/),tokenLimit:z.number().int().min(0).max(1e12).nullable().default(null)}).strict().parse(req.body);
+    const input=z.object({replaceId:z.string().uuid().optional(),allowRunning:z.boolean().default(false),restartCodex:z.boolean().default(false),target:targetSchema,selections:modelSelectionsSchema.optional(),sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(1).max(300),revision:z.string().regex(/^[a-f0-9]{64}$/),tokenLimit:z.number().int().min(0).max(1e12).nullable().default(null)}).strict().parse(req.body);
     if(input.replaceId)approval.clear();
-    const record=await applyConnection(input,`http://${req.headers.host}`);
+    if(input.restartCodex&&input.target!=='codex')throw Object.assign(new Error('自动迁移重启仅支持 Codex。'),{statusCode:400});
+    // Reject stale selections before interrupting the user's running application.
+    if(input.restartCodex){const target=(await connections.status()).find(t=>t.id==='codex')!;if(target.revision!==input.revision)throw Object.assign(new Error('配置已变化，请刷新后重试。'),{statusCode:409});for(const selected of input.selections??[input])resolveSource(selected.sourceId,selected.model);}
+    const record=await codexChange(input.restartCodex,()=>applyConnection(input,`http://${req.headers.host}`));
     maintenanceOrigin=`http://${req.headers.host}`;
     return record;
   });
   app.post('/api/a2a/restore',async req=>{
     await idle();
-    const input=z.object({id:z.string().uuid(),revision:z.string().regex(/^[a-f0-9]{64}$/).optional(),allowRunning:z.boolean().default(false)}).strict().refine(v=>!v.allowRunning||!!v.revision,'运行中还原需要当前配置版本').parse(req.body);
+    const input=z.object({id:z.string().uuid(),revision:z.string().regex(/^[a-f0-9]{64}$/).optional(),allowRunning:z.boolean().default(false),restartCodex:z.boolean().default(false)}).strict().refine(v=>!v.allowRunning||!!v.revision,'运行中还原需要当前配置版本').parse(req.body);
     approval.clear();
-    return restoreConnection(input.id,input.revision?{revision:input.revision,allowRunning:input.allowRunning}:undefined);
+    if(input.restartCodex){const target=(await connections.status()).find(t=>t.backups.some(b=>b.id===input.id));if(target?.id!=='codex'||target.revision!==input.revision)throw Object.assign(new Error('Codex 配置已变化，请刷新后重试。'),{statusCode:409});}
+    return codexChange(input.restartCodex,()=>restoreConnection(input.id,input.revision?{revision:input.revision,allowRunning:input.allowRunning}:undefined));
   });
   app.post('/api/a2a/delete',async req=>{
     await idle();

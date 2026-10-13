@@ -85,7 +85,7 @@ function AgentPanel({target,update,login,local,usage,problem,notify,onRepair,onC
  const [migrationProgress,setMigrationProgress]=useState(target.threadMigration);
 
  const desktopRestart=!!target.restartSupported&&['codex','qoder','workbuddy','deepseek'].includes(target.id);
- const configurationSaved=()=>{setRestartPending(desktopRestart);setRestartError('');setRestartOpen(desktopRestart);};
+ const configurationSaved=(restarted=false)=>{setRestartPending(desktopRestart&&!restarted);setRestartError('');setRestartOpen(desktopRestart&&!restarted);};
  const [busy,setBusy]=useState(false);const lock=useRef(false);const [picking,setPicking]=useState(false);const [open,setOpen]=useState('');
  useEffect(()=>{if(target.id!=='codex'||!busy)return;let active=true;const timer=setInterval(()=>{void requestJSON<NonNullable<AgentTarget['threadMigration']>>('/api/a2a/codex-migration').then(value=>{if(active)setMigrationProgress(value);}).catch(()=>{});},1500);return ()=>{active=false;clearInterval(timer);};},[target.id,busy]);
  const rememberDetail=useListReturn(!!open);
@@ -112,8 +112,8 @@ function AgentPanel({target,update,login,local,usage,problem,notify,onRepair,onC
  const run=async(work:()=>Promise<string>)=>{
   if(lock.current)return;lock.current=true;setBusy(true);
   try{const text=await work();setExitMessage('');notify({kind:'ok',text});}
-  catch(error){if((error as {code?:string}).code==='codex_exit_required')setExitMessage(error instanceof Error?error.message:'请先退出 Codex。');else notify({kind:'error',text:error instanceof Error?error.message:'操作失败'});}
-  finally{await onChanged().catch(()=>{});await login?.refresh();lock.current=false;setBusy(false);}
+  catch(error){if((error as {code?:string}).code==='codex_exit_required')setExitMessage(error instanceof Error?error.message:'请先退出 Codex。');else {setExitMessage('');notify({kind:'error',text:error instanceof Error?error.message:'操作失败'});}}
+  finally{try{await onChanged().catch(()=>{});await login?.refresh();}finally{lock.current=false;setBusy(false);}}
  };
  // The revision guard rejects the write if the config changed since it was read.
  const latest=async()=>{
@@ -125,35 +125,44 @@ function AgentPanel({target,update,login,local,usage,problem,notify,onRepair,onC
   if(!target.installation.installed){pendingSelection.current={selections,preferred};askProgram('install');return;}
   return connectSelected(selections,preferred);
  };
- const connectSelected=(selections:Choice[],preferred?:Choice)=>run(async()=>{
-  retryMigration.current=()=>connectSelected(selections,preferred);
+ const changeCodex=(work:(restartCodex:boolean)=>Promise<string>,approved=false):Promise<void>|void=>{
+  const automatic=target.id==='codex'&&desktopRestart;
+  retryMigration.current=()=>changeCodex(work,true);
+  if(automatic&&!approved){setExitMessage('将自动退出 Codex 并应用更改，完成后重新打开。已有备份会保留，仅在需要处理新对话时追加备份。');return;}
+  setMigrationProgress(undefined);
+  return run(()=>work(automatic&&approved));
+ };
+ const connectSelected=(selections:Choice[],preferred?:Choice)=>{
+  saveDraft(selections,true);
+  return changeCodex(async restartCodex=>{
   const choice=preferred??selections.find(item=>isCurrent(item))??selections[0];
   if(!choice)throw new Error('请至少选择一个模型。');
+  saveDraft(selections,true);
   const next=await latest();
-  await requestJSON('/api/a2a/connect',post({allowRunning:true,target:target.id,selections,sourceId:choice.sourceId,model:choice.model,revision:next.revision,...(next.connection?{replaceId:next.connection.id}:{}),tokenLimit:null}),600000);
-  saveDraft(selections,false);configurationSaved();
+  await requestJSON('/api/a2a/connect',post({allowRunning:true,restartCodex,target:target.id,selections,sourceId:choice.sourceId,model:choice.model,revision:next.revision,...(next.connection?{replaceId:next.connection.id}:{}),tokenLimit:null}),600000);
+  saveDraft(selections,false);configurationSaved(restartCodex);
   if(hidden.includes(choiceId(choice)))hide(hidden.filter(id=>id!==choiceId(choice)));
   const label=modelLabel(local.models,choice.model);
   const menu=target.id==='qoder'||target.id==='workbuddy'?`，在它的模型菜单里选 ${label}`:'';
   if(target.id==='pi'||target.id==='claude')return `${target.name} 已导入 ${selections.length} 个模型，下次启动时加载配置，可用 /model 选择模型。`;
   if(target.id==='deepseek')return `DeepSeek Harness 桌面版已导入 ${selections.length} 个模型，默认 ${label}；重新打开应用后生效。`;
+  if(restartCodex)return `Codex 已配置 ${selections.length} 个模型，默认 ${label}，旧对话已迁移并自动重新打开。`;
   return `${target.name} 已配置 ${selections.length} 个模型，默认 ${label}。重启后可在 Agent 内切换${menu}。`;
- });
- const restore=(promptRestart=true)=>run(async()=>{
-  retryMigration.current=()=>restore(promptRestart);
+ });};
+ const restore=(promptRestart=true)=>changeCodex(async restartCodex=>{
   const next=await latest();
-  await requestJSON('/api/a2a/restore',post({id:next.connection!.id,revision:next.revision,allowRunning:true}),600000);
-  saveDraft(models,false);if(promptRestart)configurationSaved();else setRestartPending(desktopRestart);
-  return `${target.name} 已恢复原配置，${desktopRestart?'重启':'下次启动'}后生效。`;
+  await requestJSON('/api/a2a/restore',post({id:next.connection!.id,revision:next.revision,allowRunning:true,restartCodex}),600000);
+  saveDraft(models,false);if(promptRestart||restartCodex)configurationSaved(restartCodex);else setRestartPending(desktopRestart);
+  return restartCodex?'Codex 已恢复原配置与旧对话，并自动重新打开。':`${target.name} 已恢复原配置，${desktopRestart?'重启':'下次启动'}后生效。`;
  });
- const restoreThreads=()=>run(async()=>{retryMigration.current=()=>restoreThreads();await requestJSON('/api/a2a/codex-migration/restore',post({}),600000);configurationSaved();return '旧对话已恢复原来源与模型，新增聊天记录已保留。';});
+ const restoreThreads=()=>changeCodex(async restartCodex=>{await requestJSON('/api/a2a/codex-migration/restore',post({restartCodex}),600000);configurationSaved(restartCodex);return `旧对话已恢复原来源与模型，新增聊天记录已保留。${restartCodex?'Codex 已自动重新打开。':''}`;});
  const restart=()=>run(async()=>{
   setRestartError('');
   const result=await requestJSON<{message:string}>('/api/a2a/restart',post({target:target.id}),60000).catch(error=>{setRestartError(error instanceof Error?error.message:'重启失败');throw error;});
   setRestartPending(false);setRestartOpen(false);
   return result.message;
  });
- const switchAccount=(id:string,label:string)=>run(async()=>{retryMigration.current=()=>switchAccount(id,label);const note=await login!.switchTo(id);configurationSaved();return `${target.name} 已切换到账号 ${label}。${desktopRestart?`重启 ${target.name}`:`下次启动 ${target.name}`} 后生效。${note}`;});
+ const switchAccount=(id:string,label:string)=>changeCodex(async restartCodex=>{const note=await login!.switchTo(id,restartCodex);configurationSaved(restartCodex);return `${target.name} 已切换到账号 ${label}。${restartCodex?'Codex 已自动重新打开。':`${desktopRestart?'重启':'下次启动'}后生效。`}${note}`;});
  const repair=()=>onRepair({target:target.id,...(connection?{sourceId:connection.sourceId,model:connection.model,connectionId:connection.id}:{})});
  const toggleDetail=(id:string)=>{if(open!==id)rememberDetail();setOpen(open===id?'':id);};
 
@@ -175,8 +184,14 @@ function AgentPanel({target,update,login,local,usage,problem,notify,onRepair,onC
     <button className={problem?'primary':''} onClick={repair}><Icon name="wrench" size={14}/>维修</button>
    </div>
   </header>
-  {busy&&migrationProgress&&migrationProgress.phase!=='idle'&&<p className="tfHint" role="status">{migrationProgress.phase==='backup'?'正在备份旧对话…':`${migrationProgress.phase==='restoring'?'正在还原':'正在迁移'}旧对话 ${migrationProgress.done} / ${migrationProgress.total}`}，请保持 Codex 退出。</p>}
-  <FlowDialog className="tfRestartDialog" open={!!exitMessage} title="先退出 Codex，保留旧对话" onClose={()=>setExitMessage('')} busy={busy}><p className="tfDialogLead">{exitMessage}</p><p className="tfHint">退出后点击继续。将自动备份并迁移，之后可从「还原旧对话」恢复原来源，保留新增消息。</p><footer><button disabled={busy} onClick={()=>setExitMessage('')}>稍后再说</button><button className="primary" disabled={busy} onClick={()=>void retryMigration.current()}>{busy?'正在处理…':'已退出，继续'}</button></footer></FlowDialog>
+  {busy&&migrationProgress&&migrationProgress.phase!=='idle'&&<p className="tfHint" role="status">{migrationProgress.phase==='backup'?'正在备份旧对话…':`${migrationProgress.phase==='restoring'?'正在还原':'正在迁移'}旧对话 ${migrationProgress.done} / ${migrationProgress.total}`}，完成后将自动重新打开 Codex。</p>}
+  <FlowDialog className="tfRestartDialog" open={!!exitMessage} title={desktopRestart?'重启 Codex 并应用更改':'先退出 Codex，保留旧对话'} onClose={()=>setExitMessage('')} busy={busy}>
+   <p className="tfDialogLead">{exitMessage}</p>
+   <p className="tfHint">{desktopRestart?'请先保存工作。确认后将结束 Codex 及其运行中的任务，全程自动完成，无需手动退出或再次点击重启。':'请完全退出 Codex 后继续。'}</p>
+   <p className="tfHint">切换后的首次回复可能较慢：模型需要重新读取历史，长对话还可能需要整理上下文。请等待完成，避免连续重试。</p>
+   {busy&&<p className="tfHint" role="status">{migrationProgress?.lifecyclePhase==='stopping'?'正在退出 Codex…':migrationProgress?.lifecyclePhase==='opening'?'正在重新打开 Codex…':migrationProgress?.phase==='backup'?`正在备份旧对话 ${migrationProgress.done} / ${migrationProgress.total}…`:migrationProgress?.phase==='migrating'||migrationProgress?.phase==='restoring'?`正在${migrationProgress.phase==='restoring'?'还原':'迁移'}旧对话 ${migrationProgress.done} / ${migrationProgress.total}…`:migrationProgress?.lifecyclePhase==='changing'?'正在应用配置并检查需要处理的对话…':'正在准备应用更改，请稍候…'}</p>}
+   <footer><button disabled={busy} onClick={()=>setExitMessage('')}>稍后再说</button><button className="primary" disabled={busy} onClick={()=>void retryMigration.current()}>{busy?'正在处理…':desktopRestart?'确认并自动重启':'已退出，继续'}</button></footer>
+  </FlowDialog>
   {!target.installation.installed&&<p className="tfHint" role="status">{target.installation.supported===false?target.installation.reason:'未检测到程序，选择模型时会提示安装。'}</p>}
   <FlowDialog open={programOpen} title={`${programAction==='install'?'安装':'更新'} ${target.name}`} busy={busy} onClose={()=>{setProgramOpen(false);if(!programCompleted.current)pendingSelection.current=undefined;}}>
    <p className="tfDialogLead">{target.installation.supported===false?target.installation.reason:target.installation.automatic?`将从官方发布通道${programAction==='install'?'下载并安装':'更新'} ${target.name}。配置和接入备份会保留。`:`将打开 ${target.name} 的官方下载页面，安装完成后会自动识别。`}</p>
@@ -187,7 +202,7 @@ function AgentPanel({target,update,login,local,usage,problem,notify,onRepair,onC
   {target.id==='qoder'&&<p className="tfHint">此入口接入 Qoder 独立应用；Qoder IDE 的授权账号在「账号授权」管理。</p>}
   <FlowDialog className="tfRestartDialog" open={desktopRestart&&restartOpen} title={restartPending?'配置已保存，现在生效？':`重启 ${target.name}`} onClose={()=>setRestartOpen(false)} busy={busy}>
    <p className="tfDialogLead">{restartPending?`重新打开 ${target.name} 后，会加载新的模型与账号配置。`:`重新打开 ${target.name}，加载已保存的配置。`}</p>
-   <p className="tfHint">请先保存工作并结束生成。你也可以稍后从 Agent 标题旁重启。</p>
+   <p className="tfHint">{target.id==='codex'?'请先保存工作。确认后将自动结束 Codex 及其运行中的任务，然后重新打开。':'请先保存工作并结束生成。你也可以稍后从 Agent 标题旁重启。'}</p>
    {restartError&&<p className="tfError" role="alert">{restartError}</p>}
    <footer><button disabled={busy} onClick={()=>setRestartOpen(false)}>稍后再说</button><button className="primary" disabled={busy||!target.installation.installed} onClick={()=>void restart()}>{busy?'正在处理…':'立即重启'}</button></footer>
   </FlowDialog>

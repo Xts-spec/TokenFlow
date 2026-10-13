@@ -10,8 +10,8 @@ const active=(entry:Entry)=>entry.state!=='restored'&&entry.state!=='deleted';
 const fail=(message:string,code='codex_migration_failed')=>new RunnerCoreError(message,{statusCode:409,code});
 type Route={id:string;provider:string;model:string;rollout:string;archived:boolean;source:string};
 type Entry=Route&{nextModel:string;returnModel?:string;rearchive?:boolean;state:'pending'|'migrated'|'restored'|'deleted'};
-type Journal={version:1;id:string;createdAt:string;state:'prepared'|'migrated'|'restored';entries:Entry[]};
-export type MigrationStatus={backups:number;remaining:number;restorable:number;phase:'idle'|'backup'|'migrating'|'restoring';done:number;total:number};
+type Journal={version:1;id:string;createdAt:string;databaseBackup?:string;state:'prepared'|'migrated'|'restored';entries:Entry[]};
+export type MigrationStatus={lifecyclePhase?:'idle'|'stopping'|'changing'|'opening';backups:number;remaining:number;restorable:number;phase:'idle'|'backup'|'migrating'|'restoring';done:number;total:number};
 export interface MigrationClient {pid?:number;resume(id:string,provider:string,model:string):Promise<void>;setArchived(id:string,archived:boolean):Promise<void>;close():Promise<void>}
 
 /** Resume only: no turn or tool is started. */
@@ -78,9 +78,19 @@ export class CodexThreadMigration {
   try{
    const {DatabaseSync,backup}=await import('node:sqlite');
    const files=(await readdir(this.home)).filter(name=>/^(?:state|thread_history)_\d+\.sqlite$/.test(name));
-   for(const name of files){await this.idle();const path=join(this.home,name);await safePath(path);const db=new DatabaseSync(path,{readOnly:true});try{await backup(db,join(directory,name));await chmod(join(directory,name),0o600);}finally{db.close();}}
+   // An active migration already owns a consistent baseline. New threads need
+   // their own rollout and route records, not another copy of every database.
+   const baseline=(await this.journals()).find(j=>j.entries.some(active));
+   const baselineId=baseline?.databaseBackup??baseline?.id;
+   let reuse=false;
+   if(baselineId&&/^[a-f0-9-]{36}$/.test(baselineId)){
+    const path=join(this.directory,baselineId);await safePath(path);
+    const saved=await readdir(path);reuse=files.every(name=>saved.includes(name));
+    if(reuse)journal.databaseBackup=baselineId;
+   }
+   for(const name of reuse?[]:files){await this.idle();const path=join(this.home,name);await safePath(path);const db=new DatabaseSync(path,{readOnly:true});try{await backup(db,join(directory,name));await chmod(join(directory,name),0o600);}finally{db.close();}}
    const config=join(this.home,'config.toml');await safePath(config);try{await copyFile(config,join(directory,'config.toml'));await chmod(join(directory,'config.toml'),0o600);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
-   for(let i=0;i<rows.length;i++){const row=rows[i]!;if(row.rollout){if(!isAbsolute(row.rollout))throw fail('旧对话记录路径异常，未迁移。');await safePath(row.rollout);await copyFile(row.rollout,join(directory,`${i}.jsonl`),constants.COPYFILE_FICLONE);await chmod(join(directory,`${i}.jsonl`),0o600);}}
+   for(let i=0;i<rows.length;i++){const row=rows[i]!;if(row.rollout){if(!isAbsolute(row.rollout))throw fail('旧对话记录路径异常，未迁移。');await safePath(row.rollout);await copyFile(row.rollout,join(directory,`${i}.jsonl`),constants.COPYFILE_FICLONE);await chmod(join(directory,`${i}.jsonl`),0o600);}this.progress.done=i+1;}
    await this.idle();await this.save(journal);
   }finally{this.progress={phase:'idle',done:0,total:0};}
  }
@@ -94,7 +104,12 @@ export class CodexThreadMigration {
  }
  private async execute(restore:boolean,model?:string,allowedModels:string[]=[]){
   const journals=await this.journals(),entries=journals.flatMap(j=>j.entries.filter(active));
-  if(!entries.length)return {migrated:0};await this.idle();
+  if(!entries.length)return {migrated:0};
+  if(!restore){
+   const rows=new Map((await this.rows()).map(row=>[row.id,row]));
+   if(entries.every(entry=>{const row=rows.get(entry.id);return entry.state==='migrated'&&!entry.rearchive&&row?.provider==='token_flow'&&['vscode','cli'].includes(row.source)&&allowedModels.includes(row.model);}))return {migrated:0};
+  }
+  await this.idle();
   if(!await this.database())throw fail('找不到旧对话数据库，备份已保留，请检查 Codex 数据目录后重试。');
   this.progress={phase:restore?'restoring':'migrating',done:0,total:entries.length};let client:MigrationClient|undefined;
   try{

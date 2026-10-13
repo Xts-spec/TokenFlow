@@ -1,3 +1,4 @@
+import {CodexSwitchLifecycle} from '../packages/core/src/codex-switch-lifecycle.js';
 import {parse} from 'smol-toml';
 import {CodexThreadMigration} from '../packages/core/src/codex-thread-migration.js';
 import {DatabaseSync} from 'node:sqlite';
@@ -160,4 +161,39 @@ it('passes the new key authorization set to Codex migration when replacing gatew
   expect(models.statusCode).toBe(200);expect(models.json().data.map((m:{id:string})=>m.id).sort()).toEqual(['codex/replacement','codex/retained'].sort());
   expect((await service.app.inject({url:'/v1/models',headers:{host:headers.host,authorization:`Bearer ${oldKey}`}})).statusCode).toBe(401);
  }finally{migrate.mockRestore();await service.app.close();await rm(root,{recursive:true,force:true});}
+});
+
+
+it('performs the confirmed Codex stop, backup, change and relaunch in a single admin request',async()=>{
+ const root=await mkdtemp(join(await realpath(tmpdir()),'codex-auto-switch-api-'));
+ await mkdir(join(root,'codex'));await mkdir(join(root,'cliproxy'));
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'codex.json',provider:'codex',status:'active',models:['shared-model']}]));
+ const path=join(root,'codex/config.toml');await writeFile(path,'model="native-model"');
+ const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
+ let pids=[123];const events:string[]=[];
+ const lifecycle=new CodexSwitchLifecycle(async()=>pids,async()=>{events.push('stop');pids=[];},async()=>{events.push('open');return {message:'opened'};},'darwin',async()=>{});
+ const change=CodexSwitchLifecycle.prototype.change;
+ const restart=vi.spyOn(CodexSwitchLifecycle.prototype,'change').mockImplementation(work=>change.call(lifecycle,work));
+ const prepare=CodexThreadMigration.prototype.prepare;
+ const backup=vi.spyOn(CodexThreadMigration.prototype,'prepare').mockImplementation(async function(this:CodexThreadMigration,...args){expect(pids).toEqual([]);events.push('backup');return prepare.apply(this,args);});
+ const migrate=CodexThreadMigration.prototype.migrate;
+ const migration=vi.spyOn(CodexThreadMigration.prototype,'migrate').mockImplementation(async function(this:CodexThreadMigration,...args){expect(pids).toEqual([]);events.push('migrate');return migrate.apply(this,args);});
+ const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:path,claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async target=>target==='codex'?pids:[]});
+ try{
+  await service.proxy.start();const headers={host:'127.0.0.1:9527',authorization:'Bearer admin'};const sourceId=service.proxy.snapshot().accounts[0].id;
+  const state=async()=>(await service.app.inject({url:'/api/a2a',headers})).json().targets.find((t:{id:string})=>t.id==='codex');
+  const target=await state();const payload={target:'codex',sourceId,model:'codex/shared-model',revision:target.revision,allowRunning:true,restartCodex:true};
+  const stale=await service.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload:{...payload,revision:'0'.repeat(64)}});expect(stale.statusCode).toBe(409);expect(events).toEqual([]);
+  const connected=await service.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload});expect(connected.statusCode,connected.body).toBe(200);
+  expect(events).toEqual(['stop','backup','migrate','open']);expect(await readFile(path,'utf8')).toContain('codex/shared-model');
+  pids=[123];events.length=0;const current=await state();
+  const restored=await service.app.inject({method:'POST',url:'/api/a2a/restore',headers,payload:{id:current.connection.id,revision:current.revision,allowRunning:true,restartCodex:true}});
+  expect(restored.statusCode,restored.body).toBe(200);expect(events).toEqual(['stop','open']);expect(await readFile(path,'utf8')).toBe('model="native-model"');
+  // A user who already switched back can repair legacy reasoning by restarting once.
+  const session=join(root,'codex/sessions/rollout-legacy.jsonl');await mkdir(join(root,'codex/sessions'));
+  await writeFile(session,JSON.stringify({type:'response_item',payload:{type:'reasoning',id:'rs_chatcmpl_legacy',encrypted_content:'',summary:[{type:'summary_text',text:'retained summary'}]}})+'\n');
+  pids=[123];events.length=0;
+  const reopened=await service.app.inject({method:'POST',url:'/api/a2a/restart',headers,payload:{target:'codex'}});
+  expect(reopened.statusCode,reopened.body).toBe(200);expect(events).toEqual(['stop','open']);expect(await readFile(session,'utf8')).not.toContain('encrypted_content');expect(await readFile(session,'utf8')).toContain('retained summary');
+ }finally{restart.mockRestore();backup.mockRestore();migration.mockRestore();await service.app.close();await rm(root,{recursive:true,force:true});}
 });

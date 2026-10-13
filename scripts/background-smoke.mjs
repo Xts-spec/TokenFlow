@@ -13,7 +13,7 @@ await new Promise(r=>allocator.close(r));
 let desktop;
 try{
   const executablePath=process.argv[2];
-  desktop=await electron.launch({args:executablePath?[]:['.'],...(executablePath?{executablePath:resolve(executablePath)}:{}),env:{...process.env,AGENT_DATA_ROOT:root,CODEX_HOME:join(root,'codex'),CLAUDE_CONFIG_DIR:join(root,'claude'),WORKBUDDY_CONFIG_DIR:join(root,'workbuddy'),AGENT_PORT:'0',AGENT_PROXY_PORT:String(port),CLIPROXY_BINARY:resolve('tests/fixtures/fake-cliproxy.mjs')}});
+  desktop=await electron.launch({args:[...(executablePath?[]:['.']),'--use-mock-keychain'],...(executablePath?{executablePath:resolve(executablePath)}:{}),env:{...process.env,AGENT_DATA_ROOT:root,CODEX_HOME:join(root,'codex'),CLAUDE_CONFIG_DIR:join(root,'claude'),WORKBUDDY_CONFIG_DIR:join(root,'workbuddy'),AGENT_PORT:'0',AGENT_PROXY_PORT:String(port),CLIPROXY_BINARY:resolve('tests/fixtures/fake-cliproxy.mjs')}});
   const page=await desktop.firstWindow();
   await page.waitForFunction(()=>fetch('/api/local-agent').then(r=>r.json()).then(s=>s.state==='running'));
   await page.evaluate(()=>localStorage.setItem('background-smoke','preserved'));
@@ -23,14 +23,15 @@ try{
     return {visible:window.isVisible(),destroyed:window.isDestroyed()};
   });
   assert.deepEqual(hidden,{visible:false,destroyed:false});
+  // Startup discovery can briefly restart the gateway while the window is hidden.
+  await page.waitForFunction(()=>fetch('/api/local-agent').then(r=>r.json()).then(s=>s.state==='running'));
   assert.equal(await page.evaluate(()=>fetch('/api/local-agent').then(r=>r.json()).then(s=>s.state)),'running');
   assert.equal((await fetch(`http://127.0.0.1:${port}/fixture`)).ok,true);
   await desktop.evaluate(({app})=>app.emit('activate'));
   assert.equal(await desktop.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isVisible()),true);
   assert.equal(await page.evaluate(()=>localStorage.getItem('background-smoke')),'preserved');
-  const exited=desktop.waitForEvent('close');
-  await desktop.evaluate(({app})=>{setTimeout(()=>app.quit(),0);});
-  await exited;
+  // Playwright calls app.quit() and detaches its debugger so Electron can exit.
+  await desktop.close();
   desktop=undefined;
   await assert.rejects(fetch(`http://127.0.0.1:${port}/fixture`));
   console.log('PASS: close hides window, gateway stays available, activate restores state, quit stops service');

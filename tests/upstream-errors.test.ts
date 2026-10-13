@@ -6,3 +6,7 @@ it('reports safe parameter errors separately from source cooldown without leakin
  expect(result.message).not.toContain('private request');
  expect(upstreamError(503,JSON.stringify({error:{message:'auth_unavailable: no auth available'}})).code).toBe('source_cooldown');
 });
+it('keeps safe WorkBuddy field paths while discarding provider text and arbitrary fields',()=>{
+ const result=upstreamError(400,JSON.stringify({error:{code:'workbuddy_invalid_request',fields:['tools.2.name','reasoning.summary','private-token','input.secret'],message:'private request contents'}}));
+ expect(result.message).toContain('tools.2.name');expect(result.message).toContain('reasoning.summary');expect(result.message).not.toMatch(/private|secret/);
+});

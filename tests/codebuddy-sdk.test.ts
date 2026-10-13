@@ -87,3 +87,20 @@ it('round-trips colliding tool identities and custom results over the SDK bounda
   expect(second.status).toBe(200);expect(JSON.stringify(await second.json())).toContain('Received CLIENT_RESULT');
  }finally{await sdk.close();await rm(root,{recursive:true,force:true});}
 });
+
+it('rejects invalid streaming input before opening an apparently successful stream',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'sdk-invalid-stream-'));let called=false;
+ const sdk=new WorkBuddySDKProvider(root,async()=>({type:'workbuddy',access_token:'fixture'}),async input=>{called=true;return {model:input.model,text:'',calls:[],failed:false};});
+ try{
+  const result=await sdk.response('source','responses',{model:'workbuddy/test',stream:true,input:[{type:'unknown_item'}]},new AbortController().signal);
+  expect(result.status).toBe(400);expect((await result.json()).error.type).toBe('invalid_request_error');expect(called).toBe(false);
+ }finally{await sdk.close();await rm(root,{recursive:true,force:true});}
+});
+it('emits a Responses failure with an explicit reason instead of silently ending SDK failures',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'sdk-failed-stream-'));
+ const sdk=new WorkBuddySDKProvider(root,async()=>({type:'workbuddy',access_token:'fixture'}),async input=>({model:input.model,text:'',calls:[],failed:true,errorCode:'rate_limit_error'}));
+ try{
+  const result=await sdk.response('source','responses',{model:'workbuddy/test',stream:true,input:'hello'},new AbortController().signal);
+  const stream=await result.text();expect(stream).toContain('event: response.failed');expect(stream).toContain('rate_limit_error');expect(stream).not.toContain('response.completed');
+ }finally{await sdk.close();await rm(root,{recursive:true,force:true});}
+});

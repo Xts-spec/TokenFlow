@@ -8,6 +8,7 @@ import {tmpdir,homedir} from 'node:os';
 import {randomBytes} from 'node:crypto';
 import {createInterface} from 'node:readline';
 import {createDesktopService} from '../packages/core/src/service.js';
+import {codexModelCatalog} from '../packages/core/src/codex-model-catalog.js';
 import {connectedConfig} from '../packages/core/src/agent-connections.js';
 import {WorkBuddySDKProvider} from '../packages/core/src/codebuddy.js';
 import {runOfficialSDK} from '@token-flow/codebuddy-runtime';
@@ -51,7 +52,8 @@ try{
  const headers={host:new URL(address).host,authorization:'Bearer probe-admin'};
  const key=await service.app.inject({method:'POST',url:'/api/gateway-keys',headers,payload:{name:'Codex tool roundtrip acceptance',sourceId:source.id,models:[model],agents:['codex']}});assert.equal(key.statusCode,200);
  const config='approval_policy = "never"\nsandbox_mode = "workspace-write"\nweb_search = "disabled"\n[analytics]\nenabled = false\n';
- await writeFile(join(clientHome,'config.toml'),connectedConfig('codex',config,address,model,key.json().apiKey),{mode:0o600});
+ await writeFile(join(clientHome,'models.json'),JSON.stringify(codexModelCatalog(model)));
+ await writeFile(join(clientHome,'config.toml'),connectedConfig('codex',config,address,model,key.json().apiKey,join(clientHome,'models.json')),{mode:0o600});
  child=spawn(process.env.CODEX_TEST_BIN??'codex',['app-server','--listen','stdio://'],{cwd:workspace,env:{PATH:process.env.PATH,LANG:process.env.LANG,TMPDIR:process.env.TMPDIR,CODEX_HOME:clientHome},stdio:['pipe','pipe','pipe']});
  let nextId=0;const pending=new Map<number,{resolve:(v:any)=>void;reject:(e:Error)=>void}>();
  child.stderr.on('data',data=>{if(/11128|unapproved channel/.test(String(data)))report.sourcePolicyBlocked=true;});

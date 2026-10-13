@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {mkdtemp,mkdir,writeFile,readFile,readdir,rm,realpath} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,readdir,rm,realpath,stat} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {DatabaseSync} from 'node:sqlite';
@@ -103,4 +103,19 @@ it('finishes deleted-only journals without requiring a runtime or a default mode
  const restarted=new CodexThreadMigration(f.root,join(f.home,'config.toml'),async()=>[],async()=>{throw Error('runtime should not start');});
  await restarted.restore(async()=>{throw Error('default should not be resolved');});
  expect((await restarted.status()).restorable).toBe(0);
+}finally{await f.close();}});
+
+it('does not rewrite journals or restart the migration runtime when only adding authorized models',async()=>{const f=await fixture();try{
+ await f.migration.prepare('gateway');await f.migration.migrate('gateway');
+ const dirs=await readdir(join(f.root,'codex-thread-backups'));const manifest=join(f.root,'codex-thread-backups',dirs[0]!,'manifest.json');const before=await stat(manifest);
+ await f.migration.prepare('gateway',['gateway','added']);await f.migration.migrate('gateway',['gateway','added']);
+ expect((await stat(manifest)).mtimeMs).toBe(before.mtimeMs);expect(f.calls()).toBe(2);expect((await f.migration.status()).backups).toBe(1);
+}finally{await f.close();}});
+it('adds a new conversation backup without another full database snapshot during the same migration',async()=>{const f=await fixture();try{
+ await f.migration.prepare('gateway');await f.migration.migrate('gateway');
+ const file=join(f.home,'new.jsonl');await writeFile(file,'new history');f.db.prepare('insert into threads values (?,?,?,?,?,?)').run('new','openai','native',file,'vscode',0);
+ await f.migration.prepare('gateway',['gateway','added']);await f.migration.migrate('gateway',['gateway','added']);
+ const dirs=await readdir(join(f.root,'codex-thread-backups'));expect(dirs).toHaveLength(2);
+ let databases=0;for(const dir of dirs)databases+=(await readdir(join(f.root,'codex-thread-backups',dir))).filter(n=>n.endsWith('.sqlite')).length;
+ expect(databases).toBe(1);await f.migration.restore();expect(f.db.prepare("select model_provider from threads where id='new'").get()?.model_provider).toBe('openai');expect(await readFile(file,'utf8')).toBe('new history');
 }finally{await f.close();}});

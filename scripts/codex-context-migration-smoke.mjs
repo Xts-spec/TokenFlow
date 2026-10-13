@@ -29,9 +29,10 @@ const server=createServer(async(req,res)=>{
  const n=++responseNumber,answer=summary?'CHECKPOINT: Directory checks completed; preserve TURN_ONE_MARKER.':`REPLY_${phase}_MARKER`;
  const item=trigger?{type:'compaction',encrypted_content:'official-fixture-checkpoint'}:tool?{id:`fc_${n}`,type:'function_call',call_id:`call_${n}`,name:'exec_command',arguments:JSON.stringify({cmd:phase===0&&process.argv.includes('--long-recovery')?"python3 -c \"print('fixture-long-output ' * 2000)\"":'pwd',max_output_tokens:phase===0&&process.argv.includes('--long-recovery')?16000:64})}:{id:`msg_${n}`,type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:answer,annotations:[]}]};
  if(trigger)compactions++;
- const response={id:`resp_${n}`,object:'response',created_at:Math.floor(Date.now()/1000),model:request.model,status:'completed',output:[item],usage:{input_tokens:tool&&tools===toolLimit?12000:100,output_tokens:1,total_tokens:tool&&tools===toolLimit?12001:101}};
+ const output=phase===1&&!summary&&!trigger&&!tool?[{id:`rs_chatcmpl_fixture_${n}`,type:'reasoning',encrypted_content:'',summary:[{type:'summary_text',text:'GATEWAY_REASONING_MARKER'}]},item]:[item];
+ const response={id:`resp_${n}`,object:'response',created_at:Math.floor(Date.now()/1000),model:request.model,status:'completed',output,usage:{input_tokens:tool&&tools===toolLimit?12000:100,output_tokens:1,total_tokens:tool&&tools===toolLimit?12001:101}};
  if(!request.stream)return Response.json(response);
- const events=[{type:'response.created',response:{...response,status:'in_progress',output:[]}},{type:'response.output_item.added',output_index:0,item},{type:'response.output_item.done',output_index:0,item},{type:'response.completed',response}];
+ const events=[{type:'response.created',response:{...response,status:'in_progress',output:[]}},...output.flatMap((item,output_index)=>[{type:'response.output_item.added',output_index,item},{type:'response.output_item.done',output_index,item}]),{type:'response.completed',response}];
  return new Response(events.map((e,i)=>`event: ${e.type}\ndata: ${JSON.stringify({...e,sequence_number:i})}\n\n`).join(''),{headers:{'content-type':'text/event-stream'}});
  };
  const response=req.url.startsWith('/original')?await send('responses',body):await context.response('responses',body,'fixture-key','fixture-source',send,{scope:codexContextScope,recover:item=>migration.recover(item,[])});
@@ -69,6 +70,8 @@ try{
  await migration.prepareOfficial([],async()=>[]);await connections.restore(again.id);
  phase=5;client=await start();await client.rpc('thread/resume',{threadId:thread,model:'native-fixture',modelProvider:'original_fixture'});await client.turn(thread,'native-fixture','TURN_SIX_MARKER');await client.stop();
  assert.ok(compactions>0,'original fixture never compacted');
+ assert.ok(upstream.filter(c=>c.phase===3).every(c=>!c.body.input.some(i=>i.type==='reasoning'&&String(i.id).startsWith('rs_chatcmpl'))),'foreign reasoning leaked back to official provider');
+ assert.ok(JSON.stringify(upstream.filter(c=>c.phase===3)).includes('GATEWAY_REASONING_MARKER'),'readable gateway reasoning summary was lost');
  for(const p of [1,2,3,4,5]){
  const requests=upstream.filter(c=>c.phase===p&&!c.body.instructions?.startsWith('Summarize the supplied'));
  assert.ok(requests.length);
@@ -77,6 +80,6 @@ try{
  assert.ok(upstream.some(c=>c.phase===1&&c.body.input.some(i=>i.type==='function_call_output')),'tool results lost');
  assert.ok(JSON.stringify(upstream.filter(c=>c.phase===3)).includes(process.argv.includes('--local-compaction')?'REPLY_1_MARKER':'CHECKPOINT'),'gateway summary lost on native resume');
  if(process.argv.includes('--long-recovery'))assert.ok(upstream.filter(c=>c.phase===1&&c.body.instructions?.startsWith('Summarize the supplied')).length>2,'long history did not exercise batched migration');
- console.log(JSON.stringify({passed:true,scope:'real installed Codex with synthetic providers; no live official login',localCompaction:process.argv.includes('--local-compaction'),longRecovery:process.argv.includes('--long-recovery'),originalCompactions:compactions,migrated:migrated.migrated,requests:calls.length,toolHistoryPreserved:true,summaryResumed:true}));
+ console.log(JSON.stringify({passed:true,scope:'real installed Codex with synthetic providers; no live official login',localCompaction:process.argv.includes('--local-compaction'),longRecovery:process.argv.includes('--long-recovery'),originalCompactions:compactions,migrated:migrated.migrated,requests:calls.length,toolHistoryPreserved:true,summaryResumed:true,foreignReasoningRepaired:true}));
 
 }finally{child?.kill();server.closeAllConnections();await new Promise(r=>server.close(r));if(process.env.KEEP_FIXTURE)console.log(root);else await rm(root,{recursive:true,force:true});}

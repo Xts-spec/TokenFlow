@@ -62,7 +62,9 @@ export async function agentProcesses(target:Target|'antigravity'):Promise<number
     const {stdout}=await exec('ps',['-axo','pid=,comm='],{timeout:5000,maxBuffer:2*1024*1024});
     const desktop=target==='deepseek'?'/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness':undefined;
     const codexDesktop=/(?:\/(?:ChatGPT|Codex)\.app\/Contents\/MacOS\/(?:ChatGPT|Codex)|\/CodexCLI\.app\/Contents\/MacOS\/codex)$/i;
-    const program=new RegExp(`(?:^|/)${target==='deepseek'?'dsh':target}${target==='pi'?'$':'(?:$|[- ])'}`,'i');
+    // Match Codex's executable, not directories such as "Codex Framework".
+    // Crash reporters can outlive the desktop and must not block migrations.
+    const program=new RegExp(`(?:^|/)${target==='deepseek'?'dsh':target}${target==='pi'||target==='codex'?'$':'(?:$|[- ])'}`,'i');
     const found=stdout.split('\n').flatMap(line=>{const m=line.trim().match(/^(\d+)\s+(.+)$/);return m&&!(target==='qoder'&&m[2].includes('/Qoder IDE.app/'))&&(desktop&&m[2].endsWith(desktop)||target==='codex'&&codexDesktop.test(m[2])||program.test(m[2]))?[Number(m[1])]:[];});
     if(target!=='deepseek'&&target!=='pi')return found;
     const nodes=stdout.split('\n').flatMap(line=>{const m=line.trim().match(/^(\d+)\s+(?:.*\/)?node$/);return m&&Number(m[1])!==process.pid?[m[1]]:[];});

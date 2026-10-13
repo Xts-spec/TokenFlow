@@ -96,3 +96,26 @@ it('preserves an official conversation through a failed gateway switch, gateway 
  expect(saved).toContain('Future turn must not leak into a fork');expect(saved).toContain('GATEWAY_REPLY_AFTER_RETRY');
  expect(await recovered.prepareOfficial([],async()=>[])).toEqual({migrated:0});
 });
+
+it('repairs gateway reasoning outside compaction and retains native reasoning, messages and tools',async()=>{
+ const f=await fixture();
+ const native={type:'reasoning',id:'rs_official',encrypted_content:'official-ciphertext',summary:[]};
+ const foreign={type:'reasoning',id:'rs_chatcmpl_foreign',encrypted_content:'',summary:[{type:'summary_text',text:'Gateway reasoning summary'}]};
+ const rows=[{type:'session_meta',payload:{model_provider:'openai'}},{type:'turn_context',payload:{model:'gpt-native'}},{type:'response_item',payload:native},{type:'turn_context',payload:{model:'qoder/kmodel_latest'}},{type:'response_item',payload:foreign},...history.map(payload=>({type:'response_item',payload}))];
+ const original=rows.map(r=>JSON.stringify(r)).join('\n');await writeFile(f.file,original);
+ await expect(f.migration.prepareOfficial([],async()=>[123])).rejects.toThrow('先退出 Codex');
+ expect(await readFile(f.file,'utf8')).toBe(original);
+ expect(await f.migration.prepareOfficial([],async()=>[])).toEqual({migrated:1});
+ const saved=(await readFile(f.file,'utf8')).split('\n').map(r=>JSON.parse(r));
+ expect(saved[2].payload).toEqual(native);expect(saved[4].payload).toEqual({type:'message',role:'assistant',content:[{type:'output_text',text:'Gateway reasoning summary'}]});
+ expect(saved.slice(-history.length)).toEqual(rows.slice(-history.length));
+ expect(await f.migration.prepareOfficial([],async()=>[])).toEqual({migrated:0});
+});
+it('repairs gateway-born reasoning in checkpoint histories even without a compaction token',async()=>{
+ const f=await fixture();const foreign={type:'reasoning',id:'rs_chatcmpl_foreign',encrypted_content:'',summary:[{type:'summary_text',text:'Saved gateway summary'}]};
+ const row={type:'compacted',payload:{replacement_history:[history[0],foreign,...history.slice(1)],replacement_history_metadata:[{},{}]}};
+ await writeFile(f.file,[{type:'session_meta',payload:{model_provider:'token_flow'}},row].map(r=>JSON.stringify(r)).join('\n'));
+ expect(await f.migration.prepareOfficial([],async()=>[])).toEqual({migrated:1});
+ const saved=JSON.parse((await readFile(f.file,'utf8')).split('\n')[1]!).payload;
+ expect(JSON.stringify(saved)).not.toContain('encrypted_content');expect(saved).not.toHaveProperty('replacement_history_metadata');expect(saved.replacement_history.slice(-2)).toEqual(history.slice(1));
+});

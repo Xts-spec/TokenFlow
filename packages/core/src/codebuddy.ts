@@ -49,10 +49,11 @@ export function parseCodeBuddyInput(path:string,body:unknown){
  const entries=new Map<string,{tool:Record<string,unknown>;fn:Record<string,unknown>;name:string;namespace?:string;base:string}>();
  const identity=(name:string,namespace?:string)=>JSON.stringify([namespace??null,name]);
  const collect=(tools:unknown[],namespace?:string):void=>{
-  for(const value of tools){
+  for(const [index,value] of tools.entries()){
    const tool=z.record(z.unknown()).parse(value);
    if(tool.type==='namespace'){collect(z.array(z.unknown()).parse(tool.tools),z.string().parse(tool.name));continue;}
-   const fn=z.record(z.unknown()).parse(tool.function??tool);const name=z.string().min(1).parse(fn.name);
+   const fn=z.record(z.unknown()).parse(tool.function??tool);
+   const parsedName=z.string().min(1).safeParse(fn.name);if(!parsedName.success)throw new z.ZodError(parsedName.error.issues.map(issue=>({...issue,path:['tools',index,'name',...issue.path]})));const name=parsedName.data;
    const key=identity(name,namespace);
    if(!entries.has(key))entries.set(key,{tool,fn,name,namespace,base:namespace?`${namespace}__${name}`:name});
   }
@@ -88,26 +89,34 @@ export class WorkBuddySDKProvider {
  constructor(private root:string,private credential:(sourceId:string,model:string)=>Promise<unknown>,private run:(input:SDKInput)=>Promise<SDKResult>=runOfficialSDK){}
  async close(){this.closed=true;for(const c of this.active)c.abort();await Promise.allSettled([...this.pending]);}
  async response(sourceId:string,path:string,body:unknown,signal:AbortSignal){
-  if((body as {stream?:boolean})?.stream!==true)return this.buffered(sourceId,path,body,signal);
+  let input:ReturnType<typeof parseCodeBuddyInput>;
+  try{input=parseCodeBuddyInput(path,body);}catch(error){
+   const fields=error instanceof z.ZodError?[...new Set(error.issues.map(issue=>issue.path.join('.')).filter(path=>/^[a-zA-Z][a-zA-Z0-9_.]{0,100}$/.test(path)))].slice(0,5):[];
+   return Response.json({error:{type:'invalid_request_error',code:'workbuddy_invalid_request',fields,message:'WorkBuddy SDK 无法处理此请求格式，请检查消息、图片和工具定义。'}},{status:400});
+  }
+  if(!input.stream)return this.buffered(sourceId,path,body,signal,input);
   const controller=new AbortController(),cancel=()=>controller.abort();signal.addEventListener('abort',cancel,{once:true});if(signal.aborted)cancel();
   const encoder=new TextEncoder();let closed=false;
   const stream=new ReadableStream<Uint8Array>({start:output=>{
    const send=(text:string)=>{if(!closed)output.enqueue(encoder.encode(text));};
+   const failed=(error:{type?:string;code?:string;message?:string})=>{
+    const detail={code:error.code??error.type??'workbuddy_sdk_error',message:error.message??'WorkBuddy SDK 请求未完成。'};
+    if(path==='responses')send(`event: response.failed\ndata: ${JSON.stringify({type:'response.failed',sequence_number:0,response:{id:`resp_workbuddy_${randomUUID().replaceAll('-','')}`,object:'response',created_at:Math.floor(Date.now()/1000),status:'failed',model:input.model,output:[],error:detail}})}\n\n`);
+    else send(`event: error\ndata: ${JSON.stringify({type:'error',error:{type:detail.code,message:detail.message}})}\n\n`);
+   };
    send(': codebuddy-sdk\n\n');const heartbeat=setInterval(()=>send(': waiting\n\n'),10000);
    void (async()=>{try{
-    const response=await this.buffered(sourceId,path,body,controller.signal);
-    if(!response.ok){const value=await response.json();send(`event: error\ndata: ${JSON.stringify({type:'error',error:value.error,...(path==='responses'?{code:value.error?.type,message:value.error?.message}:{})})}\n\n`);}
+    const response=await this.buffered(sourceId,path,body,controller.signal,input);
+    if(!response.ok){const value=await response.json();failed(value.error);}
     else if(response.body){const reader=response.body.getReader();try{for(;;){const chunk=await reader.read();if(chunk.done)break;if(!closed)output.enqueue(chunk.value);}}finally{reader.releaseLock();}}
-   }catch{if(!controller.signal.aborted)send('event: error\ndata: {"type":"error","error":{"type":"workbuddy_sdk_error","message":"WorkBuddy SDK 连接中断，请重试。"}}\n\n');}
+   }catch{if(!controller.signal.aborted)failed({type:'workbuddy_sdk_error',message:'WorkBuddy SDK 连接中断，请重试。'});}
    finally{clearInterval(heartbeat);signal.removeEventListener('abort',cancel);if(!closed){closed=true;output.close();}}
    })();
    controller.signal.addEventListener('abort',()=>{clearInterval(heartbeat);if(!closed){closed=true;output.close();}},{once:true});
   },cancel:()=>{closed=true;controller.abort();}});
   return new Response(stream,{headers:{'Content-Type':'text/event-stream','X-Token-Flow-Transport':'codebuddy-agent-sdk'}});
  }
- private async buffered(sourceId:string,path:string,body:unknown,signal:AbortSignal){
-  let input:ReturnType<typeof parseCodeBuddyInput>;
-  try{input=parseCodeBuddyInput(path,body);}catch{return Response.json({error:{type:'invalid_request_error',message:'WorkBuddy SDK 无法处理此请求格式，请检查消息、图片和工具定义。'}},{status:400});}
+ private async buffered(sourceId:string,path:string,body:unknown,signal:AbortSignal,input:ReturnType<typeof parseCodeBuddyInput>){
   if(!input.model.startsWith('workbuddy/'))throw new Error('WorkBuddy model scope mismatch');
   const controller=new AbortController();const abort=()=>controller.abort();signal.addEventListener('abort',abort,{once:true});if(signal.aborted||this.closed)abort();this.active.add(controller);
   let finish!:()=>void;const pending=new Promise<void>(done=>{finish=done;});this.pending.add(pending);
@@ -122,6 +131,8 @@ export class WorkBuddySDKProvider {
    const result=await this.run({...credential,model,prompt:input.prompt,images:input.images,tools:input.tools,parallelToolCalls:input.parallel_tool_calls,signal:controller.signal,cwd,configDir});
    if(controller.signal.aborted)throw new Error('Cancelled');
    if(result.failed&&result.errorCode==='source_policy_blocked')return Response.json({error:{type:'invalid_request_error',code:'a2a_source_policy_blocked',message:'WorkBuddy SDK upstream rejected the invocation channel (11128).'}},{status:400});
+   if(result.failed&&result.errorCode==='authentication_error')return Response.json({error:{type:'authentication_error',message:'WorkBuddy 登录已失效，请重新授权所选账号。'}},{status:401});
+   if(result.failed&&result.errorCode==='rate_limit_error')return Response.json({error:{type:'rate_limit_error',message:'WorkBuddy 来源限流，请稍后重试。'}},{status:429});
    if(result.failed||model!=='auto'&&result.model.toLowerCase()!==model)throw new Error('SDK request failed or model changed');
    if(input.required&&!result.calls.length)throw new Error('Required tool missing');
    if(input.parallel_tool_calls===false&&result.calls.length>1)throw new Error('SDK violated the single client tool limit');

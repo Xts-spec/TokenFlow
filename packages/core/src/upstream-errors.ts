@@ -7,8 +7,9 @@ const known:Record<string,{message:string;type:string;wireMessage?:string}>={
  a2a_server_tool_unsupported:{type:'unsupported_feature',message:'该来源支持客户端函数工具，暂不支持服务端内置工具。请关闭内置网页搜索等服务端工具，或选择支持它们的来源。',wireMessage:'This source supports client function/custom tools only; server-side or unknown tool types are not supported.'},
 };
 export function upstreamError(status:number,body:string):{code?:string;type:string;message:string}{
- let parsed:{error?:{code?:string;message?:string}}|undefined;try{parsed=JSON.parse(body);}catch{/* Non-JSON provider response. */}
+ let parsed:{error?:{code?:string;message?:string;fields?:unknown}}|undefined;try{parsed=JSON.parse(body);}catch{/* Non-JSON provider response. */}
  const code=typeof parsed?.error?.code==='string'?parsed.error.code:undefined;const message=typeof parsed?.error?.message==='string'?parsed.error.message:'';
+ if(code==='workbuddy_invalid_request'){const fields=Array.isArray(parsed?.error?.fields)?parsed.error.fields.filter((field:unknown)=>typeof field==='string'&&/^(?:tools|input|messages|reasoning|model|stream|instructions|system|tool_choice|parallel_tool_calls|max_tokens|max_output_tokens|max_completion_tokens|reasoning_effort)(?:\.(?:[0-9]+|name|type|content|parameters|summary|effort))*$/.test(field)).slice(0,5):[];return {code,type:'invalid_request_error',message:`WorkBuddy 请求格式不兼容${fields.length?`（字段：${fields.join('、')}）`:''}。请保留此错误用于排查；切换账号或重写配置不能修复请求格式。`};}
  const entry=code&&Object.hasOwn(known,code)?[code,known[code]] as const:Object.entries(known).find(([,value])=>message===value.wireMessage);
  if(entry)return {code:entry[0],type:entry[1].type,message:entry[1].message};
  if(message.includes('User location is not supported for the API use'))return {code:'region_not_supported',type:'region_not_supported',message:'所选账号的上游服务不支持当前地区使用 API。请查看提供商的地区支持说明；重新登录不能解决此限制。'};
