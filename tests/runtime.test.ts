@@ -34,8 +34,12 @@ describe('persistent browser + isolated worker',()=>{
  it('tracks focused/new tabs on resync and excludes arbitrary credential environment',async()=>{
    const {host,launch}=await fixture();const worker=await launch();cleanup.push(()=>worker.close());
    const tab=await host.context!.newPage();await tab.goto('data:text/html,<title>New tab</title><p>Resumed</p>');await tab.bringToFront();
-   expect((await worker.readState()).pageTitle).toBe('New tab');
+   // The host and worker have separate CDP connections; tab discovery is asynchronous.
+   await expect.poll(async()=>(await worker.readState()).pageTitle,{timeout:5000}).toBe('New tab');
    expect(JSON.stringify(await worker.execute('console.log(await page.title())'))).toContain('New tab');
+   await tab.close();
+   await expect.poll(async()=>(await worker.readState()).pageTitle,{timeout:5000}).toBe('Application fixture');
+   expect(JSON.stringify(await worker.execute('console.log(await page.title())'))).toContain('Application fixture');
    process.env.CUSTOM_SECRET_SENTINEL='not-in-worker';expect(safeEnvironment()).not.toHaveProperty('CUSTOM_SECRET_SENTINEL');delete process.env.CUSTOM_SECRET_SENTINEL;
  });
  it('exposes the desktop global only when desktop control is enabled, without touching the OS until used',async()=>{

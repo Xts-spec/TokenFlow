@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
-import {mkdtemp,writeFile,rm,realpath} from 'node:fs/promises';
+import {mkdtemp,writeFile,rm,realpath,readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {randomUUID} from 'node:crypto';
@@ -28,7 +28,7 @@ async function start(){
  proc.stdout.on('data',chunk=>{buffer+=chunk;let end;while((end=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,end);buffer=buffer.slice(end+1);let msg;try{msg=JSON.parse(line);}catch{continue;}if(pending.has(msg.id)){const wait=pending.get(msg.id);pending.delete(msg.id);msg.error?wait.reject(Error(JSON.stringify(msg.error))):wait.resolve(msg.result);}if(msg.method==='turn/completed')turnResolve?.(msg.params.turn);}});
  const rpc=(method,params)=>new Promise((resolve,reject)=>{const key=++id;const timer=setTimeout(()=>reject(Error('RPC timeout: '+method)),30000);pending.set(key,{resolve:v=>{clearTimeout(timer);resolve(v)},reject:e=>{clearTimeout(timer);reject(e)}});proc.stdin.write(JSON.stringify({id:key,method,params})+'\n');});
  await rpc('initialize',{clientInfo:{name:'continuation_fixture',version:'1.0'}});proc.stdin.write(JSON.stringify({method:'initialized'})+'\n');
- return {rpc,turn:async(threadId,model,text)=>{let timer;const done=new Promise((resolve,reject)=>{turnResolve=resolve;timer=setTimeout(()=>reject(Error('Turn timeout')),45000)});try{await rpc('turn/start',{threadId,model,input:[{type:'text',text}]});assert.equal((await done).status,'completed');}finally{clearTimeout(timer);}},stop:()=>new Promise(r=>{proc.once('exit',r);proc.kill();})};
+ return {rpc,turn:async(threadId,model,text,extra=[])=>{let timer;const done=new Promise((resolve,reject)=>{turnResolve=resolve;timer=setTimeout(()=>reject(Error('Turn timeout')),45000)});try{await rpc('turn/start',{threadId,model,input:[{type:'text',text},...extra]});assert.equal((await done).status,'completed');}finally{clearTimeout(timer);}},stop:()=>new Promise(r=>{proc.once('exit',r);proc.kill();})};
 }
 try{
  await new Promise(r=>server.listen(0,'127.0.0.1',r));const origin=`http://127.0.0.1:${server.address().port}`;
@@ -38,14 +38,18 @@ try{
  const connections=new AgentConnections(root,paths,async()=>[]);
  let client=await start();const first=await client.rpc('thread/start',{cwd:root,approvalPolicy:'never',sandbox:'read-only'});const thread=first.thread.id;
  await client.turn(thread,'native-fixture','TURN_ONE_MARKER');await client.stop();
- const record=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin,model:'qoder/kmodel_latest',sourceId:'a'.repeat(24),selections:[{model:'qoder/kmodel_latest',sourceId:'a'.repeat(24)},{model:'workbuddy/hy4-preview',sourceId:'b'.repeat(24)}],keyId:randomUUID(),key:'gateway-synthetic-key'});
- client=await start();await client.rpc('thread/resume',{threadId:thread,model:'qoder/kmodel_latest',...(process.argv.includes('--implicit-provider')?{}:{modelProvider:'token_flow'})});
+ const record=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin,model:'qoder/kmodel_latest',sourceId:'a'.repeat(24),selections:[{model:'qoder/kmodel_latest',sourceId:'a'.repeat(24)},{model:'workbuddy/hy4-preview',sourceId:'b'.repeat(24)}],keyId:randomUUID(),key:'gateway-synthetic-key',modelImages:{'workbuddy/hy4-preview':true}});
+ client=await start();
+ const catalog=await client.rpc('model/list',{});
+ assert.deepEqual(catalog.data.find(m=>m.id==='workbuddy/hy4-preview')?.inputModalities,['text','image']);
+ await client.rpc('thread/resume',{threadId:thread,model:'qoder/kmodel_latest',...(process.argv.includes('--pinned-provider')?{modelProvider:'original_fixture'}:process.argv.includes('--implicit-provider')?{}:{modelProvider:'token_flow'})});
  await client.turn(thread,'qoder/kmodel_latest','TURN_TWO_MARKER');
- await client.turn(thread,'workbuddy/hy4-preview','TURN_THREE_MARKER');await client.stop();
+ await client.turn(thread,'workbuddy/hy4-preview','TURN_THREE_MARKER',[{type:'image',url:'data:image/png;base64,'+(await readFile(new URL('../apps/console/public/app-icon.png',import.meta.url))).toString('base64')}]);await client.stop();
  await connections.restore(record.id);
  client=await start();await client.rpc('thread/resume',{threadId:thread,model:'native-fixture',...(process.argv.includes('--implicit-provider')?{}:{modelProvider:'original_fixture'})});
  await client.turn(thread,'native-fixture','TURN_FOUR_MARKER');await client.stop();
  assert.equal(calls.length,4);
+ assert.ok(calls[2].body.input.some(item=>item.content?.some?.(part=>part.type==='input_image')),'image input was dropped');
  for(let i=0;i<calls.length;i++){
   const {body}=calls[i];assert.ok(!body.previous_response_id,'Client sent a provider-bound previous ID');
   for(let j=1;j<=i;j++){assert.ok(JSON.stringify(body.input).includes(`REPLY_${j}_MARKER`),`Missing assistant turn ${j}`)}

@@ -127,11 +127,13 @@ func (e *WorkBuddyExecutor) executeNativeStream(ctx context.Context, auth *clipr
 	}
 
 	chatURL := helps.WorkBuddyDefaultChatURL
+ if auth != nil && auth.Metadata != nil { if domain,ok:=auth.Metadata["domain"].(string);ok {chatURL=workbuddy.OfficialBase(domain)+"/v2/chat/completions"} }
 	if auth != nil && auth.Attributes != nil && strings.TrimSpace(auth.Attributes["chat_url"]) != "" {
 		chatURL = strings.TrimSpace(auth.Attributes["chat_url"])
 	}
 
 	headers := helps.BuildWorkBuddyAuthHeaders(accessToken, uid)
+ if strings.HasPrefix(chatURL,"https://www.workbuddy.ai/") {headers["Origin"]="https://www.workbuddy.ai";headers["Referer"]="https://www.workbuddy.ai/"}
 
 	httpReq, errReq := http.NewRequestWithContext(ctx, http.MethodPost, chatURL, bytes.NewReader(reqBody))
 	if errReq != nil {
@@ -227,6 +229,7 @@ func (e *WorkBuddyExecutor) Refresh(ctx context.Context, auth *cliproxyauth.Auth
 	}
 
 	authSvc := workbuddy.NewWorkBuddyAuth(e.cfg)
+ if domain,ok:=auth.Metadata["domain"].(string);ok {authSvc.SetDomain(domain)}
 	td, err := authSvc.RefreshToken(ctx, refreshToken)
 	if err != nil {
 		log.Warnf("workbuddy executor: failed to refresh token: %v", err)

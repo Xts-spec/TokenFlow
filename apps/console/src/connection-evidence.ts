@@ -2,7 +2,7 @@ import type { AgentConnections } from '../../../packages/core/src/agent-connecti
 import type { GatewayCall } from '../../../packages/core/src/gateway-activity';
 import { isSourceSelectionAvailable, type AvailableSourceModels } from './source-options';
 
-export type AgentTarget = Awaited<ReturnType<AgentConnections['status']>>[number];
+export type AgentTarget = Awaited<ReturnType<AgentConnections['status']>>[number]&{threadMigration?:import('../../../packages/core/src/codex-thread-migration').MigrationStatus};
 
 export function connectionEvidence(target: AgentTarget, calls: GatewayCall[], sources: AvailableSourceModels) {
   if (target.error) return {tone:'attention',label:'配置检查失败',detail:target.error};

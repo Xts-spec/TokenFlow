@@ -1,7 +1,9 @@
 import { mkdtempSync,readFileSync,writeFileSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join,resolve } from 'node:path';
+import { workbuddyRegionOverlay } from './workbuddy-region-overlay.mjs';
 import { providerLoginOverlay } from './provider-login-overlay.mjs';
+import { officialCatalogOverlay } from './official-catalog-overlay.mjs';
 export function sidecarOverlay(test=false){
 // Build from maintained patches without rewriting the upstream checkout.
 const patchDir=mkdtempSync(join(tmpdir(),'token-flow-sidecar-'));
@@ -20,6 +22,8 @@ const replacements={
 };
 // Keep the upstream response codec, including its incomplete/usage mapping.
 providerLoginOverlay(replacements,patchDir);
+workbuddyRegionOverlay(replacements,patchDir);
+officialCatalogOverlay(replacements,patchDir);
 // An explicit finish reason must terminate even when reasoning used the entire
 // budget before any visible text or tool call was emitted.
 const responseSource=resolve('upstream/CLIProxyAPI/internal/translator/openai/openai/responses/openai_openai-responses_response.go');

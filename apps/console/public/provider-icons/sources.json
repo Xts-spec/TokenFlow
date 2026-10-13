@@ -11,6 +11,8 @@
     "zcode.png": "https://zcode.z.ai/favicon-192x192.png?v=20260707-transparent",
     "doubao.png": "https://lf-flow-web-cdn.doubao.com/obj/flow-doubao/favicon/new-doubao/128x128.png",
     "trae.png": "https://lf16-web-neutral.traecdn.ai/obj/trae-ai-static/trae_website/favicon.png",
-    "cursor.png": "https://cursor.com/marketing-static/icon-192x192-light.png"
+    "cursor.png": "https://cursor.com/marketing-static/icon-192x192-light.png",
+    "deepseek.svg": "@deepseek-ai/dsh-web-frontend bundled favicon.svg (dsh 0.2.0-rc.2), blue fill",
+    "pi.svg": "https://pi.dev/logo.svg"
   }
 }

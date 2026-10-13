@@ -8,8 +8,9 @@ export function Notifications({notice,onDismiss,warnings,onDismissWarning,gatewa
  useEffect(()=>{
   const element=container.current;if(!element)return;
   // Popovers stay above native dialogs without taking focus or blocking the rest of the window.
-  element.hidePopover();
-  if(notice||warnings.length||gateway)element.showPopover();
+  const visible=!!(notice||warnings.length||gateway);
+  if(visible&&!element.matches(':popover-open'))element.showPopover();
+  else if(!visible&&element.matches(':popover-open'))element.hidePopover();
   setHovered(element.matches(':hover'));setFocused(element.contains(document.activeElement));
  },[notice,warnings,gateway?.text]);
  useEffect(()=>{

@@ -14,15 +14,16 @@ const provider=process.argv[3]??'qoder',model=process.argv[4]??'qoder/kmodel_lat
 const targets=(process.argv[5]??'codex,claude,workbuddy').split(',');
 const authDir=join(homedir(),'Library/Application Support/desktop-browser-agent/cliproxy/auth');
 let credential:Record<string,unknown>|undefined;
-for(const file of await readdir(authDir))if(file.endsWith('.json')){try{const v=JSON.parse(await readFile(join(authDir,file),'utf8'));if(v.type===provider&&v.access_token&&!v.disabled){credential=v;break;}}catch{}}
+for(const file of await readdir(authDir))if(file.endsWith('.json')){try{const v=JSON.parse(await readFile(join(authDir,file),'utf8'));if(v.type===provider&&v.access_token&&!v.disabled&&(!process.env.WORKBUDDY_TEST_REGION||(String(v.domain).includes('workbuddy.ai')?'international':'china')===process.env.WORKBUDDY_TEST_REGION)){credential=v;break;}}catch{}}
 assert.ok(credential,'No active saved source credential');
 const root=await mkdtemp(join(await realpath(tmpdir()),'token-flow-agent-task-'));console.log(JSON.stringify({root,provider,model,targets}));
 const alloc=async()=>{const s=createServer();await new Promise<void>(r=>s.listen(0,'127.0.0.1',r));const port=(s.address() as {port:number}).port;await new Promise<void>(r=>s.close(()=>r()));return port;};
 const proxyPort=await alloc(),gatewayPort=await alloc(),base=`http://127.0.0.1:${gatewayPort}`;
 let service:Awaited<ReturnType<typeof createDesktopService>>|undefined;let active='';let apiKey='';let summaryAnchor='';
 const calls:Array<{target:string;path:string;tools:boolean;result:boolean;compact:boolean;checkpoint:boolean}>=[];
+const reports:Record<string,unknown>[]=[];
 const start=async()=>{
- service=await createDesktopService({root:join(root,'gateway'),proxyPort,binary:resolve(`sidecars/${process.platform}-${process.arch}/cliproxyapi`),token:'probe-admin',localKey:'probe-internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{qoder:join(root,'unused/qoder.json'),codex:join(root,'unused/codex.toml'),claude:join(root,'unused/claude.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async()=>[]});
+ service=await createDesktopService({root:join(root,'gateway'),proxyPort,binary:resolve(`sidecars/${process.platform}-${process.arch}/cliproxyapi`),token:'probe-admin',localKey:'probe-internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{pi:join(root,'pi/models.json'),deepseek:join(root,'deepseek/cordis.patch.yml'),qoder:join(root,'unused/qoder.json'),codex:join(root,'unused/codex.toml'),claude:join(root,'unused/claude.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async()=>[]});
  service.app.addHook('preHandler',async req=>{if(req.url.startsWith('/v1/')&&req.method==='POST'){const b=req.body as Record<string,unknown>;const text=JSON.stringify(b);calls.push({target:active,path:req.url,tools:Array.isArray(b.tools)&&b.tools.length>0,result:/"(function_call_output|custom_tool_call_output|tool_result)"|"role":"tool"/.test(text),compact:req.url.endsWith('/compact')||text.includes('"compaction_trigger"'),checkpoint:text.includes('"type":"compaction"')||text.includes('<conversation_history_summary>')||(!!summaryAnchor&&text.includes(summaryAnchor))});console.log(JSON.stringify({event:'request',target:active,path:req.url,number:calls.length,compact:calls.at(-1)?.compact}));}});
  await service.app.listen({host:'127.0.0.1',port:gatewayPort});await service.proxy.start();
  for(let i=0;i<100&&!service.proxy.snapshot().models.some(m=>m.id===model);i++)await new Promise(r=>setTimeout(r,200));
@@ -30,8 +31,8 @@ const start=async()=>{
 };
 const restart=async()=>{await service!.app.close();await start();console.log(JSON.stringify({event:'gateway-restarted',target:active}));};
 const headers={host:`127.0.0.1:${gatewayPort}`,authorization:'Bearer probe-admin'};
-const firstPrompt='Work only in this temporary project. Read math.cjs and math.test.cjs using tools. Fix add(a,b), which currently subtracts. Run node math.test.cjs and fix until it passes. Do not add multiply yet. Report the test result briefly. Never read or change files outside this project.';
-const nextPrompt='Continue the same task after compaction and gateway restart. Preserve the previously fixed add function. Read the current files, implement multiply(a,b), export it too, and extend math.test.cjs with a multiply(3,4)===12 assertion. Run node math.test.cjs and fix until it passes. Work only in this project.';
+const firstPrompt=(process.env.WORKBUDDY_QUICK_TEST==='1'?'Use exactly one shell tool call in this temporary directory. In that call: read math.cjs and math.test.cjs, replace exports.add with (a,b)=>a+b, then run node math.test.cjs. Do not explore or read any other files. Report the result. Do not add multiply yet.':'Work only in this temporary project. Read math.cjs and math.test.cjs using tools. Fix add(a,b), which currently subtracts. Run node math.test.cjs and fix until it passes. Do not add multiply yet. Report the test result briefly. Never read or change files outside this project.');
+const nextPrompt=(process.env.WORKBUDDY_QUICK_TEST==='1'?'Continue this same task using our earlier context. Use exactly one shell tool call in this directory to read math.cjs, keep the earlier add fix, add exports.multiply=(a,b)=>a*b, add a multiply(3,4)===12 assertion to math.test.cjs, and run node math.test.cjs. Do not explore any other files.':'Continue the same task after compaction and gateway restart. Preserve the previously fixed add function. Read the current files, implement multiply(a,b), export it too, and extend math.test.cjs with a multiply(3,4)===12 assertion. Run node math.test.cjs and fix until it passes. Work only in this project.');
 async function command(bin:string,args:string[],cwd:string,env:NodeJS.ProcessEnv,label:string){
  console.log(JSON.stringify({event:'client-start',target:active,label}));
  const result=await new Promise<{code:number|null;stdout:string;stderr:string}>((done,fail)=>{
@@ -51,7 +52,7 @@ async function verify(workspace:string,multiply=false){
  await command(process.execPath,['math.test.cjs'],workspace,{PATH:process.env.PATH},multiply?'tests-final':'tests-first');
 }
 function codexProcess(workspace:string,approval?:{decision:'accept'|'decline';command:string}){
- const child=spawn('codex',['app-server','--stdio'],{cwd:workspace,env:{PATH:process.env.PATH,LANG:process.env.LANG,TMPDIR:process.env.TMPDIR,CODEX_HOME:join(root,'codex'),TOKEN_FLOW_TEST_KEY:apiKey},stdio:['pipe','pipe','pipe']});
+ const child=spawn(process.env.CODEX_TEST_BIN??'codex',process.env.CODEX_TEST_BIN?['app-server','--listen','stdio://']:['app-server','--stdio'],{cwd:workspace,env:{PATH:process.env.PATH,LANG:process.env.LANG,TMPDIR:process.env.TMPDIR,CODEX_HOME:join(root,'codex'),TOKEN_FLOW_TEST_KEY:apiKey},stdio:['pipe','pipe','pipe']});
  let id=0;const pending=new Map<number,{resolve:(v:any)=>void;reject:(e:Error)=>void}>();const events:any[]=[];let stderr='';child.stderr.on('data',d=>stderr+=d);
  createInterface({input:child.stdout}).on('line',line=>{let m:any;try{m=JSON.parse(line);}catch{return;}if(!m.method&&m.id!==undefined&&pending.has(m.id)){const p=pending.get(m.id)!;pending.delete(m.id);if(m.error)p.reject(new Error(JSON.stringify(m.error)));else p.resolve(m.result);}else{events.push(m);if(m.method==='turn/completed'||m.method==='error')console.log(JSON.stringify({event:m.method,status:m.params?.turn?.status,target:active}));if(m.id!==undefined){
  const expected=approval&&m.method==='item/commandExecution/requestApproval'&&[approval.command,"/bin/zsh -lc '"+approval.command+"'"].includes(m.params?.command);
@@ -67,11 +68,30 @@ try{
  await writeFile(join(root,'gateway/cliproxy/auth/source-probe.json'),JSON.stringify(copied),{mode:0o600});
  await start();const source=service!.proxy.snapshot().accounts.find(a=>a.provider===provider)!;
  const key=await service!.app.inject({method:'POST',url:'/api/gateway-keys',headers,payload:{name:'isolated full task',sourceId:source.id,models:[model],agents:['claude','codex','openai']}});assert.equal(key.statusCode,200);apiKey=key.json().apiKey;
- const reports=[];
  for(const target of targets){
  active=target;const workspace=join(root,target+'-workspace');await mkdir(workspace);await mkdir(join(root,target),{recursive:true});
  await writeFile(join(workspace,'math.cjs'),'exports.add = (a, b) => a - b;\n');await writeFile(join(workspace,'math.test.cjs'),"const assert = require('node:assert/strict');\nconst { add } = require('./math.cjs');\nassert.equal(add(2,3),5);\nconsole.log('PASS');\n");
  const initial=calls.length;
+ if(target==='pi'||target==='deepseek'){
+  const state=(await service!.app.inject({url:'/api/a2a',headers})).json();
+  const connected=await service!.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload:{target,sourceId:source.id,model,revision:state.targets.find((t:{id:string})=>t.id===target).revision}});
+  assert.equal(connected.statusCode,200,connected.body);
+  const env={PATH:process.env.PATH,LANG:process.env.LANG,TMPDIR:process.env.TMPDIR,HOME:join(root,'isolated-home'),PI_CODING_AGENT_DIR:join(root,'pi'),DSH_HOME:join(root,'deepseek'),DSH_TELEMETRY_DISABLED:'1'};
+  await mkdir(env.HOME,{recursive:true});
+  const bin=target==='pi'?'pi':'dsh';
+  const session=randomUUID();
+  const args=target==='pi'?['--print','--mode','json','--provider','token-flow','--model',model,'--session-id',session,'--offline','--no-extensions','--no-mcp','--no-skills','--no-context-files','--no-approve']:['--profile','headless','--json'];
+  const first=await command(bin,[...args,firstPrompt],workspace,env,'first');await verify(workspace);
+  let resume:string[]=[];
+  if(target==='deepseek'){
+   const events=first.stdout.split('\n').flatMap(line=>{try{return [JSON.parse(line)];}catch{return [];}});
+   const id=events.find(e=>e.sessionId)?.sessionId??events.find(e=>e.session?.id)?.session.id;
+   assert.ok(id,'No persisted DeepSeek session ID');resume=['--session-id',id];
+  }
+  await restart();await command(bin,[...args,...resume,nextPrompt],workspace,env,'continue');await verify(workspace,true);
+  const own=calls.slice(initial);assert.ok(own.some(c=>c.tools),'No tools requested');assert.ok(own.some(c=>c.result),'No tool result forwarded');
+  const report={target,model,passed:true,requests:own.length,toolResultRequests:own.filter(c=>c.result).length,restarted:true};reports.push(report);console.log(JSON.stringify(report));continue;
+ }
  if(target==='codex-approval'){
   await mkdir(join(root,'codex'),{recursive:true});
   const original='approval_policy = "on-request"\nsandbox_mode = "read-only"\nweb_search = "disabled"\n[analytics]\nenabled = false\n';
@@ -114,11 +134,11 @@ try{
    assert.ok(calls.length>initial,'Codex did not continue through gateway');
   }finally{await rpc.close();}
  }else{
-  const env={PATH:process.env.PATH,HOME:process.env.HOME,LANG:process.env.LANG,TMPDIR:process.env.TMPDIR,CLAUDE_CONFIG_DIR:join(root,target),WORKBUDDY_CONFIG_DIR:join(root,target),CODEBUDDY_CONFIG_DIR:join(root,target),CODEBUDDY_API_KEY:'',CODEBUDDY_GIT_REPO_SCAN_DISABLED:'1',CODEBUDDY_DISABLE_AUTO_MEMORY:'1',ANTHROPIC_BASE_URL:base,ANTHROPIC_AUTH_TOKEN:apiKey,ANTHROPIC_API_KEY:apiKey,CLAUDE_CODE_OAUTH_TOKEN:'',DISABLE_TELEMETRY:'1',DISABLE_AUTOUPDATER:'1',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1'};
+  const env={...(target==='workbuddy'?{ELECTRON_RUN_AS_NODE:'1',CODEBUDDY_FORCE_LITE_WB_BUNDLE:'1'}:{}),PATH:process.env.PATH,HOME:process.env.HOME,LANG:process.env.LANG,TMPDIR:process.env.TMPDIR,CLAUDE_CONFIG_DIR:join(root,target),WORKBUDDY_CONFIG_DIR:join(root,target),CODEBUDDY_CONFIG_DIR:join(root,target),CODEBUDDY_API_KEY:'',CODEBUDDY_GIT_REPO_SCAN_DISABLED:'1',CODEBUDDY_DISABLE_AUTO_MEMORY:'1',ANTHROPIC_BASE_URL:base,ANTHROPIC_AUTH_TOKEN:apiKey,ANTHROPIC_API_KEY:apiKey,CLAUDE_CODE_OAUTH_TOKEN:'',DISABLE_TELEMETRY:'1',DISABLE_AUTOUPDATER:'1',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1'};
   if(target==='workbuddy'){
    const status=(await service!.app.inject({url:'/api/a2a',headers})).json();const connected=await service!.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload:{target,sourceId:source.id,model,revision:status.targets.find((t:{id:string})=>t.id===target).revision}});assert.equal(connected.statusCode,200);
   }
-  const bin=target==='workbuddy'?process.execPath:'claude';const prefix=target==='workbuddy'?['/Applications/WorkBuddy.app/Contents/Resources/app.asar.unpacked/cli/bin/codebuddy']:[];
+  const bin=target==='workbuddy'?'/Applications/WorkBuddy.app/Contents/MacOS/Electron':'claude';const prefix=target==='workbuddy'?['/Applications/WorkBuddy.app/Contents/Resources/app.asar/cli/bin/codebuddy']:[];
   if(target==='workbuddy'&&process.env.WORKBUDDY_APPROVAL_ONLY==='1'){
    for(const allowed of [false,true]){
     const marker=allowed?'accept.txt':'decline.txt',cmd='printf approved > '+marker;
@@ -160,31 +180,35 @@ try{
     const text=await readFile(join(root,target,file),'utf8').catch(()=>'');
     const isCompacted=/"isCompacted"\s*:\s*true/.test(text),isSummary=/"isSummary"\s*:\s*true/.test(text),compactBoundary=text.includes('compact_boundary');
     if(isCompacted||isSummary||compactBoundary)flags.push({file,isCompacted,isSummary,compactBoundary});
+    if(isSummary){
+     const rows=text.split('\n').flatMap(line=>{try{return [JSON.parse(line)];}catch{return [];}});
+     const savedSummaries=(value:any):string[]=>{
+      if(!value||typeof value!=='object')return [];
+      const content=value.message?.content??value.content??value.summary;
+      const own=value.isSummary===true||value.providerData?.isSummary===true?(typeof content==='string'?[content]:Array.isArray(content)?content.flatMap(part=>typeof part.text==='string'?[part.text]:[]):[]):[];
+      return [...own,...Object.values(value).flatMap(savedSummaries)];
+     };
+     const summaries=rows.flatMap(savedSummaries);
+     const plain=summaries.at(-1)?.replace(/<[^>]+>/g,'').trim();
+     if(plain)summaryAnchor=JSON.stringify(plain.slice(0,160)).slice(1,-1);
+    }
    }
    await writeFile(join(root,'compact-metadata.json'),JSON.stringify(flags,null,2));
    console.log(JSON.stringify({event:'native-compact-markers',files:flags.length}));
    assert.ok(flags.length>0,'Native WorkBuddy history has no compact boundary or persisted summary');
   }else assert.ok(/compact_boundary|compact.*completed|compacted/i.test(compact.stdout),'Client did not produce its compaction output');
-  if(target==='workbuddy'){
-   // Native clients may strip the XML envelope before persisting the summary.
-   // Check actual generated content, not the presentation-only wrapper.
-   const messages=compact.stdout.split('\n').flatMap(line=>{try{return [JSON.parse(line)];}catch{return [];}});
-   const summary=messages.filter(m=>m.type==='assistant').flatMap(m=>m.message?.content??[]).find(c=>c.type==='text'&&c.text?.includes('<conversation_history_summary>'))?.text??'';
-   const plain=summary.replace(/<[^>]+>/g,'').trim();
-   summaryAnchor=JSON.stringify(plain.slice(0,160)).slice(1,-1);
-   assert.ok(summaryAnchor.length>=80,'Missing summary content');
-  }
+  if(target==='workbuddy')assert.ok(summaryAnchor.length>=80,'No durable WorkBuddy summary content');
   await restart();const continuedAt=calls.length;await command(bin,[...prefix,...common,'--resume',session,nextPrompt],workspace,env,'continue');
   if(target==='workbuddy')assert.ok(calls.slice(continuedAt).some(c=>c.checkpoint),'WorkBuddy did not reuse the actual summary');
  }
  await verify(workspace,true);const own=calls.slice(initial);assert.ok(own.some(c=>c.result),'No tool result forwarded');
  const report={target,model,passed:true,requests:own.length,toolResultRequests:own.filter(c=>c.result).length,restarted:true};reports.push(report);console.log(JSON.stringify(report));
  }
- await writeFile(join(root,'report.json'),JSON.stringify({reports,calls},null,2));
 }finally{
+ await writeFile(join(root,'report.json'),JSON.stringify({reports,calls,allPassed:reports.length===targets.length},null,2));
  await service?.app.close();
  await writeFile(join(root,'requests.json'),JSON.stringify(calls,null,2));
  // Keep only test projects/logs as evidence. Delete all copied credentials,
  // generated API keys and client configuration even if an assertion fails.
- for(const name of ['gateway','codex','claude','workbuddy','unused'])await rm(join(root,name),{recursive:true,force:true});
+ for(const name of ['gateway','codex','claude','workbuddy','pi','deepseek','isolated-home','unused'])await rm(join(root,name),{recursive:true,force:true,maxRetries:8,retryDelay:200});
 }

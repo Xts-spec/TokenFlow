@@ -1,4 +1,5 @@
-import { afterEach,expect,it } from 'vitest';
+import * as codexRuntime from '../packages/core/src/codex-runtime.js';
+import { afterEach,expect,it,vi } from 'vitest';
 import { mkdtemp,mkdir,readFile,writeFile,rm,realpath,stat,symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -77,4 +78,16 @@ it('keeps switching after the login or provider changed outside token-flow, rest
  expect(JSON.parse(await readFile(auth,'utf8')).tokens.account_id).toBe('b');
  await manager.restore({revision:(await manager.status()).revision,allowRunning:false});
  expect(parse(await readFile(config,'utf8')).model_provider).toBe('another');expect(JSON.parse(await readFile(auth,'utf8')).tokens.account_id).toBe('relogin');
+});
+
+it('resolves the original account default using its saved login rather than the switched account',async()=>{
+ const {config,auth,manager}=await setup();const original=JSON.stringify({tokens:oauth('original')});
+ await writeFile(config,'');await writeFile(auth,original);
+ await manager.switch({revision:(await manager.status()).revision,allowRunning:false,model:'codex/selected'},oauth('next'));
+ const resolver=vi.spyOn(codexRuntime,'codexDefaultModel').mockImplementation(async home=>{
+  expect(await readFile(join(home,'auth.json'),'utf8')).toBe(original);return 'original-default';
+ });
+ try{expect(await manager.restoreModel()).toBe('original-default');
+  expect(JSON.parse(await readFile(auth,'utf8')).tokens.account_id).toBe('next');
+ }finally{resolver.mockRestore();}
 });

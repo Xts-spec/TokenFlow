@@ -14,6 +14,12 @@ const responder = (routes: Record<string, QuotaResponse | ((request: QuotaReques
 };
 
 describe('quota layer', () => {
+  it('routes overseas WorkBuddy quota only to its verified region',async()=>{
+    const calls:QuotaRequest[]=[];const call=async(r:QuotaRequest)=>{calls.push(r);return json({Packages:[]});};
+    await quotaProviders.workbuddy.fetch(call,{provider:'workbuddy',domain:'www.workbuddy.ai'});
+    await quotaProviders.workbuddy.fetch(call,{provider:'workbuddy',domain:'www.workbuddy.ai.evil.test'});
+    expect(calls.map(r=>new URL(r.url).host)).toEqual(['www.workbuddy.ai','copilot.tencent.com']);
+  });
   it('normalizes Kimi limits and summary usage, using remaining when used is absent', async () => {
     const {call, calls} = responder({'https://api.kimi.com/coding/v1/usages': json({
       usage: {used: 120, limit: 1000, resetAt: '2026-09-14T00:00:00Z'},

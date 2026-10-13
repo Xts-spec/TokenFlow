@@ -2,6 +2,7 @@ import type { LocalAgentSnapshot } from '../../../packages/core/src/cliproxy';
 import type { GatewayUsage } from '../../../packages/core/src/gateway-activity';
 import { isSourceSelectionAvailable, sourceOptions, type AvailableSourceModels } from './source-options';
 import { modelLabel } from './model-label';
+import {formatTokens} from './usage-model';
 
 export type ModelGroup={id:string;label:string;models:{id:string;label:string}[]};
 export type ModelSourceGroup=ModelGroup&{provider:string;providerLabel:string;accountLabel:string;remaining:number|null;quota?:LocalAgentSnapshot['quotas'][string]};
@@ -57,7 +58,14 @@ export function usageOf(rows:readonly GatewayUsage[],match:(row:{model:string;ke
  }
  return usage;
 }
-export const usageText=(usage:Usage)=>usage.requests?`${usage.requests} 次请求${usage.failed?`（${usage.failed} 次失败）`:''} · ${(usage.inputTokens+usage.outputTokens).toLocaleString()} tokens`:'本次运行还没有请求';
+export const usageText=(usage:Usage)=>usage.requests?`${formatTokens(usage.requests)} 次请求${usage.failed?`（${formatTokens(usage.failed)} 次失败）`:''} · ${formatTokens(usage.inputTokens+usage.outputTokens)} tokens`:'本次运行还没有请求';
+
+/** Tightest remaining percentage across an account's quota windows, or null when none is reported. */
+export function quotaRemaining(quota:LocalAgentSnapshot['quotas'][string]|undefined):number|null{
+ if(quota?.status!=='ok')return null;
+ const values=quota.windows.flatMap(w=>typeof w.usedPercent==='number'&&Number.isFinite(w.usedPercent)?[Math.max(0,Math.min(100,100-w.usedPercent))]:[]);
+ return values.length?Math.min(...values):null;
+}
 
 /** Tightest remaining quota across a provider's enabled accounts, or '' when the upstream reports none. */
 export function providerQuotaText(local:LocalAgentSnapshot,accountIds:string[]):string{

@@ -1,3 +1,4 @@
+import {LocalMaintenance} from '../packages/core/src/local-maintenance.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
 import { mkdtemp, rm, readFile, writeFile, mkdir, realpath } from 'node:fs/promises';
@@ -158,6 +159,7 @@ it('routes all three declared upstream protocols through the real sidecar, sourc
  const {service,headers,add,calls}=await fixture(true);
  for(const protocol of ['responses','chat','messages']){
   const source=await add(protocol,`secret-${protocol}`,protocol);const model=apiModelID(source.id,'shared');
+  await expect.poll(()=>service.proxy.apiModelAvailable(model),{timeout:10000}).toBe(true);
   const key=await service.app.inject({method:'POST',url:'/api/gateway-keys',headers,payload:{name:protocol,sourceId:source.id,models:[model],tokenLimit:30}});expect(key.statusCode,key.body).toBe(200);
   const client={...headers,authorization:`Bearer ${key.json().apiKey}`};
   const request=()=>service.app.inject({method:'POST',url:'/v1/responses',headers:client,payload:{model,input:'Hi',stream:false}});
@@ -191,8 +193,11 @@ it('strips ChatGPT-only fields the sidecar adds for generic Responses sources an
   const accepted=calls.at(-1)!.body;
   expect(accepted.include).toBeUndefined();expect(JSON.stringify(accepted.tools??[])).not.toContain('image_generation');
  }
- const native=await send('responses',{input:'native',include:['reasoning.encrypted_content'],stream:false});
+ // Exported API keys preserve both client tools and vendor-hosted tools on native routes.
+ const tools=[{type:'function',name:'exec_command',parameters:{type:'object',properties:{command:{type:'string'}}}},{type:'web_search'},{type:'image_generation'}];
+ const native=await send('responses',{input:'native',include:['reasoning.encrypted_content'],tools,tool_choice:'auto',stream:false});
  expect(native.statusCode,native.body).toBe(200);expect(calls.at(-1)!.body.include).toEqual(['reasoning.encrypted_content']);
+ expect(calls.at(-1)!.body.tools).toEqual(tools);expect(calls.at(-1)!.body.tool_choice).toBe('auto');
 },60000);
 it('keeps two identical API types separate across a service restart, A2A configuration and repair calls',async()=>{
  const {root,service,headers,add,options,calls}=await fixture(true);
@@ -223,8 +228,9 @@ it('keeps two identical API types separate across a service restart, A2A configu
 },60000);
 it('keeps saved API models callable when an account refresh observes a transient empty API catalog',async()=>{
  const {service,headers,add}=await fixture();const source=await add('Reloading API','reload-key');const model=apiModelID(source.id,'shared');
- const response=await fetch(`http://127.0.0.1:${service.proxy.port}/fixture`,{method:'POST',body:JSON.stringify({apiModelDelayReads:2})});expect(response.ok).toBe(true);
+ const response=await fetch(`http://127.0.0.1:${service.proxy.port}/fixture`,{method:'POST',body:JSON.stringify({apiModelDelayReads:12})});expect(response.ok).toBe(true);
  await service.proxy.refreshAccounts();
+ expect(service.proxy.apiModelAvailable(model)).toBe(true);
  const snapshot=(await service.app.inject({url:'/api/local-agent',headers})).json();expect(snapshot.models.map((m:{id:string})=>m.id)).toContain(model);
  const checked=await service.app.inject({method:'POST',url:`/api/sources/${source.id}/check`,headers,payload:{model}});expect(checked.statusCode,checked.body).toBe(200);expect(checked.json().passed).toBe(true);
 });
@@ -277,6 +283,8 @@ it('keeps the previous credential on a failed edit and refuses durable API setup
  await expect(memory.save({name:'Memory',baseURL,protocol:'responses',models:['shared'],apiKey:'new-private-key'})).rejects.toThrow('桌面版');
 });
 it('uses an explicitly selected bounded repair source while sidecar is offline, without granting other keys a bypass',async()=>{
+ // This routing test must not invoke the host's Codex/npm installation probes.
+ const installation=vi.spyOn(LocalMaintenance.prototype,'installation').mockResolvedValue({target:'codex',channel:'not-found',reason:'Isolated test fixture',reference:''});cleanup.push(async()=>{installation.mockRestore();});
  const {service,headers,add,root,calls}=await fixture();const source=await add('Offline repair','offline-repair-key');const model=apiModelID(source.id,'shared');
  const normal=(await service.app.inject({method:'POST',url:'/api/gateway-keys',headers,payload:{name:'normal',models:[model],sourceId:source.id}})).json();
  await service.proxy.stop();

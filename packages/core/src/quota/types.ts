@@ -20,7 +20,7 @@ export type QuotaResponse = {statusCode: number; header: Record<string, string[]
 export type QuotaCall = (request: QuotaRequest) => Promise<QuotaResponse>;
 
 /** router 层从 auth-files 摘要中提取的非敏感账号信息。 */
-export type QuotaAccount = {provider: string; email?: string; projectId?: string; chatgptAccountId?: string; planType?: string; accountType?: string};
+export type QuotaAccount = {domain?:string; provider: string; email?: string; projectId?: string; chatgptAccountId?: string; planType?: string; accountType?: string};
 
 export type QuotaProvider = {
   readonly id: LoginProviderId;

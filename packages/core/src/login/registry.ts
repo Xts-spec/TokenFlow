@@ -6,21 +6,21 @@ import { antigravity } from './antigravity.js';
 import { kimi } from './kimi.js';
 import { xai } from './xai.js';
 import { qoder } from './qoder.js';
-import { workbuddy } from './workbuddy.js';
+import { workbuddy, workbuddyOverseas } from './workbuddy.js';
 import { zcode } from './zcode.js';
 import { doubao } from './doubao.js';
 import { trae } from './trae.js';
 import type { LoginProvider, LoginProviderId } from './types.js';
 
 export const loginProviders: Readonly<Record<LoginProviderId, LoginProvider>> = {
-  codex, claude, antigravity, kimi, xai, qoder, workbuddy, zcode, doubao, trae,
+  codex, claude, antigravity, kimi, xai, qoder, workbuddy, 'workbuddy-overseas':workbuddyOverseas, zcode, doubao, trae,
 };
 export const loginProviderIds = Object.keys(loginProviders) as [LoginProviderId, ...LoginProviderId[]];
 export const loginProviderSchema = z.enum(loginProviderIds);
 export const isLoginProvider = (value: string): value is LoginProviderId => value in loginProviders;
 
 /** 给 UI 的 Provider 目录（不含任何敏感信息）。 */
-export const loginProviderCatalog = () => loginProviderIds.map(id => {
+export const loginProviderCatalog = () => loginProviderIds.filter(id=>id!=='workbuddy-overseas').map(id => {
   const {label, hint, flow} = loginProviders[id];
   return {id, label, hint, flow};
 });

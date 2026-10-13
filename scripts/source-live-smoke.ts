@@ -17,7 +17,7 @@ const claudeCLI=process.argv[6]??'claude';
 const target=process.env.PROBE_TARGET==='workbuddy'?'workbuddy':'claude';
 const autoMode=process.env.PROBE_AUTO==='1';
 assert.ok(!autoMode||target==='claude','Auto Mode probe requires Claude Code');
-const workbuddyCLI='/Applications/WorkBuddy.app/Contents/Resources/app.asar.unpacked/cli/bin/codebuddy';
+const workbuddyCLI='/Applications/WorkBuddy.app/Contents/Resources/app.asar/cli/bin/codebuddy';
 let credential:Record<string,unknown>|undefined;
 for(const file of await readdir(authDir)){
  if(!file.endsWith('.json'))continue;
@@ -57,6 +57,11 @@ service=await createDesktopService({root,proxyPort:port,binary:resolve(`sidecars
  const host=`127.0.0.1:${(service.app.server.address() as {port:number}).port}`;
  const keyResponse=await service.app.inject({method:'POST',url:'/api/gateway-keys',headers:{host,authorization:'Bearer probe-admin-key'},payload:{name:'isolated source probe',sourceId:source.id,models:[model],agents:['claude','codex','openai']}});
  assert.equal(keyResponse.statusCode,200);const {apiKey}=keyResponse.json();
+ if(target==='workbuddy'){
+  const adminHeaders={host,authorization:'Bearer probe-admin-key'};
+  const status=(await service.app.inject({url:'/api/a2a',headers:adminHeaders})).json();
+  const connected=await service.app.inject({method:'POST',url:'/api/a2a/connect',headers:adminHeaders,payload:{target,sourceId:source.id,model,revision:status.targets.find((t:{id:string})=>t.id===target).revision}});assert.equal(connected.statusCode,200);
+ }
  if(!autoMode&&process.env.PROBE_NATIVE_ONLY!=='1'){
  const response=await fetch(`http://${host}/v1/messages`,{method:'POST',headers:{'x-api-key':apiKey,'content-type':'application/json','anthropic-version':'2023-06-01'},body:JSON.stringify({model:model,max_tokens:1024,messages:[{role:'user',content:'Reply OK only.'}]}),signal:AbortSignal.timeout(90000)});
  const body=await response.json() as {type?:string;content?:{type:string;text?:string}[];error?:{type?:string}};
@@ -73,14 +78,10 @@ service=await createDesktopService({root,proxyPort:port,binary:resolve(`sidecars
  const checked=await waitCare('readiness');console.log(JSON.stringify({check:'real Pi Responses readiness',status:checked.readiness.status}));assert.equal(checked.readiness.status,'ready');
  const review=await service.app.inject({method:'POST',url:'/api/maintenance/run',headers:adminHeaders,payload:{prompt:'请调用 inspect_gateway 一次，然后只简短说明网关是否运行，不再重复检查。'}});assert.equal(review.statusCode,200);
  const reviewed=await waitCare('status');console.log(JSON.stringify({check:'real Pi repair tool round trip',status:reviewed.status,toolExecuted:reviewed.messages.some((m:{role:string;text:string})=>m.role==='tool'&&m.text.startsWith('inspect_gateway:'))}));assert.equal(reviewed.status,'completed');
- if(target==='workbuddy'){
-  const status=(await service.app.inject({url:'/api/a2a',headers:adminHeaders})).json();
-  const connected=await service.app.inject({method:'POST',url:'/api/a2a/connect',headers:adminHeaders,payload:{target,sourceId:source.id,model,revision:status.targets.find((t:{id:string})=>t.id===target).revision}});assert.equal(connected.statusCode,200);
- }
  }
  nativeCalls.length=0;
  const marker=`probe-${randomUUID()}`;const probeFile=join(root,'workspace/probe.txt');await writeFile(probeFile,marker);
- const env={...(process.env.PROBE_ENTRYPOINT?{CLAUDE_CODE_ENTRYPOINT:process.env.PROBE_ENTRYPOINT}:{}),CLAUDE_CODE_MAX_OUTPUT_TOKENS:process.env.PROBE_FULL_TOOLS==='1'?'32000':'4096',PATH:process.env.PATH,HOME:process.env.HOME,LANG:process.env.LANG,TMPDIR:process.env.TMPDIR,CLAUDE_CONFIG_DIR:autoMode?undefined:join(root,'claude'),WORKBUDDY_CONFIG_DIR:join(root,'workbuddy'),CODEBUDDY_CONFIG_DIR:join(root,'workbuddy'),CODEBUDDY_API_KEY:'',CODEBUDDY_GIT_REPO_SCAN_DISABLED:'1',CODEBUDDY_DISABLE_AUTO_MEMORY:'1',ANTHROPIC_BASE_URL:`http://${host}`,ANTHROPIC_AUTH_TOKEN:apiKey,ANTHROPIC_API_KEY:'',CLAUDE_CODE_OAUTH_TOKEN:'',DISABLE_TELEMETRY:'1',DISABLE_AUTOUPDATER:'1',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1'};
+ const env={...(target==='workbuddy'?{ELECTRON_RUN_AS_NODE:'1',CODEBUDDY_FORCE_LITE_WB_BUNDLE:'1'}:{}),...(process.env.PROBE_ENTRYPOINT?{CLAUDE_CODE_ENTRYPOINT:process.env.PROBE_ENTRYPOINT}:{}),CLAUDE_CODE_MAX_OUTPUT_TOKENS:process.env.PROBE_FULL_TOOLS==='1'?'32000':'4096',PATH:process.env.PATH,HOME:process.env.HOME,LANG:process.env.LANG,TMPDIR:process.env.TMPDIR,CLAUDE_CONFIG_DIR:autoMode?undefined:join(root,'claude'),WORKBUDDY_CONFIG_DIR:join(root,'workbuddy'),CODEBUDDY_CONFIG_DIR:join(root,'workbuddy'),CODEBUDDY_API_KEY:'',CODEBUDDY_GIT_REPO_SCAN_DISABLED:'1',CODEBUDDY_DISABLE_AUTO_MEMORY:'1',ANTHROPIC_BASE_URL:`http://${host}`,ANTHROPIC_AUTH_TOKEN:apiKey,ANTHROPIC_API_KEY:'',CLAUDE_CODE_OAUTH_TOKEN:'',DISABLE_TELEMETRY:'1',DISABLE_AUTOUPDATER:'1',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1'};
  // Auto Mode uses the installed client's feature eligibility; all model routing
  // is overridden for this child only. No permission allowlist bypass is used.
  const routing={ANTHROPIC_BASE_URL:`http://${host}`,ANTHROPIC_AUTH_TOKEN:apiKey,ANTHROPIC_API_KEY:'',ANTHROPIC_MODEL:model,ANTHROPIC_DEFAULT_OPUS_MODEL:model,ANTHROPIC_DEFAULT_SONNET_MODEL:model,ANTHROPIC_DEFAULT_HAIKU_MODEL:model,ANTHROPIC_SMALL_FAST_MODEL:model,CLAUDE_CODE_SUBAGENT_MODEL:model};
@@ -88,7 +89,7 @@ service=await createDesktopService({root,proxyPort:port,binary:resolve(`sidecars
  const prompt=autoMode?`Use Bash exactly once to execute: node -e "require('node:fs').writeFileSync('auto-result.txt','${marker}')". This writes only the test file in the current temporary directory. Do not access the network or run other commands. If approval fails, report it and stop without retrying.`:`Use Read to read ${probeFile}, then reply with exactly its contents.`;
  const cliOptions=autoMode?['--permission-mode','auto','--tools','Bash','--settings',JSON.stringify({env:routing})]:[...(process.env.PROBE_FULL_TOOLS==='1'?[]:['--tools','Read']),'--allowedTools','Read','--setting-sources',''];
  const result=await new Promise<{code:number|null;stdout:string;stderr:string}>((done,fail)=>{
-  const child=spawn(target==='workbuddy'?process.execPath:claudeCLI,[...(target==='workbuddy'?[workbuddyCLI]:[]),'--print',prompt,'--model',model,...cliOptions,'--max-turns','3','--no-session-persistence','--strict-mcp-config','--mcp-config','{"mcpServers":{}}'],{cwd:join(root,'workspace'),env,stdio:['ignore','pipe','pipe']});
+  const child=spawn(target==='workbuddy'?'/Applications/WorkBuddy.app/Contents/MacOS/Electron':claudeCLI,[...(target==='workbuddy'?[workbuddyCLI]:[]),'--print',prompt,'--model',model,...cliOptions,'--max-turns','3','--no-session-persistence','--strict-mcp-config','--mcp-config','{"mcpServers":{}}'],{cwd:join(root,'workspace'),env,stdio:['ignore','pipe','pipe']});
   let stdout='',stderr='';child.stdout.on('data',d=>stdout+=d);child.stderr.on('data',d=>stderr+=d);const timer=setTimeout(()=>child.kill('SIGTERM'),120000);
   child.once('error',e=>{clearTimeout(timer);fail(e);});child.once('close',code=>{clearTimeout(timer);done({code,stdout,stderr});});
  });

@@ -4,7 +4,7 @@ import { sourceOptions } from '../apps/console/src/source-options';
 import type { LocalAgentSnapshot } from '../packages/core/src/cliproxy';
 import type { GatewayCall } from '../packages/core/src/gateway-activity';
 
-const target:AgentTarget={id:'codex',name:'Codex',path:'/fixture/config.toml',exists:true,revision:'revision',pids:[],error:'',connection:null,drift:false,configurationState:'unmanaged',backups:[]};
+const target:AgentTarget={installation:{installed:false,channel:'missing',automatic:true,download:''},id:'codex',name:'Codex',path:'/fixture/config.toml',exists:true,revision:'revision',pids:[],error:'',connection:null,drift:false,configurationState:'unmanaged',backups:[]};
 const connected:AgentTarget={...target,configurationState:'configured',connection:{id:'connection',target:'codex',createdAt:'2026-09-30T01:00:00Z',beforeHash:'before',afterHash:'after',state:'applied',keyId:'owned-key',sourceId:'source',model:'codex/model'}};
 const sources=[{id:'source',models:['codex/model']}];
 const call:GatewayCall={id:'call',keyId:'owned-key',agent:'Codex',model:'codex/model',protocol:'responses',startedAt:'2026-09-30T02:00:00Z',durationMs:100,status:200,inputTokens:7,outputTokens:3};

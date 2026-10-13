@@ -11,3 +11,7 @@ export const workbuddy = deviceProvider({
   verification: { host: 'copilot.tencent.com', path: '/login' },
   requireUserCode: false,
 });
+
+export const workbuddyOverseas = deviceProvider({
+ id:'workbuddy-overseas',label:'WorkBuddy 海外',hint:'WorkBuddy 海外账号授权',route:'/workbuddy-auth-url?region=overseas',accountProvider:'workbuddy',modelTypes:[],verification:{host:'www.workbuddy.ai',path:'/login'},requireUserCode:false,
+});

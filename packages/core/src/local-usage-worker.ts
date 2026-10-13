@@ -1,0 +1,58 @@
+import {parentPort,workerData} from 'node:worker_threads';
+import {createReadStream} from 'node:fs';
+import {createInterface} from 'node:readline';
+import {lstat,readdir,readFile,writeFile,rename} from 'node:fs/promises';
+import {join,dirname} from 'node:path';
+import {createHash} from 'node:crypto';
+import {zstdDecompressSync} from 'node:zlib';
+import {z} from 'zod';
+import {LocalUsageParser,mergeLocalUsageRows,type LocalUsageRow,type UsageCoverage} from './local-usage.js';
+import {codexRouteEvidence,gatewayResponseEvidence,routeChannel,type RouteEvidence} from './local-usage-evidence.js';
+
+type Entry={stamp:string;target:string;rows:LocalUsageRow[]};
+const cache=new Map<string,Entry>();
+const path=join(workerData.root,'local-usage-index.json');
+const digest=(s:string)=>createHash('sha256').update(s).digest('hex');
+const count=z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const cachedRow=z.object({day:z.string().regex(/^\d{4}-\d{2}-\d{2}$/),target:z.enum(['codex','claude','pi','deepseek','workbuddy','qoder']),keyId:z.string().max(100),keyName:z.string().max(100),sourceId:z.literal(''),model:z.string().max(300),requests:count,failed:count,unmeasured:count,inputTokens:count,cachedTokens:count,cacheBaseTokens:count,outputTokens:count,durationMs:count,last:z.string().max(60),origin:z.literal('native'),channel:z.enum(['official','api','unknown']),provider:z.string().max(80),nativeAccountId:z.string().regex(/^[a-f0-9]{64}$/).optional(),sampleId:z.string().regex(/^[a-f0-9]{64}$/).optional(),responseHash:z.string().regex(/^[a-f0-9]{64}$/).optional(),cacheWriteTokens:count.optional(),reasoningTokens:count.optional()});
+let busy=false;let gatewayEvidence=await gatewayResponseEvidence(workerData.root);let routesByThread=new Map<string,RouteEvidence[]>();
+async function files(root:string):Promise<{path:string;stamp:string;size:number}[]>{
+ const result:{path:string;stamp:string;size:number}[]=[];
+ const visit=async(dir:string,depth:number)=>{if(depth>12||result.length>=5000)return;let entries;try{entries=await readdir(dir,{withFileTypes:true});}catch{return;}for(const e of entries){if(e.isSymbolicLink())continue;const p=join(dir,e.name);if(e.isDirectory())await visit(p,depth+1);else if(e.isFile()&&/\.(?:jsonl|ndjson|jsonl\.zstd)$/.test(e.name)){const s=await lstat(p).catch(()=>undefined);if(s?.isFile())result.push({path:p,stamp:`${s.mtimeMs}:${s.size}`,size:s.size});}}};
+ await visit(root,0);return result.sort((a,b)=>Number(b.stamp.split(':')[0])-Number(a.stamp.split(':')[0]));
+}
+/** Each DSH log is a sequence of independent Zstandard frames; ignore a torn final append. */
+export function* zstdFrames(buffer:Buffer){
+ let offset=0;while(offset+5<=buffer.length){const start=offset;if(buffer.readUInt32LE(offset)!==0xfd2fb528)throw Error('Invalid Zstandard frame');offset+=4;const flags=buffer[offset++];if(flags&24)throw Error('Invalid frame flags');const single=!!(flags&32),dict=flags&3,size=flags>>>6;offset+=(single?0:1)+(dict===3?4:dict)+(size?2**size:single?1:0);let complete=false;
+  while(offset+3<=buffer.length){const header=buffer.readUIntLE(offset,3);offset+=3;const kind=(header>>>1)&3;if(kind===3)throw Error('Invalid compressed block');offset+=kind===1?1:header>>>3;if(offset>buffer.length)return;if(header&1){complete=true;break;}}
+  if(!complete)return;if(flags&4)offset+=4;if(offset>buffer.length)return;yield zstdDecompressSync(buffer.subarray(start,offset),{maxOutputLength:32*1024*1024});
+ }
+}
+async function parseFile(target:string,file:{path:string;size:number}){
+ const parser=new LocalUsageParser(target,digest(file.path),{matchesResponse:gatewayEvidence.matches,channelFor:(thread,time)=>routeChannel(routesByThread.get(thread)??[],thread,time)});if(file.size>256*1024*1024)throw Error('Large local log');
+ const accept=(line:string)=>{if(line.length>8*1024*1024)return;try{parser.accept(JSON.parse(line));}catch{/* Partial append or a non-usage line. */}};
+ if(file.path.endsWith('.zstd')){if(file.size>32*1024*1024)throw Error('Large compressed log');for(const b of zstdFrames(await readFile(file.path)))for(const line of b.toString('utf8').split('\n'))accept(line);}
+ else{const input=createReadStream(file.path);const lines=createInterface({input,crlfDelay:Infinity});try{for await(const line of lines)accept(line);}finally{lines.close();input.destroy();}}
+ return parser.rows();
+}
+function publish(coverage:UsageCoverage[],scanning:boolean){parentPort?.postMessage({rows:mergeLocalUsageRows([...cache.values()].flatMap(e=>e.rows)),coverage,scanning,updatedAt:new Date().toISOString()});}
+async function scan(){
+ if(busy)return;busy=true;const coverage:UsageCoverage[]=[];const seen=new Set<string>();
+ try{
+  gatewayEvidence=await gatewayResponseEvidence(workerData.root);routesByThread=new Map();
+  const codexRoots=workerData.sources.codex as string[];for(const route of await codexRouteEvidence(dirname(codexRoots[0]),workerData.gatewayPorts??[])){const list=routesByThread.get(route.threadId)??[];list.push(route);routesByThread.set(route.threadId,list);}
+  for(const entry of cache.values())entry.rows=entry.rows.filter(row=>!row.responseHash||!gatewayEvidence.hashes.has(row.responseHash));
+  for(const[target,roots]of Object.entries(workerData.sources as Record<string,string[]>)){
+   const found=(await Promise.all(roots.map(files))).flat();const status:UsageCoverage={target,files:found.length,indexed:0,skipped:0,status:found.length?'scanning':'unavailable'};coverage.push(status);
+   let changed=0;for(const f of found){const id=digest(f.path);seen.add(id);const old=cache.get(id);if(old?.stamp===f.stamp){status.indexed++;continue;}
+    try{const rows=await parseFile(target,f);const after=await lstat(f.path);cache.set(id,{stamp:after.size===f.size?f.stamp:'changed-during-scan',target,rows});status.indexed++;}catch{status.skipped++;}
+    if(++changed%10===0)publish(coverage,true);
+   }status.status='ready';publish(coverage,true);
+  }
+  for(const id of cache.keys())if(!seen.has(id))cache.delete(id);
+  const tmp=`${path}.tmp`;await writeFile(tmp,JSON.stringify({version:8,files:Object.fromEntries(cache)}),{mode:0o600});await rename(tmp,path);publish(coverage,false);
+ }catch{parentPort?.postMessage({rows:[...cache.values()].flatMap(e=>e.rows),coverage,scanning:false,warning:'部分本机用量暂时无法读取，已保留上次统计。'});}
+ finally{busy=false;}
+}
+try{const stat=await lstat(path);if(stat.size<=64*1024*1024){const saved=JSON.parse(await readFile(path,'utf8'));if([7,8].includes(saved.version))for(const[id,e]of Object.entries(saved.files??{})){const v=e as Entry;if(saved.version===7&&v.target==='codex')continue;const parsed=z.array(cachedRow).safeParse(v.rows);if(parsed.success&&typeof v.stamp==='string'&&typeof v.target==='string'&&/^[a-f0-9]{64}$/.test(id))cache.set(id,{stamp:v.stamp,target:v.target,rows:parsed.data});}}}catch{/* First scan rebuilds missing metadata. */}
+publish([],true);parentPort?.on('message',()=>void scan());void scan();

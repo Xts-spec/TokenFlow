@@ -1,12 +1,15 @@
+import { isProviderVisible } from './provider-visibility';
 import { a2aCapabilities } from '@cua-sample/contracts/a2a';
-export type AgentKind='codex'|'claude'|'openai'|'qoder'|'cursor';
+export type AgentKind='codex'|'claude'|'openai'|'qoder'|'cursor'|'pi'|'deepseek';
 export const agentCatalog=[
+ {id:'pi' as const,name:'Pi Agent',protocol:'Chat Completions',path:'/v1/chat/completions',description:'将配置保存到 ~/.pi/agent/models.json，打开 /model 选择 token-flow 模型。',docs:'https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/models.md'},
+ {id:'deepseek' as const,name:'DeepSeek Harness',protocol:'Chat Completions',path:'/v1/chat/completions',description:'将插件补丁保存到 ~/.dsh/cordis.patch.yml，运行 dsh web，在模型菜单中选择 token-flow。',docs:'https://deepseek-harness.github.io/deepseek-harness/guide/providers'},
  {id:'cursor' as const,name:'Cursor',protocol:'Chat Completions',path:'/v1/chat/completions',description:'Cursor Settings → Models → API Keys。自定义请求经过 Cursor 服务器，需要外网可访问的 HTTPS 网关；本机地址不能直接使用。Tab 补全继续使用 Cursor 内置模型。',docs:'https://cursor.com/help/models-and-usage/api-keys'},
  {id:'qoder' as const,name:'Qoder 独立应用',protocol:'Responses API',path:'/v1/responses',description:'Qoder 独立应用：Settings → Models → Add → OpenAI Compatible → Responses。仅适用于支持自定义地址的版本，不适用于 Qoder IDE。',docs:'https://docs.qoder.com/qoder/custom-models'},
  {id:'codex' as const,name:'Codex',protocol:'Responses API',path:'/v1/responses',description:'直接使用统一 Responses 接口，保留工具调用和流式响应。',docs:'https://developers.openai.com/codex/config-reference'},
  {id:'claude' as const,name:'Claude Code',protocol:'Anthropic Messages',path:'/v1/messages',description:'将 Messages 请求与结果交给网关转换，按 Key 路由到已授权模型。',docs:'https://code.claude.com/docs/en/llm-gateway'},
  {id:'openai' as const,name:'OpenAI 兼容 Agent',protocol:'Chat Completions',path:'/v1/chat/completions',description:'在支持自定义接口的工具中填写 Base URL、Key 和模型 ID。',docs:''},
-];
+].filter(agent => isProviderVisible(agent.id));
 const shell=(text:string)=>`'${text.replaceAll("'","'\\''")}'`;
 const ps=(text:string)=>`'${text.replaceAll("'","''")}'`;
 export function agentConfig(kind:AgentKind,origin:string,model:string,powershell=false){
@@ -27,6 +30,8 @@ export function agentConfig(kind:AgentKind,origin:string,model:string,powershell
   ...['ANTHROPIC_MODEL','ANTHROPIC_DEFAULT_OPUS_MODEL','ANTHROPIC_DEFAULT_SONNET_MODEL','ANTHROPIC_DEFAULT_HAIKU_MODEL','ANTHROPIC_SMALL_FAST_MODEL','CLAUDE_CODE_SUBAGENT_MODEL'].map(key=>assign(key,model)),
   `claude --model ${quote(model)}`,
  ].join('\n');
+ if(kind==='pi')return JSON.stringify({providers:{'token-flow':{baseUrl:baseURL,api:'openai-completions',apiKey:'替换为此 Agent 的客户端 Key',models:[{id:model,name:model,input:['text'],contextWindow:131072,maxTokens:16384}]}}},null,2);
+ if(kind==='deepseek')return JSON.stringify([{id:'llm-pi-ai',config:{providers:{'token-flow':{baseURL,api:'openai-completions',headers:{Authorization:'Bearer 替换为此 Agent 的客户端 Key'},models:[{id:model}]}}}},{id:'agent-default-model',config:{provider:'token-flow',model}}],null,2);
  if(kind==='qoder')return JSON.stringify({settings:'Qoder Settings → Models → Add',provider:'OpenAI Compatible',api:'Responses',baseURL,apiKey:'替换为此 Agent 的客户端 Key',model,note:'仅适用于支持自定义地址的 Qoder 独立应用，不适用于 Qoder IDE。验证并添加后，在对话中选择该模型。'},null,2);
  return JSON.stringify({baseURL,apiKey:'替换为此 Agent 的客户端 Key',model,protocol:'chat/completions'},null,2);
 }

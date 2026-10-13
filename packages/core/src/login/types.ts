@@ -1,4 +1,4 @@
-export type LoginProviderId = 'codex' | 'claude' | 'antigravity' | 'kimi' | 'xai' | 'qoder' | 'workbuddy' | 'zcode' | 'doubao' | 'trae';
+export type LoginProviderId = 'codex' | 'claude' | 'antigravity' | 'kimi' | 'xai' | 'qoder' | 'workbuddy' | 'workbuddy-overseas' | 'zcode' | 'doubao' | 'trae';
 export type LoginFlowKind = 'callback' | 'device';
 
 /** 上游 `*-auth-url` 接口经过校验后的启动结果。 */

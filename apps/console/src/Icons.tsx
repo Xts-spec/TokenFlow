@@ -1,8 +1,10 @@
 // Reused from the user's youzhao desktop app.
 import type { CSSProperties, ReactNode } from 'react';
 
-export type IconName='workspace'|'model'|'plug'|'history'|'browser'|'arrow'|'plus'|'briefcase'|'resume'|'shield'|'chevron'|'send'|'sliders'|'message'|'menu'|'close'|'search'|'user'|'wrench'|'checkCircle'|'alertCircle'|'refresh'|'copy';
+export type IconName='grip'|'workspace'|'model'|'plug'|'history'|'browser'|'arrow'|'plus'|'briefcase'|'resume'|'shield'|'chevron'|'send'|'sliders'|'message'|'menu'|'close'|'search'|'user'|'wrench'|'checkCircle'|'alertCircle'|'refresh'|'copy'|'download'|'tokens';
 const paths:Record<IconName,ReactNode>={
+  grip:<><circle cx="8" cy="5" r="1"/><circle cx="16" cy="5" r="1"/><circle cx="8" cy="12" r="1"/><circle cx="16" cy="12" r="1"/><circle cx="8" cy="19" r="1"/><circle cx="16" cy="19" r="1"/></>,
+  tokens:<><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 4 16 4 16 0V5M4 12c0 4 16 4 16 0"/></>,
   workspace:<><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></>,
   model:<><rect x="6" y="6" width="12" height="12" rx="3"/><path d="M9 2v4m6-4v4M9 18v4m6-4v4M2 9h4m-4 6h4m12-6h4m-4 6h4"/><path d="m9 14 3-5 3 5m-5-1h4"/></>,
   plug:<><path d="M9 3v5m6-5v5M7 8h10v3a5 5 0 0 1-10 0V8Zm5 8v5"/></>,
@@ -21,6 +23,7 @@ const paths:Record<IconName,ReactNode>={
   refresh:<><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 6a8 8 0 0 1 13 3m-1 9a8 8 0 0 1-13-3"/></>,
   search:<><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></>,
   copy:<><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></>,
+  download:<><path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4"/></>,
   close:<path d="M18 6 6 18M6 6l12 12"/>,
   checkCircle:<><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></>,
   alertCircle:<><circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 4h.01"/></>,

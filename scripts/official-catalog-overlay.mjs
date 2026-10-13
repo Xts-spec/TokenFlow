@@ -1,0 +1,19 @@
+import {readFileSync,writeFileSync} from 'node:fs';
+import {join,resolve,basename} from 'node:path';
+
+export function officialCatalogOverlay(replacements,dir){
+ const patch=(path,change)=>{const source=resolve('upstream/CLIProxyAPI',path);const target=join(dir,'catalog-'+basename(path));const original=readFileSync(replacements[source]??source,'utf8');writeFileSync(target,change(original));replacements[source]=target;};
+ const replace=(text,from,to)=>{if(text.split(from).length!==2)throw Error('Official model hook changed: '+from.slice(0,90));return text.replace(from,to);};
+ replacements[resolve('upstream/CLIProxyAPI/sdk/cliproxy/token_flow_official_catalog.go')]=resolve('patches/cliproxy/official_catalog.go');
+ patch('sdk/cliproxy/service.go',t=>replace(t,'type Service struct {','type Service struct {\n officialCatalogMu sync.Mutex\n officialCatalog map[string]*officialCatalogEntry\n'));
+ patch('sdk/cliproxy/service_models.go',t=>{
+  for(const [provider,getter] of [['workbuddy','GetWorkBuddyModels'],['qoder','GetQoderModels'],['kimi','GetKimiModels'],['xai','GetXAIModels'],['zcode','GetZCodeModels'],['doubao','GetDoubaoModels'],['trae','GetTraeModels'],['claude','GetClaudeModels'],['antigravity','GetAntigravityModels']])t=replace(t,`models = registry.${getter}()`,`models = s.officialAccountModels(ctx, a, registry.${getter}())`);
+  t=replace(t,'models = applyAntigravityFetchedModelCapabilities(models, s.fetchAntigravityModelCapabilityHintsForAuth(ctx, a))','// The official catalog includes both models and web-search capabilities.');
+  return replace(t,'models = applyExcludedModels(models, excluded)\n\tcase "kimi":','models = applyExcludedModels(s.officialAccountModels(ctx, a, models), excluded)\n\tcase "kimi":');
+ });
+ patch('internal/api/server_options.go',t=>replace(t,'type serverOptionConfig struct {','type serverOptionConfig struct {\n modelRefreshHook func(context.Context,string,bool)\n')+'\nfunc WithAccountModelRefreshHook(hook func(context.Context,string,bool)) ServerOption { return func(cfg *serverOptionConfig) { cfg.modelRefreshHook=hook } }\n');
+ patch('internal/api/server.go',t=>replace(t,'s.mgmt.SetConfigReloadHook(optionState.configReloadHook)','s.mgmt.SetConfigReloadHook(optionState.configReloadHook)\n s.mgmt.SetAccountModelRefreshHook(optionState.modelRefreshHook)'));
+ patch('internal/api/handlers/management/handler.go',t=>replace(t,'type Handler struct {','type Handler struct {\n modelRefreshHook func(context.Context,string,bool)\n')+'\nfunc (h *Handler) SetAccountModelRefreshHook(hook func(context.Context,string,bool)) { h.modelRefreshHook=hook }\n');
+ patch('internal/api/handlers/management/auth_files.go',t=>replace(replace(t,'result = append(result, entry)','if len(m.SupportedInputModalities)>0 { entry["supportedInputModalities"]=append([]string(nil),m.SupportedInputModalities...) }\n\t\tresult = append(result, entry)'),'// Get models from registry','// Refresh through the service so aliases, exclusions and the scheduler stay consistent.\n if h.modelRefreshHook != nil && c.Query("refresh") != "" { h.modelRefreshHook(c.Request.Context(),authID,c.Query("refresh")=="true") }\n // Get models from registry'));
+ patch('sdk/cliproxy/builder.go',t=>replace(t,'api.WithPostAuthPersistHook(service.runtimeAuthSyncHook()),','api.WithPostAuthPersistHook(service.runtimeAuthSyncHook()),\n api.WithAccountModelRefreshHook(service.refreshOfficialAccountCatalog),'));
+}

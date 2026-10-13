@@ -53,6 +53,11 @@ async function start() {
     });
     window.webContents.on('will-navigate',(event,url)=>{if(new URL(url).origin!==address)event.preventDefault();});
     window.webContents.session.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));
+    window.on('close',event=>{
+      if(closing)return;
+      event.preventDefault();
+      window?.hide();
+    });
     window.on('closed',()=>{window=undefined;});
     await window.loadURL(address);
     window.show();
@@ -71,7 +76,8 @@ async function start() {
   tray.on('click',()=>{void show();});
   app.on('will-quit',()=>tray?.destroy());
   app.on('second-instance',()=>{void show();});app.on('activate',()=>{void show();});
-  app.on('window-all-closed',()=>app.quit());
+  // Keep the gateway and menu bar alive even if the workspace is destroyed.
+  app.on('window-all-closed',()=>{});
   app.on('before-quit',event=>{if(closing)return;event.preventDefault();closing=true;void service.app.close().finally(()=>app.quit());});
   // The workspace opens immediately; saved accounts, namespaced models and quotas load in the background.
   void service.discoverLocal().catch(() => undefined); // Failure is exposed in the model center with a retry action.

@@ -1,4 +1,5 @@
-import { afterEach,expect,it } from 'vitest';
+import * as codexRuntime from '../packages/core/src/codex-runtime.js';
+import { afterEach,expect,it,vi } from 'vitest';
 import { mkdtemp,mkdir,writeFile,readFile,rm,stat,symlink,realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -270,6 +271,14 @@ it('exports the selected Codex model to its picker and allows model-only edits b
  await connections.restore(next.id);
  expect(parse(await readFile(paths.codex,'utf8'))).toEqual({model:'original',model_catalog_json:'/fixture/original-models.json',model_reasoning_effort:'high'});
 });
+it('exports confirmed image support without granting it to unknown or text-only models',async()=>{
+ const {paths,connections}=await setup();
+ const ids=['workbuddy/deepseek-v4.1-flash','qoder/text-only','api/unknown'];
+ await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:ids[0]!,sourceId:'a'.repeat(24),keyId:randomUUID(),key:'fixture-key',selections:ids.map(model=>({model,sourceId:'a'.repeat(24)})),modelImages:{[ids[0]!]:true,[ids[1]!]:false}});
+ const config=parse(await readFile(paths.codex,'utf8'));
+ const catalog=JSON.parse(await readFile(String(config.model_catalog_json),'utf8'));
+ expect(catalog.models.map((m:any)=>m.input_modalities)).toEqual([['text','image'],['text'],['text']]);
+});
 it('deletes stale records after reinstall without touching the new config, and keeps history selectable',async()=>{
  const {root,paths,connections}=await setup();await writeFile(paths.codex,'model = "original"\n');
  const first=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:'antigravity/old',sourceId:'s',keyId:randomUUID(),key:'first-key'});
@@ -352,10 +361,82 @@ it('exports catalog display names without changing Qoder routing IDs and restore
    const config=JSON.parse(text);
    if(target==='claude'){
     expect(config.env.ANTHROPIC_MODEL).toBe(model);expect(config.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe(model);
-    expect(config.modelPicker.options).toEqual([{model,label:'token-flow · qoder/Kimi-K3'}]);
-   }else if(target==='qoder')expect(config.providers['token-flow'].models).toEqual([{model,displayName:'token-flow · qoder/Kimi-K3'}]);
-   else expect(config[0]).toMatchObject({id:model,name:'token-flow · qoder/Kimi-K3'});
+    expect(config.modelPicker.options).toEqual([{model,label:'qoder/Kimi-K3'}]);
+   }else if(target==='qoder')expect(config.providers['token-flow'].models).toEqual([{model,displayName:'qoder/Kimi-K3'}]);
+   else expect(config[0]).toMatchObject({id:model,name:'qoder/Kimi-K3'});
   }
   await connections.restore(record.id);expect(await readFile(paths[target],'utf8')).toBe(original);
  }
+});
+
+it.each(['pi','deepseek'] as const)('imports %s models, rejects stale writes and restores unrelated settings',async target=>{
+ const {connections,root}=await setup();const path=connections.paths[target];
+ const original=target==='pi'?'{"providers":{"personal":{"apiKey":"private-original","models":[{"id":"mine"}]}}}':'# original\n- id: llm-pi-ai\n  config:\n    providers:\n      personal:\n        apiKeyEnv: PERSONAL_KEY\n- id: agent-default-model\n  config:\n    provider: personal\n    model: mine\n';
+ await mkdir(join(path,'..'),{recursive:true});await writeFile(path,original);
+ const selections=[{sourceId:'a'.repeat(24),model:'qoder/one'},{sourceId:'b'.repeat(24),model:'workbuddy/two'}];
+ let state=(await connections.status()).find(t=>t.id===target)!;
+ const first=await connections.apply({target,revision:state.revision,origin:'http://127.0.0.1:9527',model:selections[0].model,sourceId:selections[0].sourceId,selections,keyId:randomUUID(),key:'private-gateway-key'});
+ expect((await connections.review(first.id)).checks.every(c=>c.ok)).toBe(true);
+ if(target==='deepseek'){
+  const yaml=await import('yaml');const entries=yaml.parse(await readFile(path,'utf8'));
+  entries.find((entry:{id:string})=>entry.id==='agent-default-model').config.model=selections[1].model;
+  await writeFile(path,yaml.stringify(entries));
+  expect((await connections.status()).find(t=>t.id===target)?.configurationState).toBe('configured');
+  expect((await connections.review(first.id)).checks.every(c=>c.ok)).toBe(true);
+ }
+ const preview=await connections.preview(target,'http://127.0.0.1:9527',selections[1].model,false,selections);
+ expect(JSON.stringify(preview)).not.toContain('private-original');expect(JSON.stringify(preview)).not.toContain('private-gateway-key');
+ expect(JSON.stringify(await connections.status())).not.toContain('private-gateway-key');
+ const second=await connections.apply({target,replaceId:first.id,revision:preview.revision,origin:'http://127.0.0.1:9527',model:selections[1].model,sourceId:selections[1].sourceId,selections,keyId:randomUUID(),key:'second-private-key'});
+ expect((await connections.review(second.id)).checks.every(c=>c.ok)).toBe(true);
+ await connections.restore(second.id);expect(await readFile(path,'utf8')).toBe(original);
+ const stale=await connections.preview(target,'http://127.0.0.1:9527',selections[0].model);
+ await writeFile(path,target==='pi'?'{"providers":{}}':'[]\n');
+ await expect(connections.apply({target,revision:stale.revision,origin:'http://127.0.0.1:9527',model:selections[0].model,sourceId:selections[0].sourceId,keyId:randomUUID(),key:'unused-key'})).rejects.toThrow('变更');
+ expect(connections.paths[target]).toContain(root);
+});
+
+it('refuses ambiguous or executable DeepSeek YAML without converting user plugins',()=>{
+ for(const original of ['- id: llm-pi-ai\n- id: llm-pi-ai\n','- id: custom\n  config: !!js process.env.KEY\n'])expect(()=>connectedConfig('deepseek',original,'http://127.0.0.1:9527','qoder/test','key')).toThrow();
+});
+
+it('resolves an implicit official model when the original configuration omits it',async()=>{
+ const resolver=vi.spyOn(codexRuntime,'codexDefaultModel').mockResolvedValue('official-default');
+ try{
+ const {paths,connections}=await setup();await writeFile(paths.codex,'approval_policy = "untrusted"\n');
+ const record=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:'qoder/test',sourceId:'source',keyId:randomUUID(),key:'fixture-key'});
+ expect(await connections.officialModel(record.id)).toBe('official-default');
+ expect(resolver).toHaveBeenCalledOnce();
+ }finally{resolver.mockRestore();}
+});
+
+it.each([null,'','profile="work"\n[profiles.work]\napproval_policy="untrusted"'])('resolves the official default for missing or implicit profile configuration (%s)',async original=>{
+ const {paths,connections}=await setup();if(original!==null)await writeFile(paths.codex,original);
+ const resolver=vi.spyOn(codexRuntime,'codexDefaultModel').mockImplementation(async home=>{
+  expect(parse(await readFile(join(home,'config.toml'),'utf8'))).toEqual({model_provider:'openai',cli_auth_credentials_store:'file'});
+  expect(home).not.toBe(join(paths.codex,'..'));return 'official-default';
+ });
+ try{
+  const record=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:'qoder/test',sourceId:'source',keyId:randomUUID(),key:'fixture-key'});
+  expect(await connections.officialModel(record.id)).toBe('official-default');
+  await expect(stat(resolver.mock.calls[0]![0])).rejects.toMatchObject({code:'ENOENT'});
+  await connections.restore(record.id);expect(await readFile(paths.codex,'utf8').catch(()=>null)).toBe(original);
+ }finally{resolver.mockRestore();}
+});
+it('uses the original explicit profile model and refuses to invent an official model for a custom provider',async()=>{
+ const resolver=vi.spyOn(codexRuntime,'codexDefaultModel');
+ try{for(const provider of ['openai','custom']){
+  const {paths,connections}=await setup();await writeFile(paths.codex,`model="root-model"\nprofile="work"\n[profiles.work]\nmodel="profile-model"\nmodel_provider="${provider}"`);
+  const record=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:'qoder/test',sourceId:'source',keyId:randomUUID(),key:'fixture-key'});
+  expect(await connections.officialModel(record.id)).toBe(provider==='openai'?'profile-model':undefined);
+ }expect(resolver).not.toHaveBeenCalled();}finally{resolver.mockRestore();}
+});
+it('cleans up isolated default-model resolution on failure and keeps the active gateway config',async()=>{
+ const {paths,connections}=await setup();await writeFile(paths.codex,'');
+ const record=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:'qoder/test',sourceId:'source',keyId:randomUUID(),key:'fixture-key'});
+ const active=await readFile(paths.codex,'utf8');const resolver=vi.spyOn(codexRuntime,'codexDefaultModel').mockRejectedValue(Error('catalog unavailable'));
+ try{await expect(connections.officialModel(record.id)).rejects.toThrow('catalog unavailable');
+  await expect(stat(resolver.mock.calls[0]![0])).rejects.toMatchObject({code:'ENOENT'});
+  expect(await readFile(paths.codex,'utf8')).toBe(active);
+ }finally{resolver.mockRestore();}
 });

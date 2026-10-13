@@ -1,7 +1,10 @@
-import {useEffect,useRef,type ReactNode} from 'react';
+import {useLayoutEffect,useRef,type ReactNode} from 'react';
+import {createPortal} from 'react-dom';
 import {Icon} from './Icons';
-export function FlowDialog({open,title,onClose,busy=false,className='',children}:{open:boolean;title:string;onClose:()=>void;busy?:boolean;className?:string;children:ReactNode}){
- const dialog=useRef<HTMLDialogElement>(null);
- useEffect(()=>{if(open&&!dialog.current?.open)dialog.current?.showModal();else if(!open&&dialog.current?.open)dialog.current.close();},[open]);
- return <dialog ref={dialog} className={`tfDialog ${className}`} aria-label={title} onCancel={event=>{event.preventDefault();if(!busy)onClose();}} onClose={event=>{if(event.target===dialog.current)onClose();}} onClick={event=>{if(event.target===dialog.current&&!busy)onClose();}}><div className="tfDialogContent"><header><h2>{title}</h2><button type="button" className="iconButton" aria-label="关闭" disabled={busy} onClick={onClose}><Icon name="close" size={18}/></button></header>{children}</div></dialog>;
+import {useDialogDismiss} from './dialog-dismiss';
+export function FlowDialog({open,title,onClose,busy=false,className='',headerActions,children}:{open:boolean;title:string;onClose:()=>void;busy?:boolean;className?:string;headerActions?:ReactNode;children:ReactNode}){
+ const dialog=useRef<HTMLDialogElement>(null);const dismiss=useDialogDismiss(onClose,busy);
+ useLayoutEffect(()=>{const node=dialog.current;if(!node||!open)return;const opener=document.activeElement instanceof HTMLElement?document.activeElement:null;const scroll=opener?.closest<HTMLElement>('.tfMain')??document.querySelector<HTMLElement>('.tfMain');const top=scroll?.scrollTop??0,left=scroll?.scrollLeft??0;const preserve=()=>{if(scroll&&(scroll.scrollTop!==top||scroll.scrollLeft!==left)){scroll.scrollTop=top;scroll.scrollLeft=left;}};scroll?.addEventListener('scroll',preserve);node.showModal();preserve();return()=>{scroll?.removeEventListener('scroll',preserve);if(node.open)node.close();if(opener?.isConnected)opener.focus({preventScroll:true});preserve();};},[open]);
+ const nativeMac=(window as Window&{desktop?:{platform:string}}).desktop?.platform==='darwin';
+ return createPortal(<dialog ref={dialog} className={`tfDialog ${nativeMac?'tfNativeMacDialog':''} ${className}`} aria-label={title} onCancel={event=>{event.preventDefault();if(!busy)onClose();}} onClose={event=>{if(event.target===dialog.current)onClose();}} {...dismiss}><div className="tfDialogContent"><header><h2>{title}</h2><div className="tfDialogHeaderActions">{headerActions}<button type="button" className="iconButton" aria-label="关闭" disabled={busy} onClick={onClose}><Icon name="close" size={18}/></button></div></header>{children}</div></dialog>,document.body);
 }

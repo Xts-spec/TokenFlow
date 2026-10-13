@@ -77,3 +77,22 @@ it('does not reinterpret unrelated official checkpoints while switching the loca
  const f=await fixture();const original=JSON.stringify({type:'compacted',payload:{message:'',replacement_history:[{type:'item_reference',id:'official-item'},{type:'compaction',encrypted_content:'unrelated-official-state'}]}})+'\n';
  await writeFile(f.file,original);expect(await f.migration.prepareOfficial([],async()=>[])).toEqual({migrated:0});expect(await readFile(f.file,'utf8')).toBe(original);
 });
+it('preserves an official conversation through a failed gateway switch, gateway restart, retry and native restore',async()=>{
+ const f=await fixture();const original=rollout('official-before-outage');await writeFile(f.file,original);
+ const migration={scope:codexContextScope,normalize:undefined,recover:(item:Record<string,unknown>)=>f.migration.recover(item,[])};
+ const request={model:'qoder/gmodel',input:[{type:'compaction',encrypted_content:'official-before-outage'},{role:'user',content:'Continue after switching'}]};
+ let attempts=0;
+ const failed=await f.context.response('responses',request,'gateway-key','qoder-account',async()=>{attempts++;return Response.json({error:{message:'source cooling down'}},{status:503});},migration);
+ expect(failed.status).toBe(503);expect(attempts).toBe(1);expect(await readFile(f.file,'utf8')).toBe(original);
+ const restarted=await GatewayContext.open(f.root);const recovered=new CodexContext(f.root,join(f.root,'codex/config.toml'),restarted);
+ let forwarded:any;
+ const resumed=await(await restarted.response('responses',request,'new-gateway-key','new-source',async(_path,body)=>{forwarded=body;return Response.json({id:'upstream',status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'GATEWAY_REPLY_AFTER_RETRY'}]}]});},{scope:codexContextScope,recover:item=>recovered.recover(item,[])})).json();
+ expect(forwarded.input).toEqual([...history,{role:'user',content:'Continue after switching'}]);expect(forwarded).not.toHaveProperty('previous_response_id');
+ const tail=resumed.output.map((payload:any)=>JSON.stringify({type:'response_item',payload})).join('\n')+'\n';
+ await writeFile(f.file,original+tail);
+ expect(await recovered.prepareOfficial([],async()=>[])).toEqual({migrated:1});
+ const saved=await readFile(f.file,'utf8');const rows=saved.trim().split('\n').map(row=>JSON.parse(row));
+ expect(rows.find(row=>row.type==='compacted').payload.replacement_history).toEqual(history);
+ expect(saved).toContain('Future turn must not leak into a fork');expect(saved).toContain('GATEWAY_REPLY_AFTER_RETRY');
+ expect(await recovered.prepareOfficial([],async()=>[])).toEqual({migrated:0});
+});

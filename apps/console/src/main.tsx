@@ -3,27 +3,30 @@ import { createRoot } from 'react-dom/client';
 import type { LocalAgentSnapshot } from '../../../packages/core/src/cliproxy';
 import type { MaintenanceChain } from '../../../packages/core/src/gateway-maintenance';
 import { requestJSON } from './request';
+import { visibleLocalAgent } from './provider-visibility';
 import { Icon, type IconName } from './Icons';
 import { ApiInflow } from './ApiInflow';
 import { AgentsPage } from './AgentsPage';
 import { AccountsPage, type AccountActions } from './AccountsPage';
 import { KeyOutflow } from './KeyOutflow';
 import { ActivityPane } from './ActivityPane';
+import {UsageOverview} from './UsageOverview';
 import { SettingsPane } from './SettingsPane';
 import { RepairChat, type RepairSession } from './RepairChat';
 import { useGatewayOverview } from './gateway-overview';
+import { useUsage } from './usage-data';
 import type { Notice } from './notify';
 import {Notifications} from './Notifications';
 import './style.css';
 import './flow.css';
 
-type View='accounts'|'apis'|'agents'|'proxy'|'activity'|'settings';
+type View='accounts'|'apis'|'agents'|'proxy'|'activity'|'usage'|'settings';
 const empty:LocalAgentSnapshot={state:'stopped',loginState:'idle',port:8317,logs:[],accounts:[],models:[],accountError:undefined,lastError:undefined,quotas:{},quotaBusy:false,providers:[],login:undefined};
 const post=(body:unknown={})=>({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
 const gatewayText:Record<string,string>={stopped:'网关已停止',starting:'网关启动中…',stopping:'网关停止中…',failed:'网关启动失败'};
 const saved:[View,string,IconName][]=[['accounts','账号授权','user'],['apis','API 接口','plug']];
 const used:[View,string,IconName][]=[['agents','本地 Agent','model'],['proxy','API 代理','shield']];
-const secondary:[View,string,IconName][]=[['activity','活动','history'],['settings','设置','sliders']];
+const secondary:[View,string,IconName][]=[['usage','用量总览','tokens'],['activity','活动','history'],['settings','设置','sliders']];
 
 function App(){
  const [view,setView]=useState<View>('agents');
@@ -33,10 +36,11 @@ function App(){
  const [repair,setRepair]=useState<RepairSession>();const [repairOpen,setRepairOpen]=useState(false);
  const [warnings,setWarnings]=useState<string[]>([]);
  const overview=useGatewayOverview();
+ const usage=useUsage(view!=='settings');
  const firstLoad=useRef(true);
 
  const refresh=useCallback(async()=>{
-  const next=await requestJSON<LocalAgentSnapshot>('/api/local-agent');setLocal(next);
+  const next=visibleLocalAgent(await requestJSON<LocalAgentSnapshot>('/api/local-agent'));setLocal(next);
   // Nothing to use yet: start where models are added.
   if(firstLoad.current&&next.state==='running'){firstLoad.current=false;if(!next.models.length)setView('accounts');}
  },[]);
@@ -53,7 +57,7 @@ function App(){
  // One request at a time: gateway changes must not overlap.
  const act=async(work:()=>Promise<LocalAgentSnapshot|void>,success?:string)=>{
   if(lock.current)return;lock.current=true;setBusy(true);
-  try{const next=await work();if(next)setLocal(next);if(success)setNotice({kind:'ok',text:success});await refresh();}
+  try{const next=await work();if(next)setLocal(visibleLocalAgent(next));if(success)setNotice({kind:'ok',text:success});await refresh();}
   catch(error){setNotice({kind:'error',text:error instanceof Error?error.message:String(error)});}
   finally{lock.current=false;setBusy(false);}
  };
@@ -67,7 +71,7 @@ function App(){
   remove:id=>act(()=>requestJSON<LocalAgentSnapshot>(`/api/local-agent/accounts/${id}`,{method:'DELETE'}),'账号已删除。'),
  };
  const gatewayDown=local.state!=='running';
- const calls=overview.activity?.recent??[];const usage=overview.activity?.usage??[];
+ const calls=overview.activity?.recent??[];
  // Keys bound to a source are the ones token-flow writes into Agent configs itself.
  const exported=overview.keys.filter(key=>key.exported||(!key.sourceId&&!key.modelSources));
  const platform=(window as Window&{desktop?:{platform:string}}).desktop?.platform;
@@ -85,10 +89,11 @@ function App(){
   </aside>
   <main className="tfMain">
    {view==='accounts'&&<AccountsPage local={local} usage={usage} disabled={busy} actions={accounts} notify={setNotice}/>}
-   {view==='apis'&&<div className="tfPage tfApiPage"><header className="tfPageHead"><h1>API 接口</h1></header><ApiInflow local={local} usage={usage} onChange={refresh} notify={setNotice}/></div>}
+   {view==='apis'&&<div className="tfPage tfApiPage"><ApiInflow local={local} usage={usage} onChange={refresh} notify={setNotice}/></div>}
    {view==='agents'&&<AgentsPage local={local} calls={calls} usage={usage} notify={setNotice} onRepair={openRepair}/>}
-   {view==='proxy'&&<div className="tfPage tfProxyPage"><header className="tfPageHead"><h1>API 代理</h1></header><KeyOutflow local={local} keys={exported} usage={usage} reload={overview.reload} notify={setNotice}/></div>}
-   {view==='activity'&&<ActivityPane local={local} overview={overview}/>}
+   {view==='proxy'&&<div className="tfPage tfProxyPage"><KeyOutflow local={local} keys={exported} usage={usage} reload={overview.reload} notify={setNotice}/></div>}
+   {view==='activity'&&<ActivityPane local={local} overview={overview} usage={usage}/>}
+   {view==='usage'&&<div className="tfPage tfSettingsPage"><UsageOverview usage={usage} local={local}/></div>}
    {view==='settings'&&<SettingsPane local={local} disabled={busy} onAction={command}/>}
   </main>
   <Notifications notice={notice} onDismiss={dismissNotice} warnings={warnings} onDismissWarning={text=>setWarnings(value=>value.filter(item=>item!==text))} gateway={gatewayDown?{text:`${gatewayText[local.state]??'网关未运行'}${local.state==='failed'&&local.lastError?`：${local.lastError}`:''}`,canStart:['stopped','failed'].includes(local.state),busy,onStart:()=>void command('start')}:undefined}/>

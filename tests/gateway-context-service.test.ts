@@ -1,3 +1,4 @@
+import {fakeWorkbuddySDK} from './fixtures/fake-workbuddy-sdk.js';
 import {afterEach,expect,it,vi} from 'vitest';
 import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
 import {createServer} from 'node:net';
@@ -11,7 +12,7 @@ async function setup(){
  const root=await mkdtemp(join(tmpdir(),'context-service-'));cleanup.push(()=>rm(root,{recursive:true,force:true}));
  const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
  await mkdir(join(root,'cliproxy'));await writeFile(join(root,'cliproxy','fixture-accounts.json'),JSON.stringify(['qoder','workbuddy','codex'].map(provider=>({name:provider+'.json',provider,email:provider+'@example.test',status:'active',models:['model']}))));
- const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin-token',localKey:'internal-key',secrets:{get:async()=>'',set:async()=>{}}});cleanup.push(()=>service.app.close());await service.proxy.start();
+ const service=await createDesktopService({workbuddySDKFactory:fakeWorkbuddySDK,root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin-token',localKey:'internal-key',secrets:{get:async()=>'',set:async()=>{}}});cleanup.push(()=>service.app.close());await service.proxy.start();
  const admin={host:'127.0.0.1:9527',authorization:'Bearer admin-token'};
  return {root,port,service,admin};
 }

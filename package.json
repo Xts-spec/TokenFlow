@@ -1,11 +1,12 @@
 {
   "name": "token-flow",
-  "version": "0.1.0",
+  "version": "10.13.26",
   "private": true,
   "type": "module",
   "main": "dist/main.js",
   "workspaces": [
-    "packages/contracts"
+    "packages/contracts",
+    "packages/codebuddy-runtime"
   ],
   "scripts": {
     "dev": "npm run build && electron .",
@@ -31,7 +32,14 @@
     "test:claude-compat": "go -C upstream/CLIProxyAPI test ./internal/translator/codex/claude ./internal/translator/openai/claude && npm run test:sidecar-agents",
     "test:api-sources": "node scripts/api-sources-smoke.mjs",
     "test:repair": "node scripts/local-repair-smoke.mjs",
-    "test:frontend": "node scripts/flow-ui-smoke.mjs"
+    "pretest:frontend": "npm run build",
+    "test:frontend": "node scripts/flow-ui-smoke.mjs",
+    "test:agent-installation-ui": "node scripts/agent-installation-ui-smoke.mjs",
+    "package:mac:arm64": "node scripts/build-sidecar.mjs darwin-arm64 && npm run build && electron-builder --mac --arm64 --dir --publish never",
+    "package:mac:intel": "node scripts/build-sidecar.mjs darwin-x64 && npm run build && electron-builder --mac --x64 --dir --publish never",
+    "test:notification-hit": "node scripts/notification-hit-smoke.mjs",
+    "test:usage-overview": "node scripts/usage-overview-ui-smoke.mjs",
+    "test:key-detail-return": "node scripts/key-detail-return-smoke.mjs"
   },
   "dependencies": {
     "@cua-sample/contracts": "*",
@@ -47,7 +55,9 @@
     "smol-toml": "^1.4.2",
     "typebox": "1.3.27",
     "ws": "^8.21.3",
-    "zod": "^3.24.2"
+    "yaml": "^2.9.0",
+    "zod": "^3.24.2",
+    "@token-flow/codebuddy-runtime": "*"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
@@ -63,6 +73,7 @@
     "vitest": "^3.2.7"
   },
   "build": {
+    "buildVersion": "10.13.26.1",
     "appId": "local.browseragent.desktop",
     "productName": "token-flow",
     "files": [
@@ -70,7 +81,10 @@
       "package.json"
     ],
     "asarUnpack": [
-      "node_modules/playwright*/**"
+      "node_modules/playwright*/**",
+      "node_modules/@token-flow/codebuddy-runtime/**",
+      "node_modules/@tencent-ai/agent-sdk/**",
+      "packages/codebuddy-runtime/**"
     ],
     "extraResources": [
       {

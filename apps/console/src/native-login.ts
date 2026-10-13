@@ -34,7 +34,7 @@ export function useNativeLogin(provider:LoginProvider,local:LocalAgentSnapshot){
   if(provider==='antigravity')return;
   const targets=(await requestJSON<{targets:Awaited<ReturnType<AgentConnections['status']>>}>('/api/a2a')).targets;
   const target=targets.find(t=>t.id===provider);
-  if(target?.connection)await requestJSON('/api/a2a/restore',post({id:target.connection.id,revision:target.revision,allowRunning:true}));
+  if(target?.connection)await requestJSON('/api/a2a/restore',post({id:target.connection.id,revision:target.revision,allowRunning:true}),600000);
  };
  const switchTo=async(id:string)=>{
   const account=accounts.find(a=>a.id===id);if(!account)throw new Error('账号已不可用，请刷新。');
@@ -47,12 +47,12 @@ export function useNativeLogin(provider:LoginProvider,local:LocalAgentSnapshot){
   const released=latest.gatewayConnected;
   if(released&&provider!=='codex'){await releaseGateway();latest=await requestJSON<Status>(base(provider));}
   const body=provider==='codex'?{revision:latest.revision,allowRunning:true,sourceId:id,model}:provider==='claude'?{revision:latest.revision,sourceId:id,...(model?{model}:{})}:{revision:latest.revision,sourceId:id};
-  setStatus(await requestJSON<Status>(`${base(provider)}/switch`,post(body)));
+  setStatus(await requestJSON<Status>(`${base(provider)}/switch`,post(body),provider==='codex'?600000:20000));
   return released?`已先断开 token-flow 接入，${loginNames[provider]} 现在直接使用自己的登录。`:'';
  };
  const restore=async()=>{
   const latest=await requestJSON<Status>(base(provider));
-  setStatus(await requestJSON<Status>(`${base(provider)}/restore`,post(provider==='codex'?{revision:latest.revision,allowRunning:true}:{revision:latest.revision})));
+  setStatus(await requestJSON<Status>(`${base(provider)}/restore`,post(provider==='codex'?{revision:latest.revision,allowRunning:true}:{revision:latest.revision}),provider==='codex'?600000:20000));
  };
  return {status,error,accounts,current,refresh,switchTo,restore};
 }

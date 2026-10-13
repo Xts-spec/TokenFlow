@@ -5,6 +5,7 @@ import { join, dirname, resolve, delimiter, isAbsolute } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { connect as tcpConnect } from 'node:net';
 import { z } from 'zod';
+import { detectAgent } from './agent-installation.js';
 import { AgentConnections, agentProcesses, readConfig, safePath, targetSchema, type Target } from './agent-connections.js';
 
 const conflict=(message:string)=>Object.assign(new Error(message),{statusCode:409});
@@ -70,7 +71,7 @@ export class LocalMaintenance {
  private async command(executable:string,args:string[],signal:AbortSignal){const result=await this.runner({executable,args,cwd:this.root,timeoutMs:5000,outputLimit:32768},signal);signal.throwIfAborted();if(result.exitCode!==0||result.interrupted||result.truncated)throw conflict('版本或安装来源命令未完成');return result.stdout.trim();}
  async installation(target:Target,signal=new AbortController().signal):Promise<Installation>{
   const reference=target==='codex'?'https://learn.chatgpt.com/docs/codex/cli':'https://code.claude.com/docs/en/setup';
-  if(target!=='codex'&&target!=='claude')return {target,channel:'unknown',reason:'此实例没有可靠的安装适配器，请在原应用内检查更新。',reference:''};
+  if(target!=='codex'&&target!=='claude'){const detected=await detectAgent(target);return {target,path:detected.path,version:detected.version,channel:detected.installed?'unknown':'not-found',reason:detected.installed?'已检测到程序；可在本地 Agent 页面安装或更新。':'未检测到程序，请在本地 Agent 页面安装或下载。',reference:detected.download};}
   if(target==='codex'&&this.options.installation)return this.options.installation();
   const path=await findExecutable(target);if(!path)return {target,channel:'not-found',reason:'当前应用 PATH 中没有发现 CLI；这不代表桌面应用或 IDE 扩展未安装。',reference};
   let currentVersion:string|undefined;try{const output=await this.command(path,['--version'],signal);currentVersion=output.match(/(?:^|\s)(\d+\.\d+\.\d+)(?:\s|$)/)?.[1];}catch{signal.throwIfAborted();}

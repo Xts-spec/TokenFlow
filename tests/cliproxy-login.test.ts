@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm,realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
@@ -9,8 +9,33 @@ import {quotaProviders} from '../packages/core/src/quota/index.js';
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => {for (const fn of cleanup.splice(0).reverse()) await fn();});
 const binary = resolve('tests/fixtures/fake-cliproxy.mjs');
+it('preserves official image capabilities and keeps image-dropping adapters text-only',async()=>{
+ const {manager,root}=await setup();
+ await mkdir(join(root,'cliproxy'),{recursive:true});
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([
+  {name:'workbuddy.json',provider:'workbuddy',status:'active',auth_index:'wb',models:[{id:'deepseek-v4.1-flash',supportedInputModalities:['TEXT','IMAGE']},{id:'text-only',supportedInputModalities:['text']},{id:'unknown'}]},
+  {name:'qoder.json',provider:'qoder',status:'active',auth_index:'qd',models:[{id:'vision-base-model',supportedInputModalities:['text','image']}]},
+ ]));
+ await manager.start();const models=manager.snapshot().models;
+ expect(models.find(m=>m.id==='workbuddy/deepseek-v4.1-flash')?.capabilities?.images).toBe(true);
+ expect(models.find(m=>m.id==='workbuddy/text-only')?.capabilities?.images).toBe(false);
+ expect(models.find(m=>m.id==='workbuddy/unknown')?.capabilities).toBeUndefined();
+ expect(models.find(m=>m.id==='qoder/vision-base-model')?.capabilities?.images).toBe(false);
+});
+it('identifies WorkBuddy and Qoder accounts from safe stored metadata when sidecar labels are generic',async()=>{
+ const {manager,root}=await setup();
+ await mkdir(join(root,'cliproxy/auth'),{recursive:true});
+ const files=[{name:'workbuddy.json',provider:'workbuddy',label:'workbuddy',status:'active',auth_index:'wb'},{name:'qoder.json',provider:'qoder',label:'qoder',status:'active',auth_index:'qd'}];
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify(files));
+ await writeFile(join(root,'cliproxy/auth/workbuddy.json'),JSON.stringify({nickname:'测试用户',uid:'wb-account',access_token:'private-token-not-for-display'}));
+ await writeFile(join(root,'cliproxy/auth/qoder.json'),JSON.stringify({uid:'019eaf51-474e-76c9-b09f-78bb444e8b1b',access_token:'private-token-not-for-display'}));
+ await manager.start();
+ expect(manager.snapshot().accounts.find(a=>a.provider==='workbuddy')?.label).toBe('测试用户');
+ expect(manager.snapshot().accounts.find(a=>a.provider==='qoder')?.label).toBe('账号 019eaf51…444e8b1b');
+ expect(JSON.stringify(manager.snapshot().accounts)).not.toContain('private-token-not-for-display');
+});
 async function setup(timeout = 5000) {
-  const root = await mkdtemp(join(tmpdir(), 'cliproxy-login-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'cliproxy-login-')));
   cleanup.push(() => rm(root, {recursive: true, force: true}));
   const server = createServer();await new Promise<void>((r,j) => {server.once('error',j);server.listen(0,'127.0.0.1',r);});
   const port=(server.address() as {port:number}).port;await new Promise<void>(r => server.close(() => r()));
@@ -308,4 +333,10 @@ it('finishes a platform refresh while another platform is still querying quota i
   expect(result.quotas[result.accounts.find(a=>a.provider==='claude')!.id].status).toBe('ok');expect(result.quotaBusy).toBe(true);
  }finally{release();await global;held.mockRestore();}
  expect(manager.snapshot().quotaBusy).toBe(false);
+});
+
+it('restricts overseas WorkBuddy login to the official overseas site',()=>{
+ expect(validateAuthorizationURL('https://www.workbuddy.ai/login?state=fixture','workbuddy-overseas').hostname).toBe('www.workbuddy.ai');
+ expect(()=>validateAuthorizationURL('https://copilot.tencent.com/login','workbuddy-overseas')).toThrow();
+ expect(()=>validateAuthorizationURL('https://www.workbuddy.ai.evil.test/login','workbuddy-overseas')).toThrow();
 });

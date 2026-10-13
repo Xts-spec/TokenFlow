@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { SDKJsonValue } from '@cursor/sdk';
 
-export type CursorToolCall={id:string;name:string;arguments:string;custom?:boolean};
+export type CursorToolCall={id:string;name:string;arguments:string;custom?:boolean;namespace?:string};
 const object=z.record(z.unknown());
 const textBlock=z.object({type:z.enum(['text','input_text','output_text']),text:z.string()}).passthrough();
 const toolUse=z.object({type:z.literal('tool_use'),id:z.string(),name:z.string(),input:object}).passthrough();
@@ -46,19 +46,20 @@ export function parseCursorInput(path:string,body:unknown){
   JSON.stringify({instructions:value.instructions,system:value.system,history}),
  ].filter(Boolean).join('\n\n');
  if(prompt.length>1000000)throw new Error('Cursor 对话过长，请先压缩。');
- return {model:value.model,stream:value.stream,prompt,tools:tools.map(t=>({...t,parameters:t.parameters as Record<string,SDKJsonValue>})),required,effort:value.reasoning?.effort??value.reasoning_effort,limit};
+ return {model:value.model,stream:value.stream,prompt,tools:tools.map(t=>({...t,parameters:t.parameters as Record<string,SDKJsonValue>})),required,parallel_tool_calls:value.parallel_tool_calls,effort:value.reasoning?.effort??value.reasoning_effort,limit};
 }
 
-export function cursorResponse(path:string,model:string,text:string,usage:{input_tokens:number;output_tokens:number}|undefined,stream:boolean,calls:CursorToolCall[]=[]){
- const id=`resp_cursor_${randomUUID().replaceAll('-','')}`;const created=Math.floor(Date.now()/1000);
+export function cursorResponse(path:string,model:string,text:string,usage:{input_tokens:number;output_tokens:number;cached_tokens?:number;cache_write_tokens?:number}|undefined,stream:boolean,calls:CursorToolCall[]=[],provider='cursor'){
+ const id=`resp_${provider}_${randomUUID().replaceAll('-','')}`;const created=Math.floor(Date.now()/1000);
  const content={type:'output_text',text,annotations:[]};const message={id:`msg_${randomUUID()}`,type:'message',role:'assistant',status:'completed',content:[content]};
- const output=[...(text?[message]:[]),...calls.map(c=>c.custom?{id:`ct_${c.id}`,type:'custom_tool_call',status:'completed',call_id:c.id,name:c.name,input:JSON.parse(c.arguments).input as string}:{id:`fc_${c.id}`,type:'function_call',status:'completed',call_id:c.id,name:c.name,arguments:c.arguments})];
- const response={id,object:'response',created_at:created,status:'completed',model,output,usage:usage?{...usage,total_tokens:usage.input_tokens+usage.output_tokens}:null};
- const chatUsage=usage?{prompt_tokens:usage.input_tokens,completion_tokens:usage.output_tokens,total_tokens:usage.input_tokens+usage.output_tokens}:undefined;
+ const output=[...(text?[message]:[]),...calls.map(c=>c.custom?{id:`ct_${c.id}`,type:'custom_tool_call',status:'completed',call_id:c.id,name:c.name,...(c.namespace?{namespace:c.namespace}:{}),input:JSON.parse(c.arguments).input as string}:{id:`fc_${c.id}`,type:'function_call',status:'completed',call_id:c.id,name:c.name,...(c.namespace?{namespace:c.namespace}:{}),arguments:c.arguments})];
+ const details=usage?.cached_tokens!==undefined?{cached_tokens:usage.cached_tokens,cache_write_tokens:usage.cache_write_tokens??0}:undefined;
+ const response={id,object:'response',created_at:created,status:'completed',model,output,usage:usage?{input_tokens:usage.input_tokens,output_tokens:usage.output_tokens,total_tokens:usage.input_tokens+usage.output_tokens,...(details?{input_tokens_details:details}:{})}:null};
+ const chatUsage=usage?{prompt_tokens:usage.input_tokens,completion_tokens:usage.output_tokens,total_tokens:usage.input_tokens+usage.output_tokens,...(details?{prompt_tokens_details:details}:{})}:undefined;
  const toolCalls=calls.map(c=>({id:c.id,type:'function',function:{name:c.name,arguments:c.arguments}}));
  const chat={id,object:'chat.completion',created,model,choices:[{index:0,message:{role:'assistant',content:text||null,...(calls.length?{tool_calls:toolCalls}:{})},finish_reason:calls.length?'tool_calls':'stop'}],...(chatUsage?{usage:chatUsage}:{})};
  const blocks=[...(text?[{type:'text',text}]:[]),...calls.map(c=>({type:'tool_use',id:c.id,name:c.name,input:JSON.parse(c.arguments)}))];
- const msg={id,type:'message',role:'assistant',model,content:blocks,stop_reason:calls.length?'tool_use':'end_turn',stop_sequence:null,...(usage?{usage}:{})};
+ const msg={id,type:'message',role:'assistant',model,content:blocks,stop_reason:calls.length?'tool_use':'end_turn',stop_sequence:null,...(usage?{usage:details?{input_tokens:Math.max(0,usage.input_tokens-(usage.cached_tokens??0)-(usage.cache_write_tokens??0)),output_tokens:usage.output_tokens,cache_read_input_tokens:usage.cached_tokens,cache_creation_input_tokens:usage.cache_write_tokens??0}:usage}:{})};
  if(!stream)return Response.json(path==='responses'?response:path==='messages'?msg:chat);
  const events:Array<Record<string,unknown>|string>=[];
  if(path==='responses'){
@@ -79,7 +80,7 @@ export function cursorResponse(path:string,model:string,text:string,usage:{input
     {type:'content_block_delta',index,delta:isTool?{type:'input_json_delta',partial_json:JSON.stringify(block.input)}:{type:'text_delta',text}},
     {type:'content_block_stop',index});
   });
-  events.push({type:'message_delta',delta:{stop_reason:msg.stop_reason,stop_sequence:null},...(usage?{usage}:{})},{type:'message_stop'});
+  events.push({type:'message_delta',delta:{stop_reason:msg.stop_reason,stop_sequence:null},...(usage?{usage:msg.usage}:{})},{type:'message_stop'});
  }else{
   const chunk={id,object:'chat.completion.chunk',created,model};
   events.push({...chunk,choices:[{index:0,delta:{role:'assistant',content:text||null,...(calls.length?{tool_calls:toolCalls.map((c,index)=>({...c,index}))}:{})},finish_reason:null}]},

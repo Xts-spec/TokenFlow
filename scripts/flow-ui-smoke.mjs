@@ -32,10 +32,14 @@ try{
   const codexHome=join(root,'codex');
   app=await electron.launch({args:[bootstrap],env:{...env,HOME:root,AGENT_DATA_ROOT:root,CODEX_HOME:codexHome,CLAUDE_CONFIG_DIR:join(root,'claude'),CLAUDE_SECURESTORAGE_CONFIG_DIR:join(root,'claude'),WORKBUDDY_CONFIG_DIR:join(root,'workbuddy'),QODER_CONFIG_DIR:join(root,'qoder'),ANTIGRAVITY_USER_DATA_DIR:join(root,'antigravity'),AGENT_PORT:'0',AGENT_PROXY_PORT:String(port),CLIPROXY_BINARY:resolve('tests/fixtures/fake-cliproxy.mjs')}});
   const page=await app.firstWindow();page.setDefaultTimeout(20000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.route('**/api/a2a/program-updates',route=>route.fulfill({json:{updates:{}}}));
   const api=(path,body,method=body===undefined?'GET':'POST')=>page.evaluate(async({path,body,method})=>{const response=await fetch(path,{method,...(body===undefined?{}:{headers:{'content-type':'application/json'},body:JSON.stringify(body)})});if(!response.ok)throw Error(`API ${response.status} ${path}`);return response.json();},{path,body,method});
-  const deferRestart=async()=>{await page.getByRole('dialog',{name:'配置已保存，现在生效？',exact:true}).getByRole('button',{name:'稍后再说'}).click();};
+  const deferRestart=async()=>{const dialog=page.getByRole('dialog',{name:'配置已保存，现在生效？',exact:true});const cli=page.getByRole('tab',{name:/Claude Code/});if(await cli.count()&&await cli.getAttribute('aria-selected')==='true'){assert.equal(await dialog.isVisible(),false);return;}await dialog.getByRole('button',{name:'稍后再说'}).click();};
   const waitForAPI=async(path,predicate)=>{const deadline=Date.now()+30000;do{const value=await api(path);if(predicate(value))return value;await new Promise(r=>setTimeout(r,100));}while(Date.now()<deadline);throw Error(`Timed out waiting for ${path}`);};
   await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(1320,900));
+  // Fixture interactions use browser events. Keep this window hidden so normal
+  // work in the installed app cannot navigate the isolated test unexpectedly.
+  await app.evaluate(({BrowserWindow})=>{const window=BrowserWindow.getAllWindows()[0];window.webContents.setBackgroundThrottling(false);window.hide();});
   await waitForAPI('/api/local-agent',s=>s.state==='running');
   await fetch(`http://127.0.0.1:${port}/fixture`,{method:'POST',body:JSON.stringify({accounts:accounts.map(a=>({...a,status:'active',auth_index:`idx-${a.name}`}))})});
   await api('/api/local-agent/refresh',{});await waitForAPI('/api/local-agent',s=>s.models.length===4);
@@ -64,7 +68,7 @@ try{
   await nav.getByRole('button',{name:'账号授权'}).click();
   const platforms=page.getByRole('tablist',{name:'授权平台'});
   await platforms.getByRole('tab',{name:/^Qoder IDE/}).click();
-  await page.getByText('阿里 Qoder IDE 账号授权',{exact:true}).waitFor();
+  assert.equal(await platforms.getByRole('tab',{name:/^Qoder IDE/}).getAttribute('aria-selected'),'true');
   await platforms.getByRole('tab',{name:/^Codex/}).click();
   const codexAccounts=page.locator('#provider-panel-codex');
   await codexAccounts.getByRole('tab',{name:'me@example.test',exact:true}).waitFor();
@@ -79,6 +83,7 @@ try{
   await successToast.waitFor();
   assert.equal(await notifications.evaluate(node=>node.matches(':popover-open')),true);
   assert.equal(await notifications.evaluate(node=>getComputedStyle(node).position),'fixed');
+  assert.equal(await notifications.evaluate(node=>{const r=node.getBoundingClientRect();return document.elementFromPoint(r.x+4,r.y+4)===node;}),false,'transparent notification edge must pass clicks through');
   assert.equal(await page.locator('.tfMain .tfBanner').count(),0,'notifications must not occupy the title area');
   const toastBounds=await notifications.boundingBox();assert.ok(toastBounds.x>900&&toastBounds.y>=40,'notice sits at the top right below the draggable strip');
   if(process.platform==='darwin'){
@@ -104,7 +109,7 @@ try{
   await codexAccounts.locator('.tfAccountDetail').getByText('work@example.test',{exact:true}).waitFor();
   assert.equal(await codexAccounts.locator('.tfAccountModels').count(),0);
   await codexAccounts.getByRole('button',{name:'查看模型（2）'}).click();
-  assert.deepEqual(await codexAccounts.locator('.tfAccountModels code').allTextContents(),['请求 ID：codex/work-model','请求 ID：codex/model-a']);
+  assert.deepEqual(await codexAccounts.locator('.tfAccountModels code').allTextContents(),['请求 ID：codex/model-a','请求 ID：codex/work-model']);
   await codexAccounts.getByRole('button',{name:'收起模型'}).click();
   assert.equal(await codexAccounts.locator('.tfAccountDetail').getByText('me@example.test',{exact:true}).count(),0);
   await platforms.getByRole('tab',{name:/^Claude/}).click();
@@ -151,7 +156,7 @@ try{
   await page.setViewportSize({width:1320,height:900});
   const text=await page.locator('body').innerText();
   for(const noise of ['本机网关','服务状态','启用账号','可用模型','厂商凭据仅保存在本机','上游协议','浏览器任务','模型来源','模型使用'])assert.equal(text.includes(noise),false,`stale UI text: ${noise}`);
-  await codexAccounts.getByRole('button',{name:'详情'}).click();await codexAccounts.getByText('Token 使用').waitFor();
+  await codexAccounts.locator('.tfUsageFoldHead').last().click();await page.getByRole('dialog').filter({hasText:'Token 用量'}).waitFor();await page.getByRole('button',{name:'关闭用量',exact:true}).click();
   await page.screenshot({path:join(output,'01-accounts-1320.png')});
   await nav.getByRole('button',{name:'API 接口'}).click();
 
@@ -209,8 +214,8 @@ try{
   const codex=page.getByRole('region',{name:'Codex',exact:true});
   await codex.getByRole('button',{name:'选择模型'}).click();
   const picker=page.getByRole('dialog',{name:'Codex 使用的模型'});
-  const openSource=async(dialog,account)=>{const card=dialog.locator('.tfPickSource').filter({hasText:account});if(await card.getAttribute('open')===null)await card.locator(':scope > summary').click();return card;};
-  assert.equal(await page.getByRole('tablist',{name:'本地 Agent'}).locator('.tfProviderIcon').count(),4);
+  const openSource=async(dialog,account)=>{await dialog.waitFor({state:'visible'});await dialog.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));const card=dialog.locator('.tfPickSource').filter({hasText:account});if(await card.getAttribute('open')===null)await card.locator(':scope > summary').click();await card.locator('.tfPickSourceBody').waitFor({state:'visible'});return card;};
+  assert.equal(await page.getByRole('tablist',{name:'本地 Agent'}).locator('.tfProviderIcon').count(),6);
   assert.equal(await codex.locator('header .tfProviderIcon').count(),1);
   const search=picker.getByRole('searchbox',{name:'搜索厂商、账号或模型'});
   await search.fill('Codex');await picker.getByRole('button',{name:'model-b'}).waitFor();
@@ -230,6 +235,7 @@ try{
   await relayCard.getByRole('button',{name:'relay-model',exact:true}).click();
   await relayCard.getByRole('button',{name:'relay-second',exact:true}).click();
   await relayCard.locator(':scope > summary').click();
+  await search.fill('');
   await page.screenshot({path:join(output,'02-model-source-cards-1320.png')});
   await personal.locator(':scope > summary').focus();await page.keyboard.press('Enter');
   await personal.getByRole('button',{name:'model-b'}).waitFor();
@@ -288,7 +294,7 @@ try{
   await picker.getByRole('button',{name:'应用所选模型'}).click();
   await waitForAPI('/api/a2a',s=>s.targets.find(t=>t.id==='codex').connection?.selections.length===2);
   await deferRestart();
-  await rows.filter({hasText:'model-a'}).getByRole('button',{name:'详情'}).click();await codex.getByText('Token 使用（本次运行）').waitFor();
+  await rows.filter({hasText:'model-a'}).getByRole('button',{name:'详情'}).click();await codex.getByText(/^Token 使用（/).waitFor();
   await page.screenshot({path:join(output,'02b-usage.png')});
   await page.setViewportSize({width:480,height:800});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'Agent overflow');
@@ -348,8 +354,8 @@ try{
   await keys.getByLabel('名称',{exact:true}).fill('团队编码');await keys.getByLabel('用途',{exact:true}).fill('Cursor 日常开发');
   assert.equal(await keys.getByRole('button',{name:'生成 Key'}).isDisabled(),true);
   await keys.getByRole('button',{name:'选择导出模型（0）'}).click();
-  const exportPicker=page.getByRole('dialog',{name:'选择导出模型',exact:true});
-  const exportCodex=await openSource(exportPicker,'me@example.test');await exportCodex.getByRole('button',{name:'codex/model-a',exact:true}).click();
+  const exportPicker=page.getByRole('dialog',{name:'选择导出模型',exact:true});await exportPicker.locator('.tfPickSource').first().waitFor();assert.equal(await exportPicker.locator('.tfPickSourceText>strong').first().textContent(),'API '+String.fromCharCode(0x63a5,0x53e3));
+  const exportCodex=await openSource(exportPicker,'me@example.test');await exportCodex.getByRole('button',{name:/^(codex\/)?model-a$/}).click();
   const exportApi=await openSource(exportPicker,'公司中转 · Kimi');await exportApi.getByRole('button',{name:'relay-model',exact:true}).click();
   await exportPicker.getByRole('button',{name:'应用所选模型'}).click();
   await keys.getByRole('button',{name:'生成 Key'}).click();
@@ -381,17 +387,18 @@ try{
   assert.equal(excluded,403,'unselected model must stay unauthorized');
   // Edit the same Key from its card: add/remove permissions, cancel, then revoke all.
   const teamCard=keys.getByRole('article',{name:'团队编码',exact:true});
-  await teamCard.getByRole('button',{name:'管理模型',exact:true}).click();
+  await teamCard.getByRole('button',{name:'查看 团队编码',exact:true}).click();await keyDetails.getByRole('tab',{name:'支持模型（2）'}).click();
   await keyDetails.getByRole('tab',{name:'支持模型（2）'}).waitFor();
   await keyDetails.getByRole('button',{name:'管理模型',exact:true}).click();
   const keyPicker=page.getByRole('dialog',{name:'管理 Key 支持的模型',exact:true});
   const manageCodex=await openSource(keyPicker,'me@example.test');
-  assert.equal(await manageCodex.getByRole('button',{name:'codex/model-a',exact:true}).getAttribute('aria-pressed'),'true');
-  await manageCodex.getByRole('button',{name:'codex/model-b',exact:true}).click();
+  assert.equal(await manageCodex.getByRole('button',{name:/^(codex\/)?model-a$/}).getAttribute('aria-pressed'),'true');
+  await manageCodex.getByRole('button',{name:/^(codex\/)?model-b$/}).click();
   const manageAPI=await openSource(keyPicker,'公司中转 · Kimi');
   await manageAPI.getByRole('button',{name:'relay-model',exact:true}).click();
   await keyPicker.getByRole('button',{name:'保存模型权限'}).click();
   await waitForAPI('/api/gateway-keys',s=>s.keys.find(key=>key.id===exported.id)?.models.includes('codex/model-b'));
+  await page.waitForFunction(()=>Array.from(document.querySelectorAll('dialog[open] input')).filter(input=>input.getAttribute('aria-label')==='模型 ID').map(input=>input.value).sort().join(',')==='codex/model-a,codex/model-b');
   assert.deepEqual(await keyDetails.getByLabel('模型 ID').evaluateAll(nodes=>nodes.map(node=>node.value).sort()),['codex/model-a','codex/model-b']);
   await page.screenshot({path:join(output,'03-key-edited-models.png')});
   assert.equal(await notifications.evaluate(node=>node.matches(':popover-open')),true,'notices remain visible above a native details dialog');
@@ -403,19 +410,19 @@ try{
   const measured=updated.usedTokens;
   await keyDetails.getByRole('button',{name:'管理模型',exact:true}).click();
   const clearCodex=await openSource(keyPicker,'me@example.test');
-  await clearCodex.getByRole('button',{name:'codex/model-b',exact:true}).click();
+  await clearCodex.getByRole('button',{name:/^(codex\/)?model-b$/}).click();
   await keyPicker.getByRole('button',{name:'取消',exact:true}).click();
   assert.ok((await api('/api/gateway-keys')).keys.find(key=>key.id===exported.id).models.includes('codex/model-b'));
   await keyDetails.getByRole('button',{name:'管理模型',exact:true}).click();
   const revokeCodex=await openSource(keyPicker,'me@example.test');
-  await revokeCodex.getByRole('button',{name:'codex/model-a',exact:true}).click();await revokeCodex.getByRole('button',{name:'codex/model-b',exact:true}).click();
+  await revokeCodex.getByRole('button',{name:/^(codex\/)?model-a$/}).click();await revokeCodex.getByRole('button',{name:/^(codex\/)?model-b$/}).click();
   await keyPicker.getByText('未选择模型，保存后此 Key 将无法调用模型').waitFor();
   await keyPicker.getByRole('button',{name:'保存模型权限'}).click();
   await keyDetails.getByRole('tab',{name:'支持模型（0）'}).waitFor();
   assert.equal(await invokeWithKey('codex/model-b'),403);
   assert.equal((await api('/api/gateway-keys')).keys.find(key=>key.id===exported.id).usedTokens,measured);
   await keyDetails.getByRole('button',{name:'管理模型',exact:true}).click();
-  await openSource(keyPicker,'me@example.test');await keyPicker.getByRole('button',{name:'codex/model-a',exact:true}).click();
+  await openSource(keyPicker,'me@example.test');await keyPicker.getByRole('button',{name:/^(codex\/)?model-a$/}).click();
   await keyPicker.getByRole('button',{name:'保存模型权限'}).click();await keyDetails.getByRole('tab',{name:'支持模型（1）'}).waitFor();
   await keyDetails.getByRole('tab',{name:'接入信息',exact:true}).click();
   await keyDetails.getByRole('button',{name:'显示',exact:true}).click();await keyDetails.getByRole('button',{name:'隐藏',exact:true}).waitFor();
@@ -435,12 +442,12 @@ try{
   await repair.getByRole('button',{name:'修改 Agent 配置',exact:true}).click();
   const editor=repair.getByRole('region',{name:'修改 Agent 配置',exact:true});
   await editor.waitFor();
-  assert.deepEqual(await editor.getByLabel('配置目标 Agent').locator('option').allTextContents(),['Codex','Claude Code','WorkBuddy','Qoder']);
+  assert.deepEqual(await editor.getByLabel('配置目标 Agent').locator('option').allTextContents(),['Codex','Claude Code','WorkBuddy','Qoder','DeepSeek Harness','Pi Agent']);
   await editor.getByLabel('配置目标 Agent').selectOption('qoder');
   await editor.getByRole('button',{name:'选择来源和模型'}).click();
   const routingPicker=page.getByRole('dialog',{name:'Agent 的来源和模型'});
   await openSource(routingPicker,'me@example.test');
-  await routingPicker.getByRole('button',{name:'codex/model-a',exact:true}).click();
+  await routingPicker.getByRole('button',{name:/^(codex\/)?model-a$/}).click();
   await editor.getByRole('button',{name:'生成修改方案'}).click();
   const proposal=repair.getByRole('article',{name:'修复方案'});await proposal.getByRole('button',{name:'同意并执行'}).waitFor();
   assert.equal((await api('/api/a2a')).targets.find(t=>t.id==='qoder').connection,null);
@@ -483,12 +490,12 @@ try{
       await page.unroute('**/api/a2a/restart');
       if(target==='claude'){
         const session={pid:123,tty:'ttys004',cwd:'/fixture/project'};
-        await page.route('**/api/a2a/terminal-sessions',route=>route.fulfill({json:{sessions:[session]}}));
+        await page.route('**/api/a2a/terminal-sessions*',route=>route.fulfill({json:{sessions:[session]}}));
         await panel.getByRole('button',{name:'重启…',exact:true}).click();
         await manualRestart.getByLabel('使用界面').selectOption('terminal');await manualRestart.getByLabel('终端会话').selectOption('123');
         await page.route('**/api/a2a/restart',async route=>{assert.deepEqual(route.request().postDataJSON(),{target:'claude',client:'terminal',session});await route.fulfill({json:{message:'续聊选择已打开'}});});
         await manualRestart.getByRole('button',{name:'立即重启'}).click();await page.getByText('续聊选择已打开',{exact:true}).waitFor();
-        await page.unroute('**/api/a2a/restart');await page.unroute('**/api/a2a/terminal-sessions');
+        await page.unroute('**/api/a2a/restart');await page.unroute('**/api/a2a/terminal-sessions*');
       }
     }
 

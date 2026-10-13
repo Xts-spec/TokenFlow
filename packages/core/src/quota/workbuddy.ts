@@ -6,10 +6,11 @@ import type { QuotaProvider, QuotaWindow } from './types.js';
 
 export const workbuddyQuota: QuotaProvider = {
   id: 'workbuddy',
-  async fetch(call) {
+  async fetch(call, account) {
+    const base=account.domain==='www.workbuddy.ai'||account.domain==='https://www.workbuddy.ai'?'https://www.workbuddy.ai':'https://copilot.tencent.com';
     const response = await call({
       method: 'POST',
-      url: 'https://copilot.tencent.com/billing/meter/get-user-resource-summary',
+      url: base+'/billing/meter/get-user-resource-summary',
       header: {
         Authorization: 'Bearer $TOKEN$',
         'X-Product': 'SaaS',

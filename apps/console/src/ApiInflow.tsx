@@ -1,3 +1,4 @@
+import {DragHandle,dropOrder,ModelOrderControl,orderModels,useModelOrder} from './display-order';
 import { useRef, useState } from 'react';
 import type { ApiSource } from '../../../packages/core/src/api-sources';
 import type { LocalAgentSnapshot } from '../../../packages/core/src/cliproxy';
@@ -5,33 +6,37 @@ import { requestJSON } from './request';
 import { Icon } from './Icons';
 import { parseModels, protocolNames, validateDraft, type DraftErrors } from './api-source-draft';
 import type { Notify } from './notify';
-import type { GatewayUsage } from '../../../packages/core/src/gateway-activity';
-import { usageOf,type Usage } from './flow-model';
+import type { UsageData } from './usage-data';
+import {useListReturn} from './list-return';
+
+
 import {copyText} from './clipboard';
 
 const json=(method:string,body:unknown)=>({method,headers:{'content-type':'application/json'},body:JSON.stringify(body)});
-const compact=(value:number)=>new Intl.NumberFormat('zh-CN',{notation:'compact',maximumFractionDigits:1}).format(value);
 
-function ApiSourceCard({source,usage,disabled,editing,notify,onEdit,onToggle,onRemove}:{source:ApiSource;usage:Usage;disabled:boolean;editing:boolean;notify:Notify;onEdit:()=>void;onToggle:()=>void;onRemove:()=>void}){
+function ApiSourceCard({local,source,disabled,editing,notify,onEdit,onToggle,onRemove}:{local:LocalAgentSnapshot;source:ApiSource;disabled:boolean;editing:boolean;notify:Notify;onEdit:()=>void;onToggle:()=>void;onRemove:()=>void}){
+ const [modelOrder,setModelOrder,modelRanks,moveModel]=useModelOrder();
+ const identity=(model:string)=>`api-${source.id}/${model}`;const sortedModels=orderModels(source.models,model=>model,modelOrder,modelRanks,identity);const modelIds=sortedModels.map(identity);
  const [expanded,setExpanded]=useState(false);const [copied,setCopied]=useState('');
+ const rememberModels=useListReturn(expanded);
  const copy=async(value:string,id:string)=>{try{await copyText(value);setCopied(id);setTimeout(()=>setCopied(''),1500);}catch{notify({kind:'error',text:'复制失败，请选中后手动复制。'});}};
- const tokens=usage.inputTokens+usage.outputTokens;
+
  return <article className={`tfApiSourceCard ${source.enabled?'':'off'}`} aria-label={source.name}>
   <div className="tfApiSourceBody">
    <header className="tfApiSourceHead"><span className="tfApiSourceIcon"><Icon name="plug" size={20}/></span><div><h3>{source.name}</h3><span className="tfApiProtocol">{protocolNames[source.protocol]}</span></div><span className={`tfKeyStatus ${source.enabled&&source.hasKey?'on':source.enabled?'warn':''}`}>{!source.enabled?'已停用':source.hasKey?'已启用':'密钥不可读'}</span></header>
    <div className="tfApiAddress"><code title={source.baseURL}>{source.baseURL}</code><button className="iconButton" aria-label={`复制 ${source.name} 接口地址`} title={copied==='url'?'已复制':'复制接口地址'} onClick={()=>void copy(source.baseURL,'url')}><Icon name={copied==='url'?'checkCircle':'copy'} size={14}/></button></div>
-   <dl className="tfApiStats"><div><dt>支持模型</dt><dd>{source.models.length}<small> 个</small></dd></div><div><dt>本次运行 Tokens</dt><dd title={tokens.toLocaleString()}>{compact(tokens)}</dd></div></dl>
-   <p className="tfApiActivity">{usage.requests?`${usage.requests.toLocaleString()} 次请求${usage.failed?` · ${usage.failed.toLocaleString()} 次失败`:''}`:'本次运行还没有请求'}</p>
   </div>
-  <footer><button className="textButton" aria-expanded={expanded} aria-controls={`api-models-${source.id}`} onClick={()=>setExpanded(!expanded)}>{expanded?'收起模型':`支持模型（${source.models.length}）`}</button><div><button className="textButton" disabled={disabled} onClick={onEdit}>{editing?'编辑中':'编辑'}</button><button className="textButton" disabled={disabled} onClick={onToggle}>{source.enabled?'停用':'启用'}</button><button className="textButton danger" disabled={disabled} onClick={onRemove}>删除</button></div></footer>
-  {expanded&&<div className="tfApiSourceModels" id={`api-models-${source.id}`}><header><strong>上游模型 ID</strong><button className="textButton" onClick={()=>void copy(source.models.join('\n'),'models')}>{copied==='models'?'已复制':'复制列表'}</button></header>{!source.models.length&&<p className="tfHint">尚未配置模型，可在编辑中添加。</p>}<ul>{source.models.map(model=><li key={model}><code>{model}</code><button className="iconButton" aria-label={`复制模型 ${model}`} onClick={()=>void copy(model,model)}><Icon name={copied===model?'checkCircle':'copy'} size={14}/></button></li>)}</ul></div>}
+  <footer><div><button className="textButton" aria-expanded={expanded} aria-controls={`api-models-${source.id}`} onClick={()=>{if(!expanded)rememberModels();setExpanded(!expanded);}}>{expanded?'收起模型':`支持模型（${source.models.length}）`}</button></div><div><button className="textButton" disabled={disabled} onClick={onEdit}>{editing?'编辑中':'编辑'}</button><button className="textButton" disabled={disabled} onClick={onToggle}>{source.enabled?'停用':'启用'}</button><button className="textButton danger" disabled={disabled} onClick={onRemove}>删除</button></div></footer>
+  {expanded&&<div className="tfApiSourceModels" id={`api-models-${source.id}`}><header><strong>上游模型 ID</strong><ModelOrderControl value={modelOrder} onChange={setModelOrder}/><button className="textButton" onClick={()=>void copy(sortedModels.join('\n'),'models')}>{copied==='models'?'已复制':'复制列表'}</button></header>{!source.models.length&&<p className="tfHint">尚未配置模型，可在编辑中添加。</p>}<ul>{sortedModels.map(model=><li key={model} className="tfDragRow" {...dropOrder('models',identity(model),modelIds,moveModel)}><DragHandle kind="models" id={identity(model)} label={model} items={modelIds} move={moveModel}/><code>{model}</code><button className="iconButton" aria-label={`复制模型 ${model}`} onClick={()=>void copy(model,model)}><Icon name={copied===model?'checkCircle':'copy'} size={14}/></button></li>)}</ul></div>}
  </article>;
 }
 
-export function ApiInflow({local,usage,onChange,notify}:{local:LocalAgentSnapshot;usage:GatewayUsage[];onChange:()=>Promise<void>;notify:Notify}){
+export function ApiInflow({local,usage,onChange,notify}:{local:LocalAgentSnapshot;usage:UsageData;onChange:()=>Promise<void>;notify:Notify}){
  const sources=local.apiSources??[];
+
  // undefined: closed, null: adding, source: editing
  const [form,setForm]=useState<ApiSource|null>();
+ const rememberEditor=useListReturn(form!==undefined);
  const [name,setName]=useState('');const [baseURL,setBaseURL]=useState('');const [apiKey,setApiKey]=useState('');const nextModelId=useRef(1);const [modelRows,setModelRows]=useState([{id:0,value:''}]);
  const model=modelRows.map(row=>row.value).join('\n');const modelCount=parseModels(model).length;
  const [keyEditing,setKeyEditing]=useState(false);const [visible,setVisible]=useState(false);const [revealed,setRevealed]=useState('');const [revealing,setRevealing]=useState(false);const revealVersion=useRef(0);
@@ -39,7 +44,7 @@ export function ApiInflow({local,usage,onChange,notify}:{local:LocalAgentSnapsho
  const [busy,setBusy]=useState(false);const controller=useRef<AbortController|null>(null);
  const nameOnly=!!form&&!apiKey.trim()&&baseURL.trim()===form.baseURL&&JSON.stringify(parseModels(model))===JSON.stringify(form.models);
 
- const open=(source:ApiSource|null)=>{revealVersion.current++;setKeyEditing(!source?.hasKey);setVisible(false);setRevealed('');setRevealing(false);setForm(source);setName(source?.name??'');setBaseURL(source?.baseURL??'');setApiKey('');setModelRows((source?.models.length?source.models:['']).map(value=>({id:nextModelId.current++,value})));setErrors({});setFailure('');};
+ const open=(source:ApiSource|null)=>{if(form===undefined)rememberEditor();revealVersion.current++;setKeyEditing(!source?.hasKey);setVisible(false);setRevealed('');setRevealing(false);setForm(source);setName(source?.name??'');setBaseURL(source?.baseURL??'');setApiKey('');setModelRows((source?.models.length?source.models:['']).map(value=>({id:nextModelId.current++,value})));setErrors({});setFailure('');};
  const close=()=>{revealVersion.current++;setVisible(false);setRevealed('');controller.current?.abort();setForm(undefined);setApiKey('');setFailure('');};
 
  // A source that Agents or Keys use asks once before it changes, instead of blocking up front.
@@ -113,7 +118,7 @@ export function ApiInflow({local,usage,onChange,notify}:{local:LocalAgentSnapsho
     <button type="button" onClick={close}>{busy?'取消验证':'取消'}</button>
    </div></footer>
   </form>}
-  {sources.length>0?<div className="tfApiSourceGrid">{sources.map(source=><ApiSourceCard key={source.id} source={source} usage={usageOf(usage,row=>row.model.startsWith(`api-${source.id}/`))} disabled={busy||form!==undefined} editing={form?.id===source.id} notify={notify} onEdit={()=>open(source)} onToggle={()=>void toggle(source)} onRemove={()=>void remove(source)}/>)}</div>:form===undefined&&<div className="tfKeyEmpty"><h3>添加第一个 API 接口</h3><p>支持 Responses、Chat Completions 和 Anthropic Messages。<br/>填写已有接口的地址、Key 和模型，即可接入。</p></div>}
+  {sources.length>0?<div className="tfApiSourceGrid">{sources.map(source=><ApiSourceCard key={source.id} local={local} source={source} disabled={busy||form!==undefined} editing={form?.id===source.id} notify={notify} onEdit={()=>open(source)} onToggle={()=>void toggle(source)} onRemove={()=>void remove(source)}/>)}</div>:form===undefined&&<div className="tfKeyEmpty"><h3>添加第一个 API 接口</h3><p>支持 Responses、Chat Completions 和 Anthropic Messages。<br/>填写已有接口的地址、Key 和模型，即可接入。</p></div>}
 
  </section>;
 }

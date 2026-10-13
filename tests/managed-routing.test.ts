@@ -1,3 +1,4 @@
+import {fakeWorkbuddySDK} from './fixtures/fake-workbuddy-sdk.js';
 import { it,expect } from 'vitest';
 import { mkdtemp,mkdir,writeFile,readFile,rm,realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -14,7 +15,7 @@ async function fixture(){
  const accounts=[{name:'qoder.json',provider:'qoder',status:'active',models:['kmodel_latest']},{name:'workbuddy.json',provider:'workbuddy',status:'active',models:['hy4-preview']}];
  await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify(accounts));
  const paths={codex:join(root,'codex/config.toml'),claude:join(root,'claude.json'),workbuddy:join(root,'workbuddy.json'),qoder:join(root,'qoder.json')};
- const options={root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin-fixture',localKey:'internal-fixture',secrets:{get:async()=>'',set:async()=>{}},agentPaths:paths,agentProcesses:async()=>[]};
+ const options={workbuddySDKFactory:fakeWorkbuddySDK,root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin-fixture',localKey:'internal-fixture',secrets:{get:async()=>'',set:async()=>{}},agentPaths:paths,agentProcesses:async()=>[]};
  const service=await createDesktopService(options);await service.proxy.start();
  const headers={host:'127.0.0.1:9527',authorization:'Bearer admin-fixture'};
  return {root,port,accounts,paths,options,service,headers,close:async()=>{await service.app.close();await rm(root,{recursive:true,force:true});}};

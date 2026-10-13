@@ -8,7 +8,7 @@ async function inspect(payload:string,sse:boolean){
  expect(Buffer.concat(output).toString()).toBe(payload);return usage;
 }
 it('preserves byte-split UTF-8 streaming, accumulates Messages usage without double counting and handles SSE errors',async()=>{
- expect(await inspect('data: {"type":"message_start","message":{"usage":{"input_tokens":11,"output_tokens":0}}}\n\ndata: {"type":"content_block_delta","delta":{"text":"你好"}}\n\ndata: {"type":"message_delta","usage":{"output_tokens":9}}\n\ndata: {"type":"message_stop"}\n\n',true)).toEqual({inputTokens:11,outputTokens:9,failed:false});
+ expect(await inspect('data: {"type":"message_start","message":{"usage":{"input_tokens":11,"output_tokens":0}}}\n\ndata: {"type":"content_block_delta","delta":{"text":"你好"}}\n\ndata: {"type":"message_delta","usage":{"output_tokens":9}}\n\ndata: {"type":"message_stop"}\n\n',true)).toEqual({inputTokens:11,cachedTokens:null,outputTokens:9,failed:false});
  expect(await inspect('data: {"type":"error","error":{"message":"private"}}\n\n',true)).toMatchObject({failed:true,inputTokens:null,outputTokens:null});
 });
 it('keeps unreported token usage unknown and handles regular JSON',async()=>{
@@ -32,6 +32,20 @@ it('counts Anthropic cached input alongside normal input without counting OpenAI
 
 it('does not treat a clean EOF with initial Messages usage as final settlement',async()=>{
  const broken='data: {"type":"message_start","message":{"usage":{"input_tokens":7,"output_tokens":0}}}\n\ndata: {"type":"content_block_delta","delta":{"text":"generated but unmetered"}}\n\n';
- expect(await inspect(broken,true)).toEqual({inputTokens:7,outputTokens:0,failed:true});
+ expect(await inspect(broken,true)).toEqual({inputTokens:7,cachedTokens:null,outputTokens:0,failed:true});
  expect(await inspect(broken+'data: {"type":"message_stop"}\n\n',true)).toMatchObject({failed:true});
+});
+
+it('reports prompt-cache reads from Anthropic, Responses, Chat Completions and DeepSeek usage shapes',async()=>{
+ expect(await inspect('{"usage":{"input_tokens":10,"cache_read_input_tokens":20,"cache_creation_input_tokens":5,"output_tokens":3}}',false)).toMatchObject({inputTokens:35,cachedTokens:20});
+ expect(await inspect('{"usage":{"input_tokens":30,"input_tokens_details":{"cached_tokens":20},"output_tokens":3}}',false)).toMatchObject({inputTokens:30,cachedTokens:20});
+ expect(await inspect('{"usage":{"prompt_tokens":30,"prompt_tokens_details":{"cached_tokens":8},"completion_tokens":3}}',false)).toMatchObject({inputTokens:30,cachedTokens:8});
+ expect(await inspect('{"usage":{"prompt_tokens":30,"prompt_cache_hit_tokens":12,"prompt_cache_miss_tokens":18,"completion_tokens":3}}',false)).toMatchObject({inputTokens:30,cachedTokens:12});
+ expect(await inspect('data: {"type":"response.completed","response":{"usage":{"input_tokens":9,"input_tokens_details":{"cached_tokens":4},"output_tokens":2}}}\n\n',true)).toMatchObject({inputTokens:9,cachedTokens:4,outputTokens:2,failed:false});
+ expect(await inspect('{"usage":{"prompt_tokens":4,"completion_tokens":2}}',false)).toMatchObject({cachedTokens:null});
+});
+
+it('retains final usage once, preserves Anthropic cache fields through partial updates, and observes tool identities separately',async()=>{
+ const payload='data: {"type":"message_start","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":20,"cache_creation_input_tokens":5,"output_tokens":0}}}\n\ndata: {"type":"message_delta","usage":{"input_tokens":10,"output_tokens":8,"output_tokens_details":{"reasoning_tokens":3}}}\n\ndata: {"type":"message_stop"}\n\n';
+ expect(await inspect(payload,true)).toMatchObject({inputTokens:35,cachedTokens:20,cacheWriteTokens:5,outputTokens:8,reasoningTokens:3,failed:false});
 });

@@ -1,8 +1,12 @@
+import {parse} from 'smol-toml';
+import {CodexThreadMigration} from '../packages/core/src/codex-thread-migration.js';
+import {DatabaseSync} from 'node:sqlite';
 import { it,expect,vi } from 'vitest';
 import { mkdtemp,mkdir,writeFile,readFile,rm,realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join,resolve } from 'node:path';
 import { createServer } from 'node:net';
+import {PiTerminalLifecycle} from '../packages/core/src/pi-terminal-lifecycle.js';
 import { QoderLifecycle } from '../packages/core/src/agent-lifecycle.js';
 import { createDesktopService } from '../packages/core/src/service.js';
 it('connects and restores a local Agent through admin APIs without exposing keys or original config',async()=>{
@@ -15,6 +19,9 @@ it('connects and restores a local Agent through admin APIs without exposing keys
  try{
   await service.proxy.start();const headers={host:'127.0.0.1:9527',authorization:'Bearer admin-token'};
   expect((await service.app.inject({url:'/api/a2a',headers:{host:headers.host}})).statusCode).toBe(401);
+  expect((await service.app.inject({method:'POST',url:'/api/a2a/program',headers:{host:headers.host},payload:{target:'pi',action:'install'}})).statusCode).toBe(401);
+  expect((await service.app.inject({method:'POST',url:'/api/a2a/program',headers:{...headers,origin:'https://untrusted.test'},payload:{target:'pi',action:'install'}})).statusCode).toBe(403);
+  expect((await service.app.inject({method:'POST',url:'/api/a2a/program',headers,payload:{target:'invalid',action:'install'}})).statusCode).toBe(400);
   const restart=vi.spyOn(QoderLifecycle.prototype,'restart').mockResolvedValue({message:'Qoder 已重新打开'});
   try{
    expect((await service.app.inject({method:'POST',url:'/api/a2a/restart',headers:{host:headers.host},payload:{target:'qoder'}})).statusCode).toBe(401);
@@ -23,12 +30,14 @@ it('connects and restores a local Agent through admin APIs without exposing keys
    expect(restart).not.toHaveBeenCalled();
    expect((await service.app.inject({method:'POST',url:'/api/a2a/restart',headers,payload:{target:'qoder'}})).statusCode).toBe(200);
    expect(restart).toHaveBeenCalledTimes(1);
-   for(const target of ['codex','workbuddy','claude']){
+   for(const target of ['codex','workbuddy','claude','deepseek']){
     const payload={target,...(target==='claude'?{client:'vscode'}:{})};
     expect((await service.app.inject({method:'POST',url:'/api/a2a/restart',headers,payload})).statusCode).toBe(200);
     expect(restart).toHaveBeenLastCalledWith(target);
    }
    expect((await service.app.inject({method:'POST',url:'/api/a2a/restart',headers,payload:{target:'claude',client:'terminal'}})).statusCode).toBe(400);
+   const piRestart=vi.spyOn(PiTerminalLifecycle.prototype,'restart').mockResolvedValue({message:'Pi 已重新打开'});try{expect((await service.app.inject({method:'POST',url:'/api/a2a/restart',headers,payload:{target:'pi'}})).statusCode).toBe(200);}finally{piRestart.mockRestore();}
+   expect((await service.app.inject({url:'/api/a2a/program-updates',headers:{host:headers.host}})).statusCode).toBe(401);
    expect((await service.app.inject({url:'/api/a2a/terminal-sessions',headers:{host:headers.host}})).statusCode).toBe(401);
   }finally{restart.mockRestore();}
   await mkdir(join(root,'codex'));const credentials=JSON.stringify({tokens:{access_token:'fixture-access',refresh_token:'fixture-refresh',id_token:'x.e30.x',account_id:'fixture-account'}});await writeFile(join(root,'codex','auth.json'),credentials);
@@ -112,4 +121,43 @@ it('queues the selected replacement model for approval, preserves stale edits an
   expect((await post('/api/a2a/restore',{id:current.connection.id,allowRunning:true,revision:'0'.repeat(64)})).statusCode).toBe(409);
   const restore=await post('/api/a2a/restore',{id:current.connection.id,revision:current.revision,allowRunning:true});expect(restore.statusCode,restore.body).toBe(200);expect(await readFile(path,'utf8')).toBe('[]');
  }finally{await service.app.close();await rm(root,{recursive:true,force:true});}
+});
+
+it('blocks Codex migration while desktop runs, before creating a gateway key or modifying configuration',async()=>{
+ const root=await mkdtemp(join(await realpath(tmpdir()),'codex-migration-api-'));
+ await mkdir(join(root,'codex'));await mkdir(join(root,'cliproxy'));await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'codex.json',provider:'codex',status:'active',models:['shared-model']} ]));
+ const path=join(root,'codex/config.toml');await writeFile(path,'model="native-model"');
+ const db=new DatabaseSync(join(root,'codex/state_5.sqlite'));db.exec("CREATE TABLE threads(id TEXT,model_provider TEXT,model TEXT,rollout_path TEXT,source TEXT,archived INTEGER);INSERT INTO threads VALUES ('old','openai','native-model','/unused','vscode',0)");db.close();
+ const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
+ const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:path,claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async target=>target==='codex'?[123]:[]});
+ try{await service.proxy.start();const headers={host:'127.0.0.1:9527',authorization:'Bearer admin'};
+  const state=(await service.app.inject({url:'/api/a2a',headers})).json();const target=state.targets.find((t:{id:string})=>t.id==='codex');const sourceId=service.proxy.snapshot().accounts[0].id;
+  const response=await service.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload:{target:'codex',sourceId,model:'codex/shared-model',revision:target.revision,allowRunning:true}});
+  expect(response.statusCode).toBe(409);expect(response.json().code).toBe('codex_exit_required');expect(await readFile(path,'utf8')).toBe('model="native-model"');
+  expect((await service.app.inject({url:'/api/a2a/codex-migration',headers})).json()).toMatchObject({backups:0,remaining:0});
+  expect((await service.app.inject({method:'POST',url:'/api/a2a/codex-migration/restore',headers:{host:headers.host}})).statusCode).toBe(401);
+  expect((await service.app.inject({method:'POST',url:'/api/a2a/codex-migration/restore',headers:{...headers,origin:'https://untrusted.test'}})).statusCode).toBe(403);
+ }finally{await service.app.close();await rm(root,{recursive:true,force:true});}
+});
+
+it('passes the new key authorization set to Codex migration when replacing gateway selections',async()=>{
+ const root=await mkdtemp(join(await realpath(tmpdir()),'codex-model-replace-api-'));
+ await mkdir(join(root,'codex'));await mkdir(join(root,'cliproxy'));
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'codex.json',provider:'codex',status:'active',models:['old','retained','replacement']}]));
+ const path=join(root,'codex/config.toml');await writeFile(path,'model="native-model"');
+ const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
+ const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:path,claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async()=>[]});
+ const migrate=vi.spyOn(CodexThreadMigration.prototype,'migrate');
+ try{await service.proxy.start();const headers={host:'127.0.0.1:9527',authorization:'Bearer admin'};const sourceId=service.proxy.snapshot().accounts[0].id;
+  const state=async()=>(await service.app.inject({url:'/api/a2a',headers})).json().targets.find((t:{id:string})=>t.id==='codex');
+  const connect=async(model:string,models:string[])=>{const target=await state();return service.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload:{target:'codex',sourceId,model,revision:target.revision,replaceId:target.connection?.id,selections:models.map(model=>({sourceId,model}))}});};
+  const first=await connect('codex/old',['codex/old','codex/retained']);expect(first.statusCode,first.body).toBe(200);
+  const clientKey=async()=>((parse(await readFile(path,'utf8')).model_providers as any).token_flow.experimental_bearer_token as string);
+  const oldKey=await clientKey();
+  const second=await connect('codex/replacement',['codex/replacement','codex/retained']);expect(second.statusCode,second.body).toBe(200);
+  expect(migrate).toHaveBeenLastCalledWith('codex/replacement',['codex/replacement','codex/retained']);
+  const models=await service.app.inject({url:'/v1/models',headers:{host:headers.host,authorization:`Bearer ${await clientKey()}`}});
+  expect(models.statusCode).toBe(200);expect(models.json().data.map((m:{id:string})=>m.id).sort()).toEqual(['codex/replacement','codex/retained'].sort());
+  expect((await service.app.inject({url:'/v1/models',headers:{host:headers.host,authorization:`Bearer ${oldKey}`}})).statusCode).toBe(401);
+ }finally{migrate.mockRestore();await service.app.close();await rm(root,{recursive:true,force:true});}
 });

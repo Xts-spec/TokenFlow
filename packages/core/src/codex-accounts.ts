@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { parse, stringify } from 'smol-toml';
 import { z } from 'zod';
-import { agentProcesses, readConfig, safePath } from './agent-connections.js';
+import { agentProcesses, readConfig, safePath, officialCodexModel } from './agent-connections.js';
 
 const conflict=(message:string)=>Object.assign(new Error(message),{statusCode:409});
 const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -114,6 +114,10 @@ export class CodexAccounts {
       }
       return this.status();
     });
+  }
+  async restoreModel(){
+    const journal=await this.journal();if(!journal)return undefined;
+    return officialCodexModel(this.configPath,journal.before.config,journal.before.auth);
   }
   async restore(input:{revision:string;allowRunning:boolean}){
     return this.locked(async()=>{

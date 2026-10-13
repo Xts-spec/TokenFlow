@@ -1,4 +1,5 @@
 import { retryQuotaCall, QuotaTransportError, transientQuotaStatus } from './quota/retry.js';
+import {accountLabel} from './account-label.js';
 import { nativeCredentialSchema, nativeConflict, type NativeProvider } from './native-accounts.js';
 import { readConfig } from './agent-connections.js';
 import { CursorProvider,cursorCatalog } from './cursor.js';
@@ -23,6 +24,7 @@ export type { AccountQuota, QuotaWindow } from './quota/index.js';
 const accountSchema = z.object({
   id: z.string().optional(), name: z.string(), provider: z.string().optional(), type: z.string().optional(),
   status_message: z.string().optional(), email: z.string().optional(), label: z.string().optional(), status: z.string().optional(),
+  nickname:z.string().optional(),uid:z.string().optional(),
   disabled: z.boolean().optional(), unavailable: z.boolean().optional(),
   next_retry_after: z.string().optional(),
   runtime_only: z.boolean().optional(),
@@ -30,11 +32,18 @@ const accountSchema = z.object({
   auth_index: z.union([z.string(), z.number()]).optional(), project_id: z.string().optional(), account_type: z.string().optional(),
   id_token: z.object({chatgpt_account_id: z.string().optional(), plan_type: z.string().optional()}).passthrough().optional(),
 });
-const modelSchema = z.object({id: z.string(), display_name: z.string().optional(), type: z.string().optional(), owned_by: z.string().optional()});
+const modelSchema = z.object({id: z.string(), display_name: z.string().optional(), type: z.string().optional(), owned_by: z.string().optional(), supportedInputModalities:z.array(z.string()).optional()});
 const apiCallSchema = z.object({status_code: z.number().int(), header: z.record(z.array(z.string())).default({}), body: z.string().default('')});
 export function revokedCredential(file:{status?:string;status_message?:string}){return file.status==='error'&&/\b(?:invalid_grant|refresh_token_revoked|refresh_token_reused|refresh_token_expired)\b/i.test(file.status_message??'');}
 export type LocalAccount = {id: string; provider: string; label: string; status: string; disabled: boolean; unavailable: boolean; retryable?:boolean; isDuplicate?: boolean; modelError?:string; models?: string[]};
 /** `provider` 为承接该模型的登录 Provider；未知类型（如 Gemini API Key）为空。 */
+// Unknown capabilities remain unknown; never infer vision from a model name.
+function modelImageCapabilities(model:z.infer<typeof modelSchema>,provider:string){
+ const modalities=model.supportedInputModalities;
+ if(!modalities?.length)return {};
+ // These adapters currently drop image payloads, even for a multimodal base model.
+ return {capabilities:{text:true,tools:true,images:!['qoder','cursor'].includes(provider)&&modalities.some(value=>value.toLowerCase()==='image')}};
+}
 export type LocalModel = {id: string; displayName?: string; provider?: LoginProviderId | 'cursor' | 'api';textOnly?:boolean;capabilities?:{text:boolean;tools:boolean;images:boolean}};
 export type CLIProxyOptions = LoginOptions & {secrets?:{get:(name:string)=>Promise<string>;set:(name:string,value:string)=>Promise<void>};apiConfig?:()=>string;apiModelIDs?:()=>string[]};
 
@@ -67,6 +76,14 @@ export class CLIProxyManager {
   private models: LocalModel[] = [];
   private apiModels=new Set<string>();
   private configurationTask:Promise<void>=Promise.resolve();
+  accountBaseURL(id:string){const info=this.quotaTargets.get(id)?.account;return info?.provider==='workbuddy'&&['www.workbuddy.ai','https://www.workbuddy.ai'].includes(info.domain??'')?'https://www.workbuddy.ai':undefined;}
+  private publishAPIModels(ids:Iterable<string>){
+    const configured=new Set(this.options.apiModelIDs?.()??[]);
+    // A stale refresh during a reload must not erase an already confirmed route.
+    // Removed/disabled configured models are never retained.
+    this.apiModels=new Set([...this.apiModels].filter(id=>configured.has(id)));
+    for(const id of ids)if(/^api-[a-f0-9]{24}\//.test(id)&&configured.has(id))this.apiModels.add(id);
+  }
   apiModelAvailable(id:string){return this.state==='running'&&this.apiModels.has(id);}
   private accountError?: string;
   private readonly login_: LoginController;
@@ -126,7 +143,7 @@ export class CLIProxyManager {
     await this.configure();
     if(this.state!=='running'||!ids.length)return;
     for(let attempt=0;attempt<40;attempt++){
-      try{const live=z.object({data:z.array(modelSchema)}).parse(await this.request('/models','GET',undefined,false,1500));this.apiModels=new Set(live.data.filter(m=>/^api-[a-f0-9]{24}\//.test(m.id)).map(m=>m.id));if(ids.every(id=>this.apiModels.has(id)))return;}catch{/* A reload may briefly stop serving. */}
+      try{const live=z.object({data:z.array(modelSchema)}).parse(await this.request('/models','GET',undefined,false,1500));this.publishAPIModels(live.data.map(m=>m.id));if(ids.every(id=>this.apiModels.has(id)))return;}catch{/* A reload may briefly stop serving. */}
       await new Promise(r=>setTimeout(r,100));
     }
     throw new RunnerCoreError('API 来源已保存，但网关模型路由尚未同步。请稍后重新保存，或重启网关；不会切换到其他来源。',{statusCode:503,code:'api_routes_pending'});
@@ -269,22 +286,26 @@ export class CLIProxyManager {
       const names = new Map([...this.names].filter(([id])=>retainedIDs.has(id)));
       const authIDs = new Map([...this.authIDs].filter(([id])=>retainedIDs.has(id)));
       const quotaTargets = new Map([...this.quotaTargets].filter(([id])=>retainedIDs.has(id)));
-      const accounts: LocalAccount[] = [...retained,...result.files.map(file => {
+      const accounts: LocalAccount[] = [...retained,...await Promise.all(result.files.map(async file => {
         const id = createHash('sha256').update(file.name).digest('hex').slice(0, 24);
         names.set(id, file.name);
         if(file.id)authIDs.set(id,file.id);
         const provider = file.provider ?? file.type ?? 'unknown';
-        if (file.auth_index !== undefined) quotaTargets.set(id, {authIndex: String(file.auth_index), account: {provider, email: file.email,
+        let identity:Record<string,unknown>={};
+        if((provider==='qoder'||provider==='workbuddy')&&!file.name.includes('/')&&!file.name.includes('\\')){
+          try{const raw=await readConfig(join(this.root,'cliproxy','auth',file.name));if(raw)identity=JSON.parse(raw);}catch{/* Keep the sidecar label if the credential is being refreshed. */}
+        }
+        if (file.auth_index !== undefined) quotaTargets.set(id, {authIndex: String(file.auth_index), account: {provider, email: file.email, domain:typeof identity.domain==='string'?identity.domain:undefined,
           projectId: file.project_id, accountType: file.account_type, chatgptAccountId: file.id_token?.chatgpt_account_id, planType: file.id_token?.plan_type}});
         return {
-          id, provider, label: (file.email || file.label || '已保存的账号').slice(0, 200),
+          id, provider, label: accountLabel(provider,file,identity)+(provider==='workbuddy'&&['www.workbuddy.ai','https://www.workbuddy.ai'].includes(String(identity.domain))?' · 海外':''),
           status: file.status ?? 'unknown',
           disabled: file.disabled ?? false,
           unavailable: file.unavailable ?? false,
           // Runtime errors/cooldowns are not revoked credentials. The sidecar owns their retry deadlines.
           retryable: !file.disabled&&!revokedCredential(file)&&(Number.isFinite(Date.parse(file.next_retry_after??''))||(file.status==='error'&&!file.unavailable)),
         };
-      })];
+      }))];
       // 识别同提供商与同标签的重复账号
       const labelCounts = new Map<string, number>();
       for (const a of accounts) {
@@ -305,14 +326,14 @@ export class CLIProxyManager {
       await Promise.all(accounts.filter(a => !a.disabled && isLoginProvider(a.provider)&&(!providerScope||a.provider===providerScope)).map(async account => {
         const provider = account.provider as LoginProviderId;
         try {
-          const res = z.object({models: z.array(modelSchema)}).parse(await this.request(`/auth-files/models?name=${encodeURIComponent(names.get(account.id)!)}`));
+          const res = z.object({models: z.array(modelSchema)}).parse(await this.request(`/auth-files/models?name=${encodeURIComponent(names.get(account.id)!)}&refresh=${providerScope?'true':'cached'}`));
           account.models = [...new Set(res.models.map(m=>m.id.startsWith(`${provider}/`)?m.id:`${provider}/${m.id}`))];
           for (const model of res.models) {
             if (!model.id) continue;
             const baseId = model.id.startsWith(`${provider}/`) ? model.id.slice(provider.length + 1) : model.id;
             const id = `${provider}/${baseId}`;
             if (catalog.has(id)) continue;
-            catalog.set(id, {id, provider, ...(model.display_name?.trim()?{displayName:model.display_name.trim()}: {})});
+            catalog.set(id, {id, provider, ...(model.display_name?.trim()?{displayName:model.display_name.trim()}: {}),...modelImageCapabilities(model,provider)});
             (aliases[provider] ??= []).push({name: baseId, alias: id, fork: true});
           }
         } catch { /* 凭据文件可能暂未注册模型 */ }
@@ -339,7 +360,7 @@ export class CLIProxyManager {
           if (provider && (!providerScope||provider===providerScope) && isLoginProvider(provider) && accounts.some(a => !a.disabled && a.provider === provider)) {
             const id = `${provider}/${baseId}`;
             if (!catalog.has(id)) {
-              catalog.set(id, {id, provider, ...(model.display_name?.trim()?{displayName:model.display_name.trim()}: {})});
+              catalog.set(id, {id, provider, ...(model.display_name?.trim()?{displayName:model.display_name.trim()}: {}),...modelImageCapabilities(model,provider)});
               (aliases[provider] ??= []).push({name: baseId, alias: id, fork: true});
             }
           }
@@ -371,7 +392,7 @@ export class CLIProxyManager {
       this.accounts = accounts; this.names = names; this.authIDs = authIDs; this.quotaTargets = quotaTargets;
       this.quotas = Object.fromEntries(Object.entries(this.quotas).filter(([id]) => names.has(id)));
       this.models = [...catalog.values()].filter(m => providerScope&&m.provider!==providerScope||available.has(m.id)).sort((a,b) => a.id.localeCompare(b.id));
-      this.apiModels=new Set([...available].filter(id=>/^api-[a-f0-9]{24}\//.test(id)));
+      this.publishAPIModels(available);
       this.accountError = this.models.length < catalog.size || (this.options.apiModelIDs?.()??[]).some(id=>!this.apiModels.has(id)) ? '模型路由正在同步，网关会自动重试。' : accounts.some(a=>!a.disabled&&!a.unavailable&&!a.models?.length) ? '授权已读取，正在同步可用模型…' : undefined;
       // Load quotas after startup / new login without delaying account discovery or the workspace.
       void (this.quotaTask ?? Promise.resolve()).then(() => {
@@ -401,8 +422,8 @@ export class CLIProxyManager {
       throw Object.assign(new Error('源账号或模型当前不可用，请刷新授权；不会切换到其他账号。'),{statusCode:409});
     return authID;
   }
-  async codexNativeAccounts() {
-    return Promise.all(this.accounts.filter(a=>a.provider==='codex'&&!a.disabled&&(!a.unavailable||a.retryable)).map(async account=>{
+  async codexNativeAccounts(includeInactive=false) {
+    return Promise.all(this.accounts.filter(a=>a.provider==='codex'&&(includeInactive||!a.disabled&&(!a.unavailable||a.retryable))).map(async account=>{
       try{
         const name=this.names.get(account.id);
         if(!name||name.includes('/')||name.includes('\\'))throw new Error();
@@ -420,6 +441,13 @@ export class CLIProxyManager {
     if(account?.provider!=='codex'||!name||name.includes('/')||name.includes('\\'))throw new Error('请选择有效的 Codex 账号');
     try{return JSON.parse(await readConfig(join(this.root,'cliproxy','auth',name))??'null') as unknown;}
     catch{throw new Error('读取账号授权失败，请重新连接该账号。');}
+  }
+  // Server-only SDK credential access; never include the token in snapshots.
+  async workbuddyCredential(id:string,model:string){
+    this.sourceAuth(id,model,true);
+    const account=this.accounts.find(a=>a.id===id),name=this.names.get(id);
+    if(account?.provider!=='workbuddy'||!name||name.includes('/')||name.includes('\\'))throw new Error('请选择有效的 WorkBuddy 账号');
+    return JSON.parse(await readConfig(join(this.root,'cliproxy','auth',name))??'null') as unknown;
   }
   async nativeAccounts(provider:NativeProvider) {
     return Promise.all(this.accounts.filter(a=>a.provider===provider&&!a.disabled&&(!a.unavailable||a.retryable)).map(async account=>{

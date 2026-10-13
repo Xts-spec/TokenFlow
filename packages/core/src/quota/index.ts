@@ -19,6 +19,7 @@ export const quotaProviders: Readonly<Record<LoginProviderId, QuotaProvider>> = 
   kimi: kimiQuota,
   xai: xaiQuota,
   workbuddy: workbuddyQuota,
+  'workbuddy-overseas':workbuddyQuota,
   qoder: qoderQuota,
   zcode: zcodeQuota,
   doubao: doubaoQuota,

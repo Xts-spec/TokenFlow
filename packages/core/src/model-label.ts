@@ -2,7 +2,7 @@
 export function modelLabel(models: {id:string;provider?:string;displayName?:string}[], id: string) {
  const model=models.find(item=>item.id===id);
  if(model?.provider==='api'&&model.displayName?.trim())return model.displayName;
- if(model?.provider!=='qoder'||!model.displayName?.trim())return id;
+ if(!['qoder','workbuddy'].includes(model?.provider??'')||!model?.displayName?.trim())return id;
  const name=model.displayName.trim().replace(/\s*\(Qoder\)$/i,'').replace(/\s+/g,'-');
- return `qoder/${name}`;
+ return `${model.provider}/${name}`;
 }
