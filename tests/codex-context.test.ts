@@ -2,7 +2,8 @@ import {it,expect,afterEach} from 'vitest';
 import {mkdtemp,mkdir,writeFile,readFile,readdir,rm,realpath} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
-import {CodexContext,codexContextScope} from '../packages/core/src/codex-context.js';
+import {CodexContext,codexContextScope,portableCodexItem} from '../packages/core/src/codex-context.js';
+import {parseCodeBuddyInput} from '../packages/core/src/codebuddy.js';
 import {GatewayContext} from '../packages/core/src/gateway-context.js';
 const roots:string[]=[];afterEach(async()=>{for(const root of roots.splice(0))await rm(root,{recursive:true,force:true});});
 async function fixture(){const root=await mkdtemp(join(await realpath(tmpdir()),'codex-context-test-'));roots.push(root);const home=join(root,'codex'),file=join(home,'sessions/2026/10/12/rollout-fixture.jsonl');await mkdir(join(home,'sessions/2026/10/12'),{recursive:true});const context=await GatewayContext.open(root);return {root,file,context,migration:new CodexContext(root,join(home,'config.toml'),context)};}
@@ -119,3 +120,17 @@ it('repairs gateway-born reasoning in checkpoint histories even without a compac
  const saved=JSON.parse((await readFile(f.file,'utf8')).split('\n')[1]!).payload;
  expect(JSON.stringify(saved)).not.toContain('encrypted_content');expect(saved).not.toHaveProperty('replacement_history_metadata');expect(saved.replacement_history.slice(-2)).toEqual(history.slice(1));
 });
+it('normalizes Codex agent_message items and strips encrypted_content blocks for SDK providers',()=>{
+ const normalized=portableCodexItem({
+  type:'agent_message',
+  id:'amsg_test',
+  author:'/root/tool_routing',
+  recipient:'/root',
+  content:[{type:'input_text',text:'Subagent routing note'},{type:'encrypted_content',encrypted_content:'gAAAAABsecret'}],
+ });
+ expect(normalized).toEqual([{type:'message',role:'developer',content:[{type:'input_text',text:'Subagent routing note'}]}]);
+ const parsed=parseCodeBuddyInput('responses',{model:'workbuddy/deepseek-v4.1-flash',input:normalized});
+ expect(parsed.prompt).toContain('Subagent routing note');
+ expect(parsed.prompt).not.toContain('gAAAAABsecret');
+});
+

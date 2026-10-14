@@ -10,7 +10,7 @@ async function fixture(){
  const db=new DatabaseSync(join(home,'state_5.sqlite'));db.exec('create table threads(id text,model_provider text,model text,rollout_path text,source text,archived integer)');
  for(const [id,provider,source,archived] of [['old','openai','vscode',0],['cli','openai','cli',0],['custom','other','vscode',0],['archived','openai','vscode',1],['test','openai','exec',0],['subagent','openai','{"subagent":1}',0],['draft','openai','vscode',0]] as const){const path=join(home,`${id}.jsonl`);await writeFile(path,`{"history":"${id}"}\n`);db.prepare('insert into threads values (?,?,?,?,?,?)').run(id,provider,id==='draft'?null:'native',path,source,archived);}
  let running=false,failOn='',archiveFailure=false,calls=0;
- const client=async():Promise<MigrationClient>=>({pid:100,setArchived:async(id,archived)=>{if(archived&&archiveFailure)throw Error('archive fixture failure');db.prepare('update threads set archived=? where id=?').run(Number(archived),id);},close:async()=>{},resume:async(id,provider,model)=>{calls++;if(id===failOn)throw Error('fixture failure');db.prepare('update threads set model_provider=?,model=? where id=?').run(provider,model,id);}});
+ const client=async():Promise<MigrationClient>=>({pid:100,setArchived:async(id,archived)=>{if(archived&&archiveFailure)throw Error('archive fixture failure');db.prepare('update threads set archived=? where id=?').run(Number(archived),id);},close:async()=>{},resume:async(id,provider,model)=>{calls++;if(id===failOn)throw Error('fixture failure');const row=db.prepare('select rollout_path from threads where id=?').get(id);await readFile(String(row?.rollout_path));db.prepare('update threads set model_provider=?,model=? where id=?').run(provider,model,id);}});
  const migration=new CodexThreadMigration(root,join(home,'config.toml'),async()=>running?[99]:[],client);
  return {root,home,db,migration,reopen:()=>new CodexThreadMigration(root,join(home,'config.toml'),async()=>running?[99]:[],client),setArchiveFailure:(v:boolean)=>archiveFailure=v,setRunning:(v:boolean)=>running=v,setFailure:(v:string)=>failOn=v,calls:()=>calls,close:async()=>{db.close();await rm(root,{recursive:true,force:true});}};
 }
@@ -23,7 +23,38 @@ describe('Codex old thread migration',()=>{
   await f.migration.restore();expect(await readFile(join(f.home,'old.jsonl'),'utf8')).toBe('original history plus a new message');expect(f.db.prepare('select model_provider,model from threads where id=?').get('old')).toMatchObject({model_provider:'openai',model:'native'});expect((await f.migration.status()).restorable).toBe(0);
  }finally{await f.close();}});
  it('resumes a partial migration after a service restart and refuses external provider changes',async()=>{const f=await fixture();try{await f.migration.prepare('gateway');f.setFailure('cli');await expect(f.migration.migrate('gateway')).rejects.toThrow('fixture failure');expect((await f.migration.status()).remaining).toBe(1);f.setFailure('');await f.migration.migrate('gateway');expect((await f.migration.status()).remaining).toBe(0);f.db.prepare("update threads set model_provider='external' where id='old'").run();await expect(f.migration.restore()).rejects.toThrow('其他程序');expect((await f.migration.status()).restorable).toBe(2);}finally{await f.close();}});
- it('backs up gateway-born threads and restores them to an official model without discarding history',async()=>{const f=await fixture();try{
+ it('isolates missing history without blocking other threads or deleting their records',async()=>{const f=await fixture();try{
+ f.db.prepare('insert into threads values (?,?,?,?,?,?)').run('gone','token_flow','workbuddy/deepseek-v4.1-flash',join(f.home,'missing.jsonl'),'vscode',0);
+ await f.migration.prepare('gateway');await f.migration.migrate('gateway');
+ await f.migration.restore('gpt-6-luna');
+ expect(f.db.prepare('select model_provider from threads where id=?').get('gone')?.model_provider).toBe('token_flow');
+ expect(f.db.prepare('select model_provider from threads where id=?').get('old')?.model_provider).toBe('openai');
+ expect((await f.migration.status()).restorable).toBe(0);
+ expect((await f.migration.status()).unavailable).toBe(1);
+ const dirs=await readdir(join(f.root,'codex-thread-backups'));const journal=JSON.parse(await readFile(join(f.root,'codex-thread-backups',dirs[0]!,'manifest.json'),'utf8'));
+ expect(journal.entries.find((entry:any)=>entry.id==='gone')?.state).toBe('unavailable');
+ await f.reopen().restore(async()=>{throw new Error('unavailable history must not require model discovery');});expect((await f.migration.status()).backups).toBe(1);
+ await writeFile(join(f.home,'missing.jsonl'),'recovered history');
+ await f.reopen().restore('gpt-6-luna');
+ expect(f.db.prepare('select model_provider from threads where id=?').get('gone')?.model_provider).toBe('openai');
+ expect(await readFile(join(f.home,'missing.jsonl'),'utf8')).toBe('recovered history');
+}finally{await f.close();}});
+it('does not treat a non-file history path as missing or silently continue',async()=>{const f=await fixture();try{
+ await f.migration.prepare('gateway');await f.migration.migrate('gateway');
+ f.db.prepare("update threads set rollout_path=? where id='old'").run(f.home);
+ await expect(f.reopen().restore()).rejects.toThrow('不是文件');
+ expect((await f.migration.status()).unavailable).toBe(0);
+ expect(f.db.prepare("select model_provider from threads where id='old'").get()?.model_provider).toBe('token_flow');
+}finally{await f.close();}});
+it('skips an archived history removed after backup without unarchiving or resuming it',async()=>{const f=await fixture();try{
+ await f.migration.prepare('gateway');await f.migration.migrate('gateway');
+ f.db.prepare("update threads set archived=1 where id='old'").run();await rm(join(f.home,'old.jsonl'));
+ f.setFailure('old');await f.reopen().restore();
+ expect(f.db.prepare("select archived from threads where id='old'").get()?.archived).toBe(1);
+ expect(f.db.prepare("select model_provider from threads where id='cli'").get()?.model_provider).toBe('openai');
+ expect((await f.migration.status()).restorable).toBe(0);
+}finally{await f.close();}});
+it('backs up gateway-born threads and restores them to an official model without discarding history',async()=>{const f=await fixture();try{
   const path=join(f.home,'gateway.jsonl');await writeFile(path,'gateway history and tools');
   f.db.prepare('insert into threads values (?,?,?,?,?,?)').run('gateway','token_flow','qoder/Kimi-K3',path,'vscode',0);
   f.setRunning(true);await expect(f.migration.restore('gpt-6-luna')).rejects.toMatchObject({code:'codex_exit_required'});

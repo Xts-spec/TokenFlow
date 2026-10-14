@@ -41,7 +41,7 @@ export class CodexSwitchLifecycle {
    // A failed migration remains stopped; opening during a partial migration can overwrite its state.
    const result=await work();
    this.phase='opening';
-   try{await this.launch();}catch(error){throw failure(`配置与旧对话处理已完成，但 Codex 未能重新打开。可点击「重启」重试。${error instanceof Error?error.message:''}`);}
+   try{await this.launch();}catch(error){throw failure(`配置操作已完成，但 Codex 未能重新打开。可点击「重启」重试。${error instanceof Error?error.message:''}`);}
    return result;
   }finally{this.phase='idle';}
  }

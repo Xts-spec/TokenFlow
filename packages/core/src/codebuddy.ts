@@ -122,18 +122,23 @@ export class WorkBuddySDKProvider {
   let finish!:()=>void;const pending=new Promise<void>(done=>{finish=done;});this.pending.add(pending);
   const deadline=setTimeout(()=>controller.abort(),240000);
   let directory:string|undefined;
+  let stage:'credential'|'setup'|'sdk'|'output'='credential';
   try{
    const credential=workbuddySDKCredential(await this.credential(sourceId,input.model));
    if(controller.signal.aborted)throw new Error('Cancelled');
+   stage='setup';
    await mkdir(join(this.root,'workbuddy-sdk-runs'),{recursive:true,mode:0o700});directory=await mkdtemp(join(this.root,'workbuddy-sdk-runs','request-'));
    const cwd=join(directory,'workspace'),configDir=join(directory,'config');await mkdir(cwd);await mkdir(configDir,{mode:0o700});
    const model=input.model.slice('workbuddy/'.length).toLowerCase();
+   stage='sdk';
    const result=await this.run({...credential,model,prompt:input.prompt,images:input.images,tools:input.tools,parallelToolCalls:input.parallel_tool_calls,signal:controller.signal,cwd,configDir});
    if(controller.signal.aborted)throw new Error('Cancelled');
    if(result.failed&&result.errorCode==='source_policy_blocked')return Response.json({error:{type:'invalid_request_error',code:'a2a_source_policy_blocked',message:'WorkBuddy SDK upstream rejected the invocation channel (11128).'}},{status:400});
    if(result.failed&&result.errorCode==='authentication_error')return Response.json({error:{type:'authentication_error',message:'WorkBuddy 登录已失效，请重新授权所选账号。'}},{status:401});
    if(result.failed&&result.errorCode==='rate_limit_error')return Response.json({error:{type:'rate_limit_error',message:'WorkBuddy 来源限流，请稍后重试。'}},{status:429});
-   if(result.failed||model!=='auto'&&result.model.toLowerCase()!==model)throw new Error('SDK request failed or model changed');
+   if(result.failed)throw new Error('SDK request failed');
+   stage='output';
+   if(model!=='auto'&&result.model.toLowerCase()!==model)throw new Error('SDK model changed');
    if(input.required&&!result.calls.length)throw new Error('Required tool missing');
    if(input.parallel_tool_calls===false&&result.calls.length>1)throw new Error('SDK violated the single client tool limit');
    const calls=result.calls.map(call=>({...call,...input.toolIdentities.get(call.name),id:`call_${randomUUID().replaceAll('-','')}`}));
@@ -142,7 +147,12 @@ export class WorkBuddySDKProvider {
    const usage=result.usage?{input_tokens:result.usage.input_tokens,output_tokens:result.usage.output_tokens,cached_tokens:result.usage.cache_read_input_tokens??0,cache_write_tokens:result.usage.cache_creation_input_tokens??0}:undefined;
    const response=cursorResponse(path,input.model,result.text,usage,input.stream,calls,'workbuddy');
    response.headers.set('X-Token-Flow-Transport','codebuddy-agent-sdk');return response;
-  }catch{return Response.json({error:{type:controller.signal.aborted?'request_cancelled':'workbuddy_sdk_error',message:controller.signal.aborted?'请求已取消。':'WorkBuddy 官方 SDK 请求未完成，请检查所选账号、模型和网络后重试。'}},{status:controller.signal.aborted?499:502});}
+  }catch{
+   const messages={credential:'无法读取所选 WorkBuddy 账号，请检查该账号的授权状态。',setup:'WorkBuddy 本地请求准备失败，请检查本机目录权限和可用空间。',sdk:'WorkBuddy 官方 SDK 调用未完成，可能发生在 SDK 启动或上游请求阶段。',output:'WorkBuddy 返回的模型或工具调用不符合本次请求，未替换模型或执行额外工具。'};
+   // Stable stages distinguish local setup from SDK/output failures without
+   // exposing tokens, filesystem paths, or arbitrary upstream exception text.
+   return Response.json({error:{type:controller.signal.aborted?'request_cancelled':'workbuddy_sdk_error',code:controller.signal.aborted?'request_cancelled':`workbuddy_${stage}_failed`,message:controller.signal.aborted?'请求已取消。':messages[stage]}},{status:controller.signal.aborted?499:502});
+  }
   finally{clearTimeout(deadline);signal.removeEventListener('abort',abort);this.active.delete(controller);try{if(directory)await rm(directory,{recursive:true,force:true,maxRetries:5,retryDelay:100});}finally{this.pending.delete(pending);finish();}}
  }
 }

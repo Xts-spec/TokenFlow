@@ -522,11 +522,14 @@ to{opacity:1;transform:none}
 .tfKeyCard dd small{letter-spacing:0}
 .tfKeyCard dd[title] small{display:block;margin-top:3px}
 .tfLog li{grid-template-columns:150px 110px minmax(0,1fr) 170px 44px}
+.tfLog.tfSwitchLog li{grid-template-columns:168px 120px minmax(0,.8fr) minmax(0,1.4fr) 88px}
+.tfLog.tfSwitchLog .tfSwitchMsg{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
 @media(max-width:760px){.tfUsageTiles{grid-template-columns:repeat(2,minmax(0,1fr))}
 .tfUsageHero{align-items:flex-start}
 .tfUsageHit{text-align:left}
 .tfUsageTotal strong{font-size:28px}
 .tfLog li{grid-template-columns:1fr 1fr}
+.tfLog.tfSwitchLog li{grid-template-columns:1fr}
 }
 .tfUsageBar .write,.tfUsageTiles .write{background:#9a78c5}
 .tfTrace{padding:18px 0;min-width:0;border-top:1px solid var(--line)}

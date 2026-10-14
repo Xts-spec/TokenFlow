@@ -1,19 +1,25 @@
 import {createRequire} from 'node:module';
 import {resolve} from 'node:path';
 import {query,createSdkMcpServer,tool} from '@tencent-ai/agent-sdk';
-import {fromJSONSchema} from 'zod';
+import {fromJSONSchema,z} from 'zod';
 
 // Separate workspace dependency keeps the SDK's Zod 4 peer out of the app's Zod 3.
 const require=createRequire(import.meta.url);
 const cli=resolve(require.resolve('@tencent-ai/agent-sdk'),'../../cli/bin/codebuddy').replace(/\.asar([/\\])/g,'.asar.unpacked$1');
 
+// Codex app tools may use top-level unions or keywords Zod cannot convert.
+// Those still accept any object; the model reads the original schema instead.
+function clientSchema(parameters){
+ try{const schema=fromJSONSchema(parameters);if(schema.shape)return {schema,note:''};}catch{}
+ return {schema:z.looseObject({}),note:` Parameters JSON Schema: ${JSON.stringify(parameters)}`};
+}
+
 export async function runOfficialSDK(input){
  const calls=[];const names=new Map();
  const definitions=input.tools.map((t,i)=>{
   const name=`client_${i}`;names.set(`mcp__token_flow__${name}`,t);
-  const schema=fromJSONSchema(t.parameters);
-  if(!schema.shape)throw new Error('Client tool must have an object schema');
-  return tool(name,`Client tool ${t.name}. ${t.description??''}`,schema.shape,args=>{
+  const {schema,note}=clientSchema(t.parameters);
+  return tool(name,`Client tool ${t.name}. ${t.description??''}${note}`,schema,args=>{
    // These callbacks only propose client work. Reject additional proposals
    // before recording them when the caller requires sequential execution.
    if(input.parallelToolCalls===false&&calls.length)return {isError:true,content:[{type:'text',text:'Only one client tool call is permitted this turn. This tool did not execute; wait for the client result before requesting it again.'}]};

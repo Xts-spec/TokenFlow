@@ -1,4 +1,6 @@
-import { it,expect } from 'vitest';
+import { it,expect,vi } from 'vitest';
+import {CodexContext} from '../packages/core/src/codex-context.js';
+import {CodexThreadMigration} from '../packages/core/src/codex-thread-migration.js';
 import { mkdtemp,mkdir,writeFile,readFile,rm,realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join,resolve } from 'node:path';
@@ -13,6 +15,8 @@ it('switches only permitted Codex accounts via admin API and preserves the gatew
  const paths={qoder:join(root,'qoder/settings.json'),codex:join(root,'codex/config.toml'),claude:join(root,'claude/settings.json'),workbuddy:join(root,'workbuddy/models.json')};
  const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin-token',localKey:'internal-key',secrets:{get:async()=>'',set:async()=>{}},agentPaths:paths,agentProcesses:async()=>[]});
  const headers={host:'127.0.0.1:9527',authorization:'Bearer admin-token'};
+ const context=vi.spyOn(CodexContext.prototype,'prepareOfficial').mockRejectedValue(new Error('cannot back up history'));
+ const history=vi.spyOn(CodexThreadMigration.prototype,'restore').mockRejectedValue(new Error('history unavailable'));
  try{
   await service.proxy.start();
   expect((await service.app.inject({url:'/api/codex-accounts',headers:{host:headers.host}})).statusCode).toBe(401);
@@ -37,5 +41,6 @@ it('switches only permitted Codex accounts via admin API and preserves the gatew
   expect(restored.statusCode,restored.body).toBe(200);expect(restored.json()).toMatchObject({gatewayConnected:false,accountId:null,backup:null});
   await expect(readFile(paths.codex)).rejects.toMatchObject({code:'ENOENT'});
   expect(await readFile(join(root,'cliproxy/auth/a.json'),'utf8')).toBe(a);
- }finally{await service.app.close();await rm(root,{recursive:true,force:true});}
+  expect(context).not.toHaveBeenCalled();expect(history).not.toHaveBeenCalled();
+ }finally{context.mockRestore();history.mockRestore();await service.app.close();await rm(root,{recursive:true,force:true});}
 });

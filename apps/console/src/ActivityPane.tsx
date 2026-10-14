@@ -7,15 +7,18 @@ import { requestJSON } from './request';
 import { qualifiedModelLabel } from './model-label';
 import type { UsageData } from './usage-data';
 import { formatTokens } from './usage-model';
+import type { SwitchFailure } from '../../../packages/core/src/switch-journal';
 
 const recordStates:Record<string,string>={applied:'使用中',prepared:'写入未完成',restored:'已切走'};
-
+const failureActions:Record<string,string>={connect:'接入网关',restore:'切回官方','official-switch':'切换官方账号','official-restore':'还原官方账号','migration-restore':'恢复旧对话'};
+const agentNames:Record<string,string>={codex:'Codex',claude:'Claude Code',workbuddy:'WorkBuddy',qoder:'Qoder',deepseek:'DeepSeek Harness',pi:'Pi Agent',antigravity:'Antigravity'};
 
 export function ActivityPane({local,overview,usage}:{local:LocalAgentSnapshot;overview:GatewayOverview;usage:UsageData}){
  const {activity,error}=overview;
  const [targets,setTargets]=useState<AgentTarget[]>();
- useEffect(()=>{void requestJSON<{targets:AgentTarget[]}>('/api/a2a').then(value=>setTargets(value.targets)).catch(()=>{});},[]);
- const records=targets?.flatMap(target=>target.backups.map(record=>({target,record}))).sort((a,b)=>b.record.createdAt.localeCompare(a.record.createdAt)).slice(0,30);
+ const [failures,setFailures]=useState<SwitchFailure[]>();
+ useEffect(()=>{let live=true;const load=()=>requestJSON<{targets:AgentTarget[];switchFailures?:SwitchFailure[]}>('/api/a2a').then(value=>{if(live){setTargets(value.targets);setFailures(value.switchFailures??[]);}}).catch(()=>{});void load();const timer=setInterval(()=>void load(),4000);return()=>{live=false;clearInterval(timer);};},[]);
+ const records=targets&&[...targets.flatMap(target=>target.backups.map(record=>({id:record.id,at:record.createdAt,name:target.name,model:qualifiedModelLabel(local,record.model),detail:'',state:recordStates[record.state]??record.state,bad:false}))),...(failures??[]).map(failure=>({id:failure.id,at:failure.at,name:targets.find(target=>target.id===failure.target)?.name??agentNames[failure.target]??failure.target,model:failure.model?qualifiedModelLabel(local,failure.model):'—',detail:`${failureActions[failure.action]??failure.action}：${failure.message}`,state:'失败',bad:true}))].sort((a,b)=>b.at.localeCompare(a.at)).slice(0,30);
  return <div className="tfPage">
   <header className="tfPageHead"><h1>活动</h1></header>
   {error&&<p className="tfError" role="alert">{error}</p>}
@@ -32,11 +35,12 @@ export function ActivityPane({local,overview,usage}:{local:LocalAgentSnapshot;ov
   </section>
   <section className="tfPanel" aria-label="切换记录">
    <header className="tfPanelHead"><div><h2>切换记录</h2></div></header>
-   {records?.length?<ul className="tfLog">{records.map(({target,record})=><li key={record.id}>
-    <span>{new Date(record.createdAt).toLocaleString()}</span>
-    <span>{target.name}</span>
-    <code>{qualifiedModelLabel(local,record.model)}</code>
-    <span>{recordStates[record.state]}</span>
+   {records?.length?<ul className="tfLog tfSwitchLog">{records.map(record=><li key={record.id}>
+    <span>{new Date(record.at).toLocaleString()}</span>
+    <span>{record.name}</span>
+    <code>{record.model}</code>
+    <span className="tfSwitchMsg" title={record.detail}>{record.detail||'—'}</span>
+    <span className={record.bad?'bad':undefined}>{record.state}</span>
    </li>)}</ul>:<p className="tfHint">{records?'还没有切换记录。':'正在读取…'}</p>}
   </section>
  </div>;

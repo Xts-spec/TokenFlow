@@ -24,6 +24,7 @@ import { localCredential } from './local-credentials.js';
 import { upstreamError,readUpstreamError } from './upstream-errors.js';
 import { MaintenanceApproval,approvalPolicy } from './maintenance-approval.js';
 import { GatewayMaintenance, maintenanceSelection, maintenanceChain, type MaintenanceChain } from './gateway-maintenance.js';
+import { SwitchJournal, type SwitchAction } from './switch-journal.js';
 import { mkdir, readFile, readdir, writeFile, chmod } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -222,6 +223,23 @@ export async function createDesktopService(options:ServiceOptions) {
     catch(error){throw new RunnerCoreError(error instanceof Error?error.message:'Local Agent 操作失败',{code:'local_agent_error',statusCode:400});}
   };
   const connections=new AgentConnections(root,options.agentPaths,options.agentProcesses);
+  const switchJournal=new SwitchJournal(join(root,'switch-failures.json'));await switchJournal.load();
+  const switchActions:Record<string,SwitchAction>={'/api/a2a/connect':'connect','/api/a2a/restore':'restore','/api/a2a/codex-migration/restore':'migration-restore','/api/codex-accounts/switch':'official-switch','/api/codex-accounts/restore':'official-restore','/api/native-accounts/:provider/switch':'official-switch','/api/native-accounts/:provider/restore':'official-restore'};
+  app.addHook('onError',async(req,_,error)=>{
+    try{
+      const action=req.method==='POST'?switchActions[req.routeOptions.url??'']:undefined;if(!action)return;
+      const status=error instanceof Error&&'issues' in error?400:typeof (error as {statusCode?:unknown}).statusCode==='number'?(error as {statusCode:number}).statusCode:500;
+      if(status===401||status===403)return;
+      const body=req.body&&typeof req.body==='object'?req.body as Record<string,unknown>:{};
+      const named=typeof body.target==='string'&&targetSchema.safeParse(body.target).success?body.target:undefined;
+      const provider=(req.params as {provider?:string}).provider;
+      let target=named??(provider==='claude'||provider==='codex'||provider==='antigravity'?provider:undefined);
+      if(!target&&(req.routeOptions.url??'').includes('codex'))target='codex';
+      if(!target&&typeof body.id==='string'){try{target=(await connections.status()).find(item=>item.connection?.id===body.id||item.backups.some(record=>record.id===body.id))?.id;}catch{/* The original error is the one the client is waiting on. */}}
+      const code=error&&typeof error==='object'&&'code' in error&&typeof error.code==='string'?error.code:undefined;
+      await switchJournal.record({action,target:target??'unknown',...(typeof body.model==='string'?{model:body.model}:{}),...(typeof body.sourceId==='string'?{sourceId:body.sourceId}:{}),message:error instanceof Error?error.message:'切换失败',code});
+    }catch{/* A journal failure must not replace the switch error. */}
+  });
   const localUsage=new LocalUsageIndex(root,connections.paths,()=>{const address=app.server.address();return [proxy.port,...(address&&typeof address==='object'?[address.port]:[])];});
   // A managed Agent uses the model selected here even if an existing conversation retains an older model ID.
   // Bind by saved connection key, never by its editable display name or by an arbitrary single-model key.
@@ -275,10 +293,20 @@ export async function createDesktopService(options:ServiceOptions) {
     if(source.protocol!=='responses'||!(await apiSources.list()).find(s=>s.id===selected.sourceId)?.hasKey)throw Object.assign(new Error('备用通道仅支持有可读取密钥的 Responses API 来源'),{statusCode:409});
     return '';
   };
-  const restoreConnection=async(id:string,approval?:{revision:string;allowRunning:boolean},officialModel?:string|(()=>Promise<string|undefined>))=>{const target=(await connections.status()).find(t=>t.backups.some(b=>b.id===id));if(target?.id==='codex'){if(approval&&target.revision!==approval.revision)throw Object.assign(new Error('配置已变化，请刷新后重试。'),{statusCode:409});await prepareCodexOfficial();await codexThreads.restore(officialModel??(()=>connections.officialModel(id)));}const record=await connections.restore(id,approval);fixedRoutes.delete(record.keyId);if(gatewayKeys.list().some(key=>key.id===record.keyId))await gatewayKeys.remove(record.keyId);return record;};
+  const restoreConnection=async(id:string,approval?:{revision:string;allowRunning:boolean},officialModel?:string|(()=>Promise<string|undefined>),restoreHistory=false)=>{
+    const target=(await connections.status()).find(t=>t.backups.some(b=>b.id===id));
+    if(target?.id==='codex'){
+      if(approval&&target.revision!==approval.revision)throw Object.assign(new Error('配置已变化，请刷新后重试。'),{statusCode:409});
+      // Restoring configuration is independent of the availability of history.
+      if(restoreHistory){await prepareCodexOfficial();await codexThreads.restore(officialModel??(()=>connections.officialModel(id)));}
+    }
+    const record=await connections.restore(id,approval);fixedRoutes.delete(record.keyId);
+    if(gatewayKeys.list().some(key=>key.id===record.keyId))await gatewayKeys.remove(record.keyId);
+    return record;
+  };
   const migrationStatus=async()=>({...await codexThreads.status(),lifecyclePhase:codexLifecycle.phase});
-  const inspectConnections=async()=>{const threadMigration=await migrationStatus();return {discovery,gateway:{state:proxy.snapshot().state,models:(await localSnapshot()).models},targets:(await connections.status()).map(target=>target.id==='codex'?{...target,threadMigration}:target)};};
-  const inspectMaintenance=async(chain?:MaintenanceChain)=>{
+  const inspectConnections=async()=>{const threadMigration=await migrationStatus();return {discovery,gateway:{state:proxy.snapshot().state,models:(await localSnapshot()).models},targets:(await connections.status()).map(target=>target.id==='codex'?{...target,threadMigration}:target),switchFailures:switchJournal.list()};};
+  const inspectMaintenance=async(chain?:MaintenanceChain,interfaceAgent?:Target)=>{
     const all=await inspectConnections();const local=await localSnapshot();
     const snapshot={...all,targets:chain?all.targets.filter(t=>t.id===chain.target):all.targets};
     const reviews=await Promise.all(snapshot.targets.filter(t=>t.connection).map(async t=>{
@@ -299,7 +327,9 @@ export async function createDesktopService(options:ServiceOptions) {
       ...(!chain||chain.target==='codex'?{codex:await login(()=>codexAccounts.status())}:{}),
       ...(!chain||chain.target==='claude'?{claude:await login(()=>nativeAccounts.claude.status())}:{}),
     }:undefined;
-    return {...snapshot,reviews,nativeLogin,targets:snapshot.targets.map(t=>({...t,backups:t.backups.filter((b,i)=>i<5||b.id===chain?.connectionId)})),gateway:{state:local.state,selectedModel:local.models.find(m=>m.id===model),modelCount:local.models.length},
+    const selectedAgent=interfaceAgent??chain?.target??null;
+    const switchFailures=switchJournal.list();
+    return {...snapshot,reviews,nativeLogin,selectedAgent,latestSwitchFailure:switchFailures[0]??null,selectedAgentSwitchFailure:selectedAgent?switchFailures.find(item=>item.target===selectedAgent)??null:null,switchFailures:switchFailures.slice(0,8),targets:snapshot.targets.map(t=>({...t,backups:t.backups.filter((b,i)=>i<5||b.id===chain?.connectionId)})),gateway:{state:local.state,selectedModel:local.models.find(m=>m.id===model),modelCount:local.models.length},
       chain:chain?{requested:chain,source:source?{...source,models:undefined}:null,sourceAvailable,quota:sourceId?local.quotas[sourceId]:undefined,
         selectedModel:model,record:record??null,matchesInstalled:!!target?.connection&&target.connection.sourceId===sourceId&&target.connection.model===model,
         targetProtocol:chain.target==='claude'?'messages':['workbuddy','pi','deepseek'].includes(chain.target)?'chat/completions':'responses',
@@ -395,9 +425,9 @@ export async function createDesktopService(options:ServiceOptions) {
     const code=JSON.stringify({operation:'restore_connection',id,target:target.id,path:target.path,revision:target.revision,runningProcesses:target.pids,allowRunning:true,restore:'恢复该记录保存的原配置并撤销对应 Key；外部变更时停止',after:'复查配置，重启目标 Agent'},null,2);
     return approval.propose(`还原 ${target.name} 原接口`,code,()=>restoreConnection(id,{revision:target.revision,allowRunning:true}));
   };
-  const startMaintenance=async(prompt:string,_allowRestore=false,chain:MaintenanceChain|undefined=maintenance.snapshot().chain,preserveApproval=false)=>{
+  const startMaintenance=async(prompt:string,_allowRestore=false,chain:MaintenanceChain|undefined=maintenance.snapshot().chain,preserveApproval=false,interfaceAgent?:Target)=>{
     if(!preserveApproval&&JSON.stringify(chain)!==JSON.stringify(maintenance.snapshot().chain))approval.clear();
-    const inspect=()=>inspectMaintenance(chain);const origin=maintenanceOrigin;
+    const inspect=()=>inspectMaintenance(chain,interfaceAgent);const origin=maintenanceOrigin;
     return maintenance.start(prompt,await maintenanceTransport(),{inspect,configurations:async()=>{
       const local=await localSnapshot();return {targets:await connections.status(),gatewayOrigin:origin,sources:[...local.accounts.filter(a=>!a.disabled).map(a=>({sourceId:a.id,name:a.provider,models:a.models??[]})),...(local.apiSources??[]).filter(s=>s.enabled&&s.hasKey).map(s=>({sourceId:s.id,name:s.name,models:s.models.map(m=>apiModelID(s.id,m))}))],keyHandling:'服务端生成专用 Key；不要索取或输出用户密钥。'};
     },configure:input=>proposeRepair(input,origin,true),diagnose:(input,signal)=>localMaintenance.diagnostic(input,signal),upgrade:()=>{if(chain&&chain.target!=='codex')throw new Error('当前链路不是 Codex，请由用户选择 Codex 后检查升级。');return localMaintenance.prepareUpgrade();},propose:()=>proposeRepair(chain,origin),refresh:async()=>{await proxy.refreshAccounts();return inspect();},repair:async()=>proposeRepair(chain,origin),restore:async id=>proposeRestore(id,chain)},false,chain);
@@ -405,7 +435,7 @@ export async function createDesktopService(options:ServiceOptions) {
 
   const codexAccountStatus=async()=>({...await codexAccounts.status(),accounts:await proxy.codexNativeAccounts(),gatewayConnected:!!(await connections.status()).find(t=>t.id==='codex')?.connection});
   app.get('/api/codex-accounts',codexAccountStatus);
-  const nativeSwitchInput=z.object({revision:z.string().regex(/^[a-f0-9]{64}$/),allowRunning:z.boolean().default(false),restartCodex:z.boolean().default(false)});
+  const nativeSwitchInput=z.object({revision:z.string().regex(/^[a-f0-9]{64}$/),allowRunning:z.boolean().default(false),restartCodex:z.boolean().default(false),restoreHistory:z.boolean().default(false)});
   app.post('/api/codex-accounts/switch',async req=>{
     await idle();
     const input=nativeSwitchInput.extend({sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(1).max(300)}).strict().parse(req.body);
@@ -413,10 +443,9 @@ export async function createDesktopService(options:ServiceOptions) {
     // Verify the chosen login before disconnecting a working gateway.
     await codexAccounts.checkSwitch(input,credential);
     return codexChange(input.restartCodex,async()=>{
-    await prepareCodexOfficial();
     const target=(await connections.status()).find(t=>t.id==='codex')!;
-    if(target.connection)await restoreConnection(target.connection.id,{revision:target.revision,allowRunning:input.allowRunning},input.model.slice('codex/'.length));
-    else await codexThreads.restore(input.model.slice('codex/'.length));
+    if(target.connection)await restoreConnection(target.connection.id,{revision:target.revision,allowRunning:input.allowRunning},input.model.slice('codex/'.length),input.restoreHistory);
+    else if(input.restoreHistory){await prepareCodexOfficial();await codexThreads.restore(input.model.slice('codex/'.length));}
     await codexAccounts.switch({...input,revision:target.connection?(await codexAccounts.status()).revision:input.revision},credential);
     return codexAccountStatus();
     });
@@ -427,11 +456,10 @@ export async function createDesktopService(options:ServiceOptions) {
     if(status.revision!==input.revision)throw Object.assign(new Error('本机登录或配置已变化，请刷新后重试。'),{statusCode:409});
     if(!status.backup)throw Object.assign(new Error('没有可还原的账号切换备份。'),{statusCode:409});
     return codexChange(input.restartCodex,async()=>{
-    await prepareCodexOfficial();
     const target=(await connections.status()).find(t=>t.id==='codex')!;
     const officialModel=()=>codexAccounts.restoreModel();
-    if(target.connection)await restoreConnection(target.connection.id,{revision:target.revision,allowRunning:input.allowRunning},officialModel);
-    else await codexThreads.restore(officialModel);
+    if(target.connection)await restoreConnection(target.connection.id,{revision:target.revision,allowRunning:input.allowRunning},officialModel,input.restoreHistory);
+    else if(input.restoreHistory){await prepareCodexOfficial();await codexThreads.restore(officialModel);}
     await codexAccounts.restore({...input,revision:target.connection?(await codexAccounts.status()).revision:input.revision});return codexAccountStatus();
     });
   });
@@ -448,7 +476,17 @@ export async function createDesktopService(options:ServiceOptions) {
   });
   app.get('/api/a2a',inspectConnections);
   app.get('/api/a2a/codex-migration',migrationStatus);
-  app.post('/api/a2a/codex-migration/restore',async req=>{await idle();const input=z.object({restartCodex:z.boolean().default(false)}).strict().parse(req.body??{});return codexChange(input.restartCodex,async()=>{const target=(await connections.status()).find(t=>t.id==='codex')!;if(target.connection)return restoreConnection(target.connection.id,{revision:target.revision,allowRunning:false});return codexThreads.restore();});});
+  // Legacy restore entry point shares the configuration-only default. History
+  // processing is opt-in, including when the gateway is already disconnected.
+  app.post('/api/a2a/codex-migration/restore',async req=>{
+    await idle();const input=z.object({restartCodex:z.boolean().default(false),restoreHistory:z.boolean().default(false)}).strict().parse(req.body??{});
+    return codexChange(input.restartCodex,async()=>{
+      const target=(await connections.status()).find(t=>t.id==='codex')!;
+      if(target.connection)return restoreConnection(target.connection.id,{revision:target.revision,allowRunning:false},undefined,input.restoreHistory);
+      if(input.restoreHistory){await prepareCodexOfficial();return codexThreads.restore();}
+      throw Object.assign(new Error('当前没有待恢复的网关配置，未处理旧对话。'),{statusCode:409});
+    });
+  });
   const agentInstallation=new AgentInstallationManager(options.agentProcesses??agentProcesses,options.openExternal);
   const agentUpdates=new AgentUpdates();
   app.get('/api/a2a/program-updates',async()=>({updates:Object.fromEntries(await Promise.all(targetSchema.options.map(async target=>[target,await agentUpdates.check(target,await detectAgent(target))])))}));
@@ -465,7 +503,7 @@ export async function createDesktopService(options:ServiceOptions) {
     const input=z.discriminatedUnion('target',[z.object({target:z.enum(['codex','qoder','workbuddy','deepseek'])}).strict(),z.object({target:z.literal('pi'),session:session.optional()}).strict(),z.object({target:z.literal('claude'),client:z.enum(['vscode','terminal']),session:session.optional()}).strict()]).parse(req.body);
     if(input.target==='pi'){const current=(await connections.status()).find(t=>t.id==='pi');return piTerminal.restart(input.session,current?.connection?.model);}
     if(input.target==='claude'&&input.client==='terminal'){if(!input.session)throw Object.assign(new Error('请选择终端会话'),{statusCode:400});return claudeTerminal.restart(input.session);}
-    return input.target==='codex'?codexLifecycle.change(async()=>{if(!(await connections.status()).find(t=>t.id==='codex')?.connection)await prepareCodexOfficial();return {message:'Codex 已重新打开，旧对话兼容处理已完成。'};}):qoderLifecycle.restart(input.target);
+    return input.target==='codex'?codexLifecycle.change(async()=>({message:'Codex 已重新打开，已加载保存的配置。'})):qoderLifecycle.restart(input.target);
   });
   app.post('/api/a2a/import',async req=>{
     await idle();const {target}=z.object({target:z.enum(['codex','claude'])}).strict().parse(req.body);
@@ -485,10 +523,10 @@ export async function createDesktopService(options:ServiceOptions) {
   });
   app.post('/api/a2a/restore',async req=>{
     await idle();
-    const input=z.object({id:z.string().uuid(),revision:z.string().regex(/^[a-f0-9]{64}$/).optional(),allowRunning:z.boolean().default(false),restartCodex:z.boolean().default(false)}).strict().refine(v=>!v.allowRunning||!!v.revision,'运行中还原需要当前配置版本').parse(req.body);
+    const input=z.object({id:z.string().uuid(),revision:z.string().regex(/^[a-f0-9]{64}$/).optional(),allowRunning:z.boolean().default(false),restartCodex:z.boolean().default(false),restoreHistory:z.boolean().default(false)}).strict().refine(v=>!v.allowRunning||!!v.revision,'运行中还原需要当前配置版本').parse(req.body);
     approval.clear();
     if(input.restartCodex){const target=(await connections.status()).find(t=>t.backups.some(b=>b.id===input.id));if(target?.id!=='codex'||target.revision!==input.revision)throw Object.assign(new Error('Codex 配置已变化，请刷新后重试。'),{statusCode:409});}
-    return codexChange(input.restartCodex,()=>restoreConnection(input.id,input.revision?{revision:input.revision,allowRunning:input.allowRunning}:undefined));
+    return codexChange(input.restartCodex,()=>restoreConnection(input.id,input.revision?{revision:input.revision,allowRunning:input.allowRunning}:undefined,undefined,input.restoreHistory));
   });
   app.post('/api/a2a/delete',async req=>{
     await idle();
@@ -532,9 +570,9 @@ export async function createDesktopService(options:ServiceOptions) {
   app.post('/api/maintenance/approve',async req=>{await idle();const input=z.object({id:z.string().uuid(),approve:z.boolean()}).strict().parse(req.body);return approval.decide(input.id,input.approve);});
   app.post('/api/maintenance/run',async req=>{
     maintenanceOrigin=`http://${req.headers.host}`;
-    const {prompt,allowRestore,chain}=z.object({prompt:z.string().trim().min(1).max(8000).default('请自动检查选定的 A2A 链路，从源授权、模型、网关、Key、目标配置、备份和进程定位问题。工具异常后继续分析，给出证据和下一步；已有信息不要再问用户。'),allowRestore:z.boolean().default(false),chain:maintenanceChain.optional()}).strict().parse(req.body);
+    const {prompt,allowRestore,chain,interfaceAgent}=z.object({prompt:z.string().trim().min(1).max(8000).default('请自动检查选定的 A2A 链路，从源授权、模型、网关、Key、目标配置、备份和进程定位问题。工具异常后继续分析，给出证据和下一步；已有信息不要再问用户。'),allowRestore:z.boolean().default(false),chain:maintenanceChain.optional(),interfaceAgent:targetSchema.optional()}).strict().parse(req.body);
     if(chain?.connectionId){const target=(await connections.status()).find(t=>t.id===chain.target);const record=target?.backups.find(r=>r.id===chain.connectionId);if(!record)throw Object.assign(new Error('接入记录与目标不匹配，请刷新后重试。'),{statusCode:400});}
-    return startMaintenance(prompt,allowRestore,chain??maintenance.snapshot().chain);
+    return startMaintenance(prompt,allowRestore,chain??maintenance.snapshot().chain,false,interfaceAgent);
   });
   app.get('/api/maintenance/local',async()=>localMaintenance.snapshot());
   app.post('/api/maintenance/local/diagnose',async req=>{const input=z.object({target:targetSchema.default('codex'),sourceId:z.string().regex(/^[a-f0-9]{24}$/).optional()}).strict().parse(req.body);return localMaintenance.startDiagnostic(input.target,input.sourceId);});

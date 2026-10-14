@@ -21,7 +21,8 @@ const call=<T=Snapshot,>(path:string,body:unknown={},method='POST')=>requestJSON
 const get=<T=Snapshot,>(path:string)=>requestJSON<T>(path);
 
 /** Resident bottom-right chat: hiding it keeps the conversation; a new session id starts a fresh one. */
-export function RepairChat({local,session,open,onToggle,onNew}:{local:LocalAgentSnapshot;session?:RepairSession;open:boolean;onToggle:(open:boolean)=>void;onNew:()=>void}){
+const agentIds=['codex','claude','workbuddy','qoder','deepseek','pi'] as const;
+export function RepairChat({local,session,selectedAgent,open,onToggle,onNew}:{local:LocalAgentSnapshot;session?:RepairSession;selectedAgent?:string;open:boolean;onToggle:(open:boolean)=>void;onNew:()=>void}){
  const log=useRef<HTMLDivElement>(null);
  const panel=useRef<HTMLElement>(null);const modelButton=useRef<HTMLButtonElement>(null);
  const [state,setState]=useState<Snapshot>({status:'idle',messages:[]});const [plan,setPlan]=useState<Plan>();
@@ -64,13 +65,14 @@ export function RepairChat({local,session,open,onToggle,onNew}:{local:LocalAgent
  const proposalBusy=['reviewing','executing'].includes(state.proposal?.status??'');
  const canSend=ready&&!!state.selection&&!thinking&&!checking&&!proposalBusy&&!busy;
  const act=async(work:()=>Promise<void>)=>{setBusy(true);setError('');try{await work();}catch(e){setError(e instanceof Error?e.message:'操作失败');}finally{setBusy(false);}};
- const send=(text:string,chain=state.chain)=>act(async()=>{setState(await call<Snapshot>('/api/maintenance/run',{...(chain?{chain}:{}),prompt:text}));setPrompt('');});
+ const interfaceAgent=agentIds.find(id=>id===selectedAgent);
+ const send=(text:string,chain=state.chain)=>act(async()=>{setState(await call<Snapshot>('/api/maintenance/run',{...(chain?{chain}:{}),...(interfaceAgent?{interfaceAgent}:{}),prompt:text}));setPrompt('');});
 
- // Opened from a broken Agent: start checking as soon as a model is ready.
+ // Opened from a broken Agent: start checking as soon as a model is ready. The floating button does not set a chain, so it waits for the user.
  useEffect(()=>{
   const chain=pending.current;
   if(!chain||!canSend||state.readiness?.status==='failed')return;
-  pending.current=null;void send(`帮我检查 ${targetNames[chain.target]??chain.target} 的接入，找出问题并修好。`,chain);
+  pending.current=null;void send(`帮我检查 ${targetNames[chain.target]??chain.target} 的接入。请结合预检里最近的切换失败和当前界面选中的 Agent 定位原因并修好。`,chain);
  },[canSend,state.readiness?.status]);
 
  const gatewayDown=local.state!=='running';
@@ -98,7 +100,7 @@ export function RepairChat({local,session,open,onToggle,onNew}:{local:LocalAgent
   {!open&&<button className={`tfRepairFab ${attention?'busy':''}`} aria-label="打开维修师傅" onClick={()=>onToggle(true)}><Icon name="wrench" size={18}/><span>维修师傅</span></button>}
   <section ref={panel} className="tfRepair" hidden={!open} aria-labelledby="repair-title" onKeyDown={event=>{if(event.key==='Escape'&&!picking)onToggle(false);}}>
    <header className="tfRepairHead">
-    <div><h2 id="repair-title">维修师傅</h2>{chain&&<small>{targetNames[chain.target]}{chain.model?` · ${modelLabel(local.models,chain.model)}`:''}</small>}</div>
+    <div><h2 id="repair-title">维修师傅</h2>{(chain||interfaceAgent)&&<small>{targetNames[chain?.target??interfaceAgent??'']??chain?.target}{chain?.model?` · ${modelLabel(local.models,chain.model)}`:chain?'':' · 当前界面'}</small>}</div>
     <button ref={modelButton} aria-haspopup="dialog" aria-expanded={picking} className={`tfModelChip ${state.selection?'':'warn'}`} disabled={busy||thinking||checking||proposalBusy} onClick={()=>setPicking(value=>!value)}>{state.selection?modelLabel(local.models,state.selection.model):'选择维修模型'}<Icon name="chevron" size={12} style={{transform:'rotate(90deg)'}}/></button>
     <button className="textButton" disabled={busy||!ready} title="清空对话，重新开始" onClick={onNew}>新对话</button>
     <button className="iconButton" aria-label="收起" onClick={()=>onToggle(false)}><Icon name="close" size={16}/></button>

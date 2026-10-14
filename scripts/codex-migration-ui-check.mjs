@@ -18,7 +18,7 @@ export async function verifyCodexMigrationUI(page){
  await panel.getByRole('button',{name:'重启…',exact:true}).click();
  const restart=page.getByRole('dialog',{name:'重启 Codex',exact:true});await restart.waitFor();await restart.getByRole('button',{name:'稍后再说',exact:true}).click();
  await panel.getByRole('switch',{name:'启用网关模型',exact:true}).click();
- await dialog.waitFor();assert.equal(attempts,1);await dialog.getByRole('button',{name:'确认并自动重启',exact:true}).click();await dialog.waitFor({state:'hidden'});assert.equal(attempts,2);assert.equal(connection.model,'codex/model-1');await panel.getByRole('button',{name:'还原旧对话',exact:true}).waitFor();
+ await dialog.waitFor();assert.equal(attempts,1);await dialog.getByRole('button',{name:'确认并自动重启',exact:true}).click();await dialog.waitFor({state:'hidden'});assert.equal(attempts,2);assert.equal(connection.model,'codex/model-1');assert.equal(await panel.getByRole('button',{name:'还原旧对话',exact:true}).count(),0);await panel.getByRole('button',{name:'恢复原配置',exact:true}).click();const restore=page.getByRole('dialog',{name:'恢复 Codex 原配置',exact:true});await restore.waitFor();assert.equal(await restore.getByRole('checkbox').isChecked(),false);await restore.getByRole('button',{name:'取消',exact:true}).click();
  assert.equal(await page.locator('dialog[open]').count(),0);
  await page.unroute('**/api/a2a/codex-migration');await page.unroute('**/api/a2a');await page.unroute('**/api/a2a/connect');console.log(JSON.stringify({migrationUI:'passed',singleRestartConfirmation:true,retryPreservesSelection:true,restoreEntry:true,compactDialog:true,visibleBackupProgress:true,firstReplyHint:true,restartAccessibleAfterFailure:true}));
 }

@@ -35,6 +35,15 @@ it('does not silently use a fallback model or another account on failure',async(
  const sdk=new WorkBuddySDKProvider(root,async()=>({type:'workbuddy',access_token:'private'}),async()=>({text:'wrong model',model:'default-model',calls:[],failed:false}));
  try{expect((await sdk.response('chosen','responses',{model:'workbuddy/deepseek-v4.1-flash',input:'hello'},new AbortController().signal)).status).toBe(502);}finally{await rm(root,{recursive:true,force:true});}
 });
+it.each(['credential','sdk','output'] as const)('reports the %s failure stage without exposing credentials or internal errors',async stage=>{
+ const root=await mkdtemp(join(tmpdir(),'sdk-stage-'));
+ const sdk=new WorkBuddySDKProvider(root,async()=>{if(stage==='credential')throw new Error('secret-credential');return {type:'workbuddy',access_token:'private'};},async()=>{if(stage==='sdk')throw new Error('secret-sdk-token');return {text:'',model:'wrong-model',calls:[],failed:false};});
+ try{
+  const response=await sdk.response('chosen','responses',{model:'workbuddy/test',input:'hello'},new AbortController().signal);
+  expect(response.status).toBe(502);const error=await response.json();
+  expect(error.error.code).toBe(`workbuddy_${stage}_failed`);expect(JSON.stringify(error)).not.toMatch(/secret-|private/);
+ }finally{await sdk.close();await rm(root,{recursive:true,force:true});}
+});
 it('keeps Codex namespace identity when flattening tools for the SDK',()=>{
  const value=parseCodeBuddyInput('responses',{model:'workbuddy/deepseek-v4.1-flash',input:'Read test',tools:[{type:'namespace',name:'functions',tools:[{type:'function',name:'read',parameters:{type:'object',properties:{}}}]}],tool_choice:{type:'function',namespace:'functions',name:'read'}});
  expect(value.tools[0].name).toBe('functions__read');expect(value.toolIdentities.get('functions__read')).toEqual({name:'read',namespace:'functions'});expect(value.required).toBe(true);
@@ -104,3 +113,19 @@ it('emits a Responses failure with an explicit reason instead of silently ending
   const stream=await result.text();expect(stream).toContain('event: response.failed');expect(stream).toContain('rate_limit_error');expect(stream).not.toContain('response.completed');
  }finally{await sdk.close();await rm(root,{recursive:true,force:true});}
 });
+it('accepts Codex Desktop namespace tool catalogs that flatten past 256 tools',()=>{
+ const namespaces=Array.from({length:12},(_,ns)=>({
+  type:'namespace',
+  name:`mcp__codex_apps__service_${ns}`,
+  description:`Connector ${ns}`,
+  tools:Array.from({length:25},(_,idx)=>({type:'function',name:`action_${idx}`,description:'connector tool',parameters:{type:'object',properties:{id:{type:'string'}}}})),
+ }));
+ const parsed=parseCodeBuddyInput('responses',{
+  model:'workbuddy/deepseek-v4.1-flash',
+  input:[{type:'message',role:'user',content:[{type:'input_text',text:'hello'}]}],
+  tools:[{type:'function',name:'exec_command',parameters:{type:'object',properties:{cmd:{type:'string'}}}},...namespaces],
+ });
+ expect(parsed.tools).toHaveLength(301);
+ expect(parsed.toolIdentities.get('mcp__codex_apps__service_0__action_0')).toEqual({name:'action_0',namespace:'mcp__codex_apps__service_0'});
+});
+

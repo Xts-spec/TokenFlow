@@ -6,7 +6,7 @@ import { requestJSON } from './request';
 import { visibleLocalAgent } from './provider-visibility';
 import { Icon, type IconName } from './Icons';
 import { ApiInflow } from './ApiInflow';
-import { AgentsPage } from './AgentsPage';
+import { AgentsPage, savedAgentTab } from './AgentsPage';
 import { AccountsPage, type AccountActions } from './AccountsPage';
 import { KeyOutflow } from './KeyOutflow';
 import { ActivityPane } from './ActivityPane';
@@ -34,6 +34,7 @@ function App(){
  const [notice,setNotice]=useState<Notice>();
  const [busy,setBusy]=useState(false);const lock=useRef(false);
  const [repair,setRepair]=useState<RepairSession>();const [repairOpen,setRepairOpen]=useState(false);
+ const [selectedAgent,setSelectedAgent]=useState(savedAgentTab);
  const [warnings,setWarnings]=useState<string[]>([]);
  const overview=useGatewayOverview();
  const usage=useUsage(view!=='settings');
@@ -90,14 +91,14 @@ function App(){
   <main className="tfMain">
    {view==='accounts'&&<AccountsPage local={local} usage={usage} disabled={busy} actions={accounts} notify={setNotice}/>}
    {view==='apis'&&<div className="tfPage tfApiPage"><ApiInflow local={local} usage={usage} onChange={refresh} notify={setNotice}/></div>}
-   {view==='agents'&&<AgentsPage local={local} calls={calls} usage={usage} notify={setNotice} onRepair={openRepair}/>}
+   {view==='agents'&&<AgentsPage local={local} calls={calls} usage={usage} notify={setNotice} onRepair={openRepair} onAgent={setSelectedAgent}/>}
    {view==='proxy'&&<div className="tfPage tfProxyPage"><KeyOutflow local={local} keys={exported} usage={usage} reload={overview.reload} notify={setNotice}/></div>}
    {view==='activity'&&<ActivityPane local={local} overview={overview} usage={usage}/>}
    {view==='usage'&&<div className="tfPage tfSettingsPage"><UsageOverview usage={usage} local={local}/></div>}
    {view==='settings'&&<SettingsPane local={local} disabled={busy} onAction={command}/>}
   </main>
   <Notifications notice={notice} onDismiss={dismissNotice} warnings={warnings} onDismissWarning={text=>setWarnings(value=>value.filter(item=>item!==text))} gateway={gatewayDown?{text:`${gatewayText[local.state]??'网关未运行'}${local.state==='failed'&&local.lastError?`：${local.lastError}`:''}`,canStart:['stopped','failed'].includes(local.state),busy,onStart:()=>void command('start')}:undefined}/>
-  <RepairChat local={local} session={repair} open={repairOpen} onToggle={setRepairOpen} onNew={()=>setRepair({id:Date.now()})}/>
+  <RepairChat local={local} session={repair} selectedAgent={selectedAgent} open={repairOpen} onToggle={setRepairOpen} onNew={()=>setRepair({id:Date.now()})}/>
  </div>;
 }
 createRoot(document.getElementById('root')!).render(<App/>);

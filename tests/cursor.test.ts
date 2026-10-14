@@ -3,6 +3,13 @@ import {mkdtemp,mkdir,rm,writeFile,readFile,realpath} from 'node:fs/promises';
 import {join,resolve} from 'node:path';import {tmpdir} from 'node:os';import {createServer} from 'node:net';
 import {CursorProvider,parseCursorInput} from '../packages/core/src/cursor.js';
 import {createDesktopService} from '../packages/core/src/service.js';
+it('accepts a large client catalog and preserves union schemas while retaining a bounded limit',()=>{
+ const parameters={anyOf:[{type:'object',properties:{path:{type:'string'}}},{type:'object',properties:{id:{type:'number'}}}]};
+ const tools=Array.from({length:301},(_,i)=>({type:'function',name:`tool_${i}`,parameters}));
+ const input=parseCursorInput('responses',{model:'cursor/test',input:'hello',tools});
+ expect(input.tools).toHaveLength(301);expect(input.tools[300].parameters).toEqual(parameters);
+ expect(()=>parseCursorInput('responses',{model:'cursor/test',input:'hello',tools:Array.from({length:2049},(_,i)=>({...tools[0],name:`tool_${i}`}))})).toThrow();
+});
 const sdk=vi.hoisted(()=>({login:vi.fn(),models:vi.fn(),create:vi.fn(),cancel:vi.fn(),close:vi.fn()}));
 vi.mock('@cursor/sdk',()=>({Cursor:{auth:{login:sdk.login},models:{list:sdk.models}},Agent:{create:sdk.create},JsonlLocalAgentStore:class{constructor(readonly path:string){}}}));
 const cleanup:Array<()=>Promise<unknown>>=[];afterEach(async()=>{for(const fn of cleanup.splice(0).reverse())await fn();vi.restoreAllMocks();});

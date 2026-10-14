@@ -28,7 +28,7 @@ it('keeps a failed migration stopped and allows retry without another manual exi
 });
 it('reports a completed change separately from a failed relaunch',async()=>{
  const work=vi.fn(async()=>{});const lifecycle=new CodexSwitchLifecycle(async()=>[],async()=>{},async()=>{throw Error('launch failed');},'darwin',async()=>{});
- await expect(lifecycle.change(work)).rejects.toThrow('配置与旧对话处理已完成');expect(work).toHaveBeenCalledOnce();expect(lifecycle.phase).toBe('idle');
+ await expect(lifecycle.change(work)).rejects.toThrow('配置操作已完成');expect(work).toHaveBeenCalledOnce();expect(lifecycle.phase).toBe('idle');
 });
 it('rejects a second change during migration without restarting over it',async()=>{
  let release!:()=>void;const pending=new Promise<void>(resolve=>{release=resolve;});const launch=vi.fn(async()=>({message:''}));

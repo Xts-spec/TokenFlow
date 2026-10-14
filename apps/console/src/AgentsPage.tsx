@@ -25,6 +25,7 @@ import type { Notify } from './notify';
 
 type Login=ReturnType<typeof useNativeLogin>;
 const tabKey='token-flow.usage.tab';
+export function savedAgentTab(){try{return localStorage.getItem(tabKey)??'codex';}catch{return 'codex';}}
 const hiddenKey=(target:string)=>`token-flow.agent.${target}.hidden`;
 const post=(body:unknown)=>({method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
 const choiceId=(choice:Choice)=>`model:${choice.sourceId}/${choice.model}`;
@@ -40,7 +41,7 @@ function problemOf(target:AgentTarget,calls:GatewayCall[],available:ReturnType<t
  return evidence.tone==='attention'?evidence.label:'';
 }
 
-export function AgentsPage({local,calls,usage,notify,onRepair}:{local:LocalAgentSnapshot;calls:GatewayCall[];usage:UsageData;notify:Notify;onRepair:(chain:MaintenanceChain)=>void}){
+export function AgentsPage({local,calls,usage,notify,onRepair,onAgent}:{local:LocalAgentSnapshot;calls:GatewayCall[];usage:UsageData;notify:Notify;onRepair:(chain:MaintenanceChain)=>void;onAgent:(id:string)=>void}){
  const [targets,setTargets]=useState<AgentTarget[]>();
  const [updates,setUpdates]=useState<Record<string,AgentUpdate>>({});
  const refreshUpdates=async()=>{try{setUpdates((await requestJSON<{updates:Record<string,AgentUpdate>}>('/api/a2a/program-updates',undefined,20000)).updates);}catch{/* Offline checks never imply an available update. */}};
@@ -50,8 +51,9 @@ export function AgentsPage({local,calls,usage,notify,onRepair}:{local:LocalAgent
  useEffect(()=>{void refreshUpdates();const timer=setInterval(()=>void refreshUpdates(),10*60*1000);return()=>clearInterval(timer);},[]);
  const logins:Record<string,Login>={codex:useNativeLogin('codex',local),claude:useNativeLogin('claude',local)};
  const available=sourceOptions(local);
- const choose=(id:string)=>{setTab(id);try{localStorage.setItem(tabKey,id);}catch{/* Only remembers the open tab. */}};
+ const choose=(id:string)=>{setTab(id);onAgent(id);try{localStorage.setItem(tabKey,id);}catch{/* Only remembers the open tab. */}};
  const target=targets?.find(t=>t.id===tab)??targets?.[0];
+ useEffect(()=>{onAgent(target?.id??tab);},[target?.id,tab,onAgent]);
 
  return <div className="tfPage">
   <div className="tfTiles" role="tablist" aria-label="本地 Agent">
@@ -81,6 +83,7 @@ function AgentPanel({target,update,login,local,usage,problem,notify,onRepair,onC
  const updateAvailable=update?.status==='available'&&update.currentVersion===target.installation.version;
  const [restartOpen,setRestartOpen]=useState(false);const [restartError,setRestartError]=useState('');
  const [restartPending,setRestartPending]=useState(false);
+ const [restoreOpen,setRestoreOpen]=useState(false);const [restoreHistory,setRestoreHistory]=useState(false);
  const [exitMessage,setExitMessage]=useState('');const retryMigration=useRef<()=>unknown>(()=>{});
  const [migrationProgress,setMigrationProgress]=useState(target.threadMigration);
 
@@ -125,10 +128,10 @@ function AgentPanel({target,update,login,local,usage,problem,notify,onRepair,onC
   if(!target.installation.installed){pendingSelection.current={selections,preferred};askProgram('install');return;}
   return connectSelected(selections,preferred);
  };
- const changeCodex=(work:(restartCodex:boolean)=>Promise<string>,approved=false):Promise<void>|void=>{
+ const changeCodex=(work:(restartCodex:boolean)=>Promise<string>,approved=false,configurationOnly=false):Promise<void>|void=>{
   const automatic=target.id==='codex'&&desktopRestart;
-  retryMigration.current=()=>changeCodex(work,true);
-  if(automatic&&!approved){setExitMessage('将自动退出 Codex 并应用更改，完成后重新打开。已有备份会保留，仅在需要处理新对话时追加备份。');return;}
+  retryMigration.current=()=>changeCodex(work,true,configurationOnly);
+  if(automatic&&!approved){setExitMessage(configurationOnly?'将自动退出 Codex，恢复账号或接口配置后重新打开。不备份或改写对话；部分旧对话可能仍需处理兼容性。':'将自动退出 Codex 并应用更改，完成后重新打开。已有备份会保留，仅在需要处理新对话时追加备份。');return;}
   setMigrationProgress(undefined);
   return run(()=>work(automatic&&approved));
  };
@@ -149,20 +152,19 @@ function AgentPanel({target,update,login,local,usage,problem,notify,onRepair,onC
   if(restartCodex)return `Codex 已配置 ${selections.length} 个模型，默认 ${label}，旧对话已迁移并自动重新打开。`;
   return `${target.name} 已配置 ${selections.length} 个模型，默认 ${label}。重启后可在 Agent 内切换${menu}。`;
  });};
- const restore=(promptRestart=true)=>changeCodex(async restartCodex=>{
+ const restore=(promptRestart=true,history=false,approved=false)=>changeCodex(async restartCodex=>{
   const next=await latest();
-  await requestJSON('/api/a2a/restore',post({id:next.connection!.id,revision:next.revision,allowRunning:true,restartCodex}),600000);
-  saveDraft(models,false);if(promptRestart||restartCodex)configurationSaved(restartCodex);else setRestartPending(desktopRestart);
-  return restartCodex?'Codex 已恢复原配置与旧对话，并自动重新打开。':`${target.name} 已恢复原配置，${desktopRestart?'重启':'下次启动'}后生效。`;
- });
- const restoreThreads=()=>changeCodex(async restartCodex=>{await requestJSON('/api/a2a/codex-migration/restore',post({restartCodex}),600000);configurationSaved(restartCodex);return `旧对话已恢复原来源与模型，新增聊天记录已保留。${restartCodex?'Codex 已自动重新打开。':''}`;});
+  await requestJSON('/api/a2a/restore',post({id:next.connection!.id,revision:next.revision,allowRunning:true,restartCodex,restoreHistory:history}),600000);
+  setRestoreOpen(false);saveDraft(models,false);if(promptRestart||restartCodex)configurationSaved(restartCodex);else setRestartPending(desktopRestart);
+  return restartCodex?`Codex 已恢复原配置${history?'并处理旧对话':''}，已自动重新打开。`:`${target.name} 已恢复原配置，${desktopRestart?'重启':'下次启动'}后生效。`;
+ },approved,!history);
  const restart=()=>run(async()=>{
   setRestartError('');
   const result=await requestJSON<{message:string}>('/api/a2a/restart',post({target:target.id}),60000).catch(error=>{setRestartError(error instanceof Error?error.message:'重启失败');throw error;});
   setRestartPending(false);setRestartOpen(false);
   return result.message;
  });
- const switchAccount=(id:string,label:string)=>changeCodex(async restartCodex=>{const note=await login!.switchTo(id,restartCodex);configurationSaved(restartCodex);return `${target.name} 已切换到账号 ${label}。${restartCodex?'Codex 已自动重新打开。':`${desktopRestart?'重启':'下次启动'}后生效。`}${note}`;});
+ const switchAccount=(id:string,label:string)=>changeCodex(async restartCodex=>{const note=await login!.switchTo(id,restartCodex);configurationSaved(restartCodex);return `${target.name} 已切换到账号 ${label}。${restartCodex?'Codex 已自动重新打开。':`${desktopRestart?'重启':'下次启动'}后生效。`}${note}`;},false,true);
  const repair=()=>onRepair({target:target.id,...(connection?{sourceId:connection.sourceId,model:connection.model,connectionId:connection.id}:{})});
  const toggleDetail=(id:string)=>{if(open!==id)rememberDetail();setOpen(open===id?'':id);};
 
@@ -179,12 +181,20 @@ function AgentPanel({target,update,login,local,usage,problem,notify,onRepair,onC
    <div><div className="tfAgentTitle"><h2>{target.name}</h2><button className="tfAgentUpdate" disabled={busy} aria-label={`${target.installation.installed?'更新':'安装'} ${target.name}`} title={updateAvailable?`有新版本 ${update.latestVersion}，点击更新`:target.installation.installed?'下载最新版':'安装官方客户端'} onClick={()=>target.installation.installed?void manageProgram('update'):askProgram('install')}><Icon name="download" size={15}/>{updateAvailable&&<span className="tfUpdateDot" role="img" aria-label="有可用更新"/>}</button>{target.installation.installed&&<span className="tfAgentVersion">已安装{target.installation.version?` · ${target.installation.version}`:''}</span>}</div><UsageFold title={`${target.name} 用量`} rows={allAgentRows} range="today"/></div>
    <div className="tfRow">
     {desktopRestart&&<button className="textButton" disabled={busy||!target.installation.installed} onClick={()=>{setRestartError('');setRestartOpen(true);}}>{restartPending?'重启生效':'重启…'}</button>}
-    {target.id==='codex'&&!!target.threadMigration?.restorable&&<button disabled={busy} onClick={()=>void restoreThreads()}>还原旧对话</button>}
-    {connection&&<button disabled={busy} onClick={()=>void restore()}>恢复原配置</button>}
+    {connection&&<button disabled={busy} onClick={()=>{if(target.id==='codex'){setRestoreHistory(false);setRestoreOpen(true);}else void restore();}}>恢复原配置</button>}
     <button className={problem?'primary':''} onClick={repair}><Icon name="wrench" size={14}/>维修</button>
    </div>
   </header>
+  {target.id==='codex'&&!!target.threadMigration?.unavailable&&<p className="tfHint" role="status">已跳过 {target.threadMigration.unavailable} 条缺少历史文件的旧对话，其余对话和登录切换不受影响。记录与备份已保留；恢复原配置默认不处理对话。</p>}
   {busy&&migrationProgress&&migrationProgress.phase!=='idle'&&<p className="tfHint" role="status">{migrationProgress.phase==='backup'?'正在备份旧对话…':`${migrationProgress.phase==='restoring'?'正在还原':'正在迁移'}旧对话 ${migrationProgress.done} / ${migrationProgress.total}`}，完成后将自动重新打开 Codex。</p>}
+  <FlowDialog open={restoreOpen} title="恢复 Codex 原配置" busy={busy} onClose={()=>setRestoreOpen(false)}>
+   <p className="tfDialogLead">恢复接入网关前的接口与模型设置，并停用这条网关连接。</p>
+   <p className="tfHint">默认只恢复配置，不读取、备份或改写对话。已有备份保留；这不会修复缺失的历史文件，部分网关旧对话可能仍无法继续，可先新建对话使用原配置。</p>
+   <label><input type="checkbox" checked={restoreHistory} disabled={busy} onChange={event=>setRestoreHistory(event.target.checked)}/>同时处理旧对话兼容性（可选）</label>
+   {restoreHistory&&<p className="tfHint">将检查旧对话，必要时备份并转换历史。处理失败可能中止恢复；取消勾选后可只恢复配置。</p>}
+   {desktopRestart&&<p className="tfHint">请先保存工作。确认后会结束 Codex 及其运行中的任务，完成后自动重新打开。</p>}
+   <footer><button disabled={busy} onClick={()=>setRestoreOpen(false)}>取消</button><button className="primary" disabled={busy} onClick={()=>void restore(true,restoreHistory,true)}>{busy?'正在恢复…':restoreHistory?'恢复配置并处理旧对话':'只恢复原配置'}</button></footer>
+  </FlowDialog>
   <FlowDialog className="tfRestartDialog" open={!!exitMessage} title={desktopRestart?'重启 Codex 并应用更改':'先退出 Codex，保留旧对话'} onClose={()=>setExitMessage('')} busy={busy}>
    <p className="tfDialogLead">{exitMessage}</p>
    <p className="tfHint">{desktopRestart?'请先保存工作。确认后将结束 Codex 及其运行中的任务，全程自动完成，无需手动退出或再次点击重启。':'请完全退出 Codex 后继续。'}</p>

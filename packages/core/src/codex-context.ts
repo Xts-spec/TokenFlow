@@ -17,8 +17,16 @@ export function portableCodexItem(item:Item):Item[]{
   const text=(Array.isArray(item.summary)?item.summary:[]).filter((p:Item)=>object(p)&&typeof p.text==='string').map((p:Item)=>p.text).join('\n');
   return text?[{type:'message',role:'assistant',content:[{type:'output_text',text}]}]:[];
  }
+ if(item.type==='agent_message'){
+  const text=(Array.isArray(item.content)?item.content:[]).filter((p:Item)=>object(p)&&typeof p.text==='string').map((p:Item)=>p.text).join('\n');
+  return text?[{type:'message',role:'developer',content:[{type:'input_text',text}]}]:[];
+ }
  const value=structuredClone(item);delete value.id;delete value.encrypted_content;
- if(typeof value.role==='string'){value.type='message';if(typeof value.content==='string')value.content=[{type:value.role==='assistant'?'output_text':'input_text',text:value.content}];}
+ if(typeof value.role==='string'){
+  value.type='message';
+  if(typeof value.content==='string')value.content=[{type:value.role==='assistant'?'output_text':'input_text',text:value.content}];
+  else if(Array.isArray(value.content))value.content=value.content.filter((p:Item)=>!object(p)||p.type!=='encrypted_content');
+ }
  return [value];
 }
 /** Replays only local Codex rollout data. No credentials, cloud lookup, or model

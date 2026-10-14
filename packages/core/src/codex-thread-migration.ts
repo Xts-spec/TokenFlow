@@ -1,17 +1,17 @@
 import {codexRuntimeClient,migrationBinary} from './codex-runtime.js';
-import {mkdir, readdir, readFile, writeFile, rename, copyFile, chmod} from 'node:fs/promises';
+import {mkdir, readdir, readFile, writeFile, rename, copyFile, chmod, stat} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {dirname,join,isAbsolute} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {RunnerCoreError} from './errors.js';
 import {safePath} from './agent-connections.js';
 
-const active=(entry:Entry)=>entry.state!=='restored'&&entry.state!=='deleted';
+const active=(entry:Entry)=>entry.state!=='restored'&&entry.state!=='deleted'&&entry.state!=='unavailable';
 const fail=(message:string,code='codex_migration_failed')=>new RunnerCoreError(message,{statusCode:409,code});
 type Route={id:string;provider:string;model:string;rollout:string;archived:boolean;source:string};
-type Entry=Route&{nextModel:string;returnModel?:string;rearchive?:boolean;state:'pending'|'migrated'|'restored'|'deleted'};
+type Entry=Route&{nextModel:string;returnModel?:string;rearchive?:boolean;state:'pending'|'migrated'|'restored'|'deleted'|'unavailable'};
 type Journal={version:1;id:string;createdAt:string;databaseBackup?:string;state:'prepared'|'migrated'|'restored';entries:Entry[]};
-export type MigrationStatus={lifecyclePhase?:'idle'|'stopping'|'changing'|'opening';backups:number;remaining:number;restorable:number;phase:'idle'|'backup'|'migrating'|'restoring';done:number;total:number};
+export type MigrationStatus={lifecyclePhase?:'idle'|'stopping'|'changing'|'opening';backups:number;remaining:number;restorable:number;unavailable?:number;phase:'idle'|'backup'|'migrating'|'restoring';done:number;total:number};
 export interface MigrationClient {pid?:number;resume(id:string,provider:string,model:string):Promise<void>;setArchived(id:string,archived:boolean):Promise<void>;close():Promise<void>}
 
 /** Resume only: no turn or tool is started. */
@@ -44,11 +44,28 @@ export class CodexThreadMigration {
   return result.sort((a,b)=>a.createdAt.localeCompare(b.createdAt));
  }
  private async save(journal:Journal){const path=join(this.directory,journal.id,'manifest.json');await safePath(path);const temp=path+'.tmp';await writeFile(temp,JSON.stringify(journal),{mode:0o600});await rename(temp,path);}
+ private async hasHistory(row:Route){
+  if(!row.rollout)return false;
+  if(!isAbsolute(row.rollout))throw fail('旧对话记录路径异常，未迁移。');
+  await safePath(row.rollout);
+  try{if(!(await stat(row.rollout)).isFile())throw fail('旧对话记录不是文件，未迁移。');return true;}
+  catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}
+ }
+ // Retain missing records, without replaying deleted history from an old backup.
+ // If the live history becomes available later, retry its original journal.
+ private async recoverAvailable(){
+  const journals=await this.journals(),rows=new Map((await this.rows()).map(row=>[row.id,row]));
+  for(const journal of journals){let changed=false;for(const entry of journal.entries){
+   const row=rows.get(entry.id);
+   if(entry.state==='unavailable'&&row&&await this.hasHistory(row)){await this.idle();entry.state='pending';changed=true;}
+  }if(changed){journal.state='prepared';await this.save(journal);}}
+ }
  private async idle(ownPid?:number){if((await this.processes()).some(pid=>pid!==ownPid))throw fail('请先保存工作并完全退出 Codex，再继续迁移旧对话。备份和现有记录会保留。','codex_exit_required');}
- async status():Promise<MigrationStatus>{const journals=await this.journals();return {...this.progress,backups:journals.length,remaining:journals.flatMap(j=>j.entries).filter(e=>e.state==='pending').length,restorable:journals.flatMap(j=>j.entries).filter(active).length};}
+ async status():Promise<MigrationStatus>{const journals=await this.journals();return {...this.progress,backups:journals.length,remaining:journals.flatMap(j=>j.entries).filter(e=>e.state==='pending').length,restorable:journals.flatMap(j=>j.entries).filter(active).length,unavailable:journals.flatMap(j=>j.entries).filter(e=>e.state==='unavailable').length};}
  /** Complete a consistent local backup before the caller writes gateway config. */
  async prepare(model:string,allowedModels:string[]=[model]){
-  const journals=await this.journals(),owned=new Set(journals.flatMap(j=>j.entries.filter(active).map(e=>e.id)));
+  await this.recoverAvailable();
+  const journals=await this.journals(),owned=new Set(journals.flatMap(j=>j.entries.filter(e=>active(e)||e.state==='unavailable').map(e=>e.id)));
   const current=await this.rows();
   const rows=current.filter(row=>(row.provider==='openai'&&!row.archived||row.provider==='token_flow')&&['vscode','cli'].includes(row.source)&&!!row.model&&!owned.has(row.id));
   if(!rows.length&&!journals.some(j=>j.entries.some(active)))return;
@@ -62,7 +79,7 @@ export class CodexThreadMigration {
  }
  /** Also retain conversations created while the gateway was active. */
  async prepareOfficial(model:string){
-  const owned=new Set((await this.journals()).flatMap(j=>j.entries.filter(active).map(e=>e.id)));
+  const owned=new Set((await this.journals()).flatMap(j=>j.entries.filter(e=>active(e)||e.state==='unavailable').map(e=>e.id)));
   const rows=(await this.rows()).filter(row=>row.provider==='token_flow'&&['vscode','cli'].includes(row.source)&&!!row.model&&!owned.has(row.id));
   if(!rows.length)return;
   if(!model||model.includes('/'))throw fail('请先选择一个官方 Codex 模型，再还原这些对话。');
@@ -90,14 +107,16 @@ export class CodexThreadMigration {
    }
    for(const name of reuse?[]:files){await this.idle();const path=join(this.home,name);await safePath(path);const db=new DatabaseSync(path,{readOnly:true});try{await backup(db,join(directory,name));await chmod(join(directory,name),0o600);}finally{db.close();}}
    const config=join(this.home,'config.toml');await safePath(config);try{await copyFile(config,join(directory,'config.toml'));await chmod(join(directory,'config.toml'),0o600);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
-   for(let i=0;i<rows.length;i++){const row=rows[i]!;if(row.rollout){if(!isAbsolute(row.rollout))throw fail('旧对话记录路径异常，未迁移。');await safePath(row.rollout);await copyFile(row.rollout,join(directory,`${i}.jsonl`),constants.COPYFILE_FICLONE);await chmod(join(directory,`${i}.jsonl`),0o600);}this.progress.done=i+1;}
+   for(let i=0;i<rows.length;i++){const row=rows[i]!;if(row.rollout){if(!isAbsolute(row.rollout))throw fail('旧对话记录路径异常，未迁移。');await safePath(row.rollout);try{await copyFile(row.rollout,join(directory,`${i}.jsonl`),constants.COPYFILE_FICLONE);await chmod(join(directory,`${i}.jsonl`),0o600);}catch(error){const code=(error as NodeJS.ErrnoException).code;if(code!=='ENOENT')throw fail(`旧对话记录无法备份${code?`（${code}）`:''}，登录配置未修改。`);}}this.progress.done=i+1;}
    await this.idle();await this.save(journal);
   }finally{this.progress={phase:'idle',done:0,total:0};}
  }
  async migrate(model:string,allowedModels:string[]=[model]){return this.execute(false,model,allowedModels);}
  async restore(model?:string|(()=>Promise<string|undefined>)){
-  const entries=(await this.journals()).flatMap(j=>j.entries.filter(active)),rows=await this.rows();
-  const hasThreads=rows.some(row=>entries.some(entry=>entry.id===row.id)||row.provider==='token_flow'&&!!row.model&&['vscode','cli'].includes(row.source));
+  await this.recoverAvailable();
+  const journals=await this.journals(),entries=journals.flatMap(j=>j.entries.filter(active)),rows=await this.rows();
+  const unavailable=new Set(journals.flatMap(j=>j.entries.filter(e=>e.state==='unavailable').map(e=>e.id)));
+  const hasThreads=rows.some(row=>!unavailable.has(row.id)&&(entries.some(entry=>entry.id===row.id)||row.provider==='token_flow'&&!!row.model&&['vscode','cli'].includes(row.source)));
   if(!entries.length&&!hasThreads)return {migrated:0};
   const selected=hasThreads?(typeof model==='function'?await model():model):undefined;
   await this.prepareOfficial(selected??'');return this.execute(true,selected);
@@ -116,6 +135,8 @@ export class CodexThreadMigration {
    const getClient=async()=>client??=await this.clientFactory(this.home);
    for(const journal of journals){for(const entry of journal.entries){if(!entries.includes(entry))continue;await this.idle(client?.pid);
     let row=(await this.rows()).find(row=>row.id===entry.id);
+    if(row&&!['vscode','cli'].includes(row.source))throw fail('旧对话来源已被其他程序修改，未覆盖；请检查后重试。');
+    if(row&&!await this.hasHistory(row)){entry.state='unavailable';await this.save(journal);continue;}
     // Finish an interrupted archive round-trip before deciding whether routing is done.
     if(row&&entry.rearchive){if(!row.archived)await (await getClient()).setArchived(entry.id,true);entry.rearchive=false;await this.save(journal);row=(await this.rows()).find(row=>row.id===entry.id);}
     if(!row){entry.state='deleted';await this.save(journal);continue;}

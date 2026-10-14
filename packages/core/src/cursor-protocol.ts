@@ -15,7 +15,7 @@ const fn=z.object({name:z.string().min(1).max(128),description:z.string().option
 const customTool=z.object({type:z.literal('custom'),name:z.string().min(1).max(128),description:z.string().optional(),format:object.optional()});
 const tool=z.union([customTool,fn.extend({type:z.literal('function')}),z.object({type:z.literal('function'),function:fn}),z.object({name:z.string().min(1).max(128),description:z.string().optional(),input_schema:object})]);
 const request=z.object({
- model:z.string(),stream:z.boolean().default(false),input:z.union([z.string(),z.array(item)]).optional(),messages:z.array(message).optional(),instructions:z.string().optional(),system:content.optional(),tools:z.array(tool).max(256).default([]),tool_choice:z.unknown().optional(),parallel_tool_calls:z.boolean().optional(),
+ model:z.string(),stream:z.boolean().default(false),input:z.union([z.string(),z.array(item)]).optional(),messages:z.array(message).optional(),instructions:z.string().optional(),system:content.optional(),tools:z.array(tool).max(2048).default([]),tool_choice:z.unknown().optional(),parallel_tool_calls:z.boolean().optional(),
  max_tokens:z.number().int().positive().optional(),max_output_tokens:z.number().int().positive().optional(),max_completion_tokens:z.number().int().positive().optional(),
  stream_options:z.object({include_usage:z.boolean().optional()}).optional(),store:z.boolean().optional(),metadata:object.optional(),user:z.string().optional(),prompt_cache_key:z.string().optional(),safety_identifier:z.string().optional(),
  reasoning:z.object({effort:z.string().optional(),summary:z.string().optional()}).optional(),reasoning_effort:z.string().optional(),include:z.array(z.string()).optional(),
@@ -45,7 +45,7 @@ export function parseCursorInput(path:string,body:unknown){
   limit?`Requested output budget: ${limit} tokens. Keep the reply within that budget when possible.`:undefined,
   JSON.stringify({instructions:value.instructions,system:value.system,history}),
  ].filter(Boolean).join('\n\n');
- if(prompt.length>1000000)throw new Error('Cursor 对话过长，请先压缩。');
+ if(prompt.length>4000000)throw new Error('Cursor 对话过长，请先压缩。');
  return {model:value.model,stream:value.stream,prompt,tools:tools.map(t=>({...t,parameters:t.parameters as Record<string,SDKJsonValue>})),required,parallel_tool_calls:value.parallel_tool_calls,effort:value.reasoning?.effort??value.reasoning_effort,limit};
 }
 

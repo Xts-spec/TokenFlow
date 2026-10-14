@@ -1,8 +1,9 @@
 import {CodexSwitchLifecycle} from '../packages/core/src/codex-switch-lifecycle.js';
+import {CodexContext} from '../packages/core/src/codex-context.js';
 import {parse} from 'smol-toml';
 import {CodexThreadMigration} from '../packages/core/src/codex-thread-migration.js';
 import {DatabaseSync} from 'node:sqlite';
-import { it,expect,vi } from 'vitest';
+import { it,expect,vi,type MockInstance } from 'vitest';
 import { mkdtemp,mkdir,writeFile,readFile,rm,realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join,resolve } from 'node:path';
@@ -48,14 +49,19 @@ it('connects and restores a local Agent through admin APIs without exposing keys
   const state=(await service.app.inject({url:'/api/a2a',headers})).json();const sourceId=service.proxy.snapshot().accounts[0].id;
   expect((await service.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:{sourceId,model:'codex/shared-model'}})).statusCode).toBe(200);
   await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
+  const failed=await service.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload:{target:'claude',sourceId,model:'codex/shared-model',revision:'0'.repeat(64)}});expect(failed.statusCode).toBe(409);
+  const journalled=(await service.app.inject({url:'/api/a2a',headers})).json();
+  expect(journalled.switchFailures[0]).toMatchObject({action:'connect',target:'claude',model:'codex/shared-model',sourceId,message:'配置已变更，请刷新接入预览。'});
+  expect(JSON.stringify(journalled.switchFailures)).not.toContain('tfl_');
   const response=await service.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload:{target:'claude',sourceId,model:'codex/shared-model',revision:state.targets[1].revision}});expect(response.statusCode).toBe(200);expect(response.body).not.toContain('tfl_');expect(response.body).not.toContain('private-original');
   const record=response.json();
-  expect((await service.app.inject({method:'POST',url:'/api/maintenance/run',headers,payload:{prompt:`请 review 刚完成的 ${record.target} 接入（记录 ${record.id}），仅做只读检查。`,chain:{target:'claude',sourceId,model:'codex/shared-model',connectionId:record.id}}})).statusCode).toBe(200);
+  expect((await service.app.inject({method:'POST',url:'/api/maintenance/run',headers,payload:{prompt:`请 review 刚完成的 ${record.target} 接入（记录 ${record.id}），仅做只读检查。`,interfaceAgent:'workbuddy',chain:{target:'claude',sourceId,model:'codex/shared-model',connectionId:record.id}}})).statusCode).toBe(200);
   await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().status).toBe('completed');
   const care=(await service.app.inject({url:'/api/maintenance',headers})).json();expect(care.engine).toBe('pi');expect(care.messages.some((m:{role:string;text:string})=>m.role==='tool'&&m.text.includes('主模型与辅助模型一致'))).toBe(true);expect(JSON.stringify(care)).not.toContain('tfl_');
   expect(care.chain).toMatchObject({target:'claude',sourceId,model:'codex/shared-model'});
   const inspection=JSON.parse(care.messages.find((m:{text:string})=>m.text.startsWith('只读预检: ')).text.slice('只读预检: '.length));
   expect(inspection.targets.map((t:{id:string})=>t.id)).toEqual(['claude']);expect(inspection.chain.sourceAvailable).toBe(true);expect(inspection.chain.matchesInstalled).toBe(true);expect(inspection.chain.source.id).toBe(sourceId);
+  expect(inspection.selectedAgent).toBe('workbuddy');expect(inspection.latestSwitchFailure).toMatchObject({action:'connect',target:'claude',message:'配置已变更，请刷新接入预览。'});expect(inspection.selectedAgentSwitchFailure).toBeNull();expect(inspection.switchFailures[0].message).toContain('配置已变更');expect(JSON.stringify(inspection)).not.toContain('tfl_');
   const invalid=await service.app.inject({method:'POST',url:'/api/maintenance/run',headers,payload:{chain:{target:'workbuddy',connectionId:response.json().id}}});expect(invalid.statusCode).toBe(400);
   const automatic=await service.app.inject({method:'POST',url:'/api/maintenance/run',headers,payload:{chain:{target:'workbuddy',sourceId,model:'codex/shared-model'}}});expect(automatic.statusCode).toBe(200);
   await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().status).toBe('completed');
@@ -189,11 +195,55 @@ it('performs the confirmed Codex stop, backup, change and relaunch in a single a
   pids=[123];events.length=0;const current=await state();
   const restored=await service.app.inject({method:'POST',url:'/api/a2a/restore',headers,payload:{id:current.connection.id,revision:current.revision,allowRunning:true,restartCodex:true}});
   expect(restored.statusCode,restored.body).toBe(200);expect(events).toEqual(['stop','open']);expect(await readFile(path,'utf8')).toBe('model="native-model"');
-  // A user who already switched back can repair legacy reasoning by restarting once.
+  // Restarting alone must not trigger history conversion or another backup.
   const session=join(root,'codex/sessions/rollout-legacy.jsonl');await mkdir(join(root,'codex/sessions'));
   await writeFile(session,JSON.stringify({type:'response_item',payload:{type:'reasoning',id:'rs_chatcmpl_legacy',encrypted_content:'',summary:[{type:'summary_text',text:'retained summary'}]}})+'\n');
   pids=[123];events.length=0;
   const reopened=await service.app.inject({method:'POST',url:'/api/a2a/restart',headers,payload:{target:'codex'}});
-  expect(reopened.statusCode,reopened.body).toBe(200);expect(events).toEqual(['stop','open']);expect(await readFile(session,'utf8')).not.toContain('encrypted_content');expect(await readFile(session,'utf8')).toContain('retained summary');
+  expect(reopened.statusCode,reopened.body).toBe(200);expect(events).toEqual(['stop','open']);expect(await readFile(session,'utf8')).toContain('encrypted_content');expect(await readFile(session,'utf8')).toContain('retained summary');
  }finally{restart.mockRestore();backup.mockRestore();migration.mockRestore();await service.app.close();await rm(root,{recursive:true,force:true});}
+});
+
+it.each(['/api/a2a/restore','/api/a2a/codex-migration/restore'])('restores configuration through %s without reading or backing up conversations',async route=>{
+ const root=await mkdtemp(join(await realpath(tmpdir()),'config-only-restore-'));
+ await mkdir(join(root,'codex'));await mkdir(join(root,'cliproxy'));
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'codex.json',provider:'codex',status:'active',models:['shared-model']}]));
+ const path=join(root,'codex/config.toml'),original='model="native-model"';await writeFile(path,original);
+ const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
+ const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:path,claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async()=>[]});
+ const headers={host:'127.0.0.1:9527',authorization:'Bearer admin'};
+ let history:MockInstance<CodexThreadMigration['restore']>|undefined,context:MockInstance<CodexContext['prepareOfficial']>|undefined;
+ try{
+  await service.proxy.start();
+  const state=async()=>(await service.app.inject({url:'/api/a2a',headers})).json().targets.find((t:{id:string})=>t.id==='codex');
+  const target=await state();
+  const connected=await service.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload:{target:'codex',sourceId:service.proxy.snapshot().accounts[0].id,model:'codex/shared-model',revision:target.revision}});
+  expect(connected.statusCode,connected.body).toBe(200);
+  history=vi.spyOn(CodexThreadMigration.prototype,'restore').mockRejectedValue(new Error('history unavailable'));
+  context=vi.spyOn(CodexContext.prototype,'prepareOfficial').mockRejectedValue(new Error('cannot back up history'));
+  const current=await state();
+  // History work still requires explicit opt-in; a failed attempt retains the
+  // gateway configuration so the user can retry with configuration only.
+  const optional=await service.app.inject({method:'POST',url:route,headers,payload:{...(route==='/api/a2a/restore'?{id:current.connection.id,revision:current.revision}:{}),restoreHistory:true}});
+  expect(optional.statusCode).toBe(500);expect((await state()).connection.id).toBe(current.connection.id);
+  context.mockClear();history.mockClear();
+  const restored=await service.app.inject({method:'POST',url:route,headers,payload:route==='/api/a2a/restore'?{id:current.connection.id,revision:current.revision}:{}});
+  expect(restored.statusCode,restored.body).toBe(200);expect(await readFile(path,'utf8')).toBe(original);
+  expect(history).not.toHaveBeenCalled();expect(context).not.toHaveBeenCalled();expect((await state()).connection).toBeNull();
+ }finally{history?.mockRestore();context?.mockRestore();await service.app.close();await rm(root,{recursive:true,force:true});}
+});
+
+it('records the real switch error when the client only sees an internal failure',async()=>{
+ const root=await mkdtemp(join(await realpath(tmpdir()),'switch-failure-'));
+ const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
+ const restore=vi.spyOn(CodexThreadMigration.prototype,'restore').mockRejectedValue(Object.assign(new Error('旧对话缺失 tfl_secretvalue Bearer raw-token\n    at hidden'),{code:'ENOENT'}));
+ const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:join(root,'codex/config.toml'),claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async()=>[]});
+ try{
+  const headers={host:'127.0.0.1:9527',authorization:'Bearer admin'};
+  const response=await service.app.inject({method:'POST',url:'/api/a2a/codex-migration/restore',headers,payload:{restoreHistory:true}});
+  expect(response.statusCode).toBe(500);expect(response.json().error).toBe('Internal runner error');
+  const failures=(await service.app.inject({url:'/api/a2a',headers})).json().switchFailures;
+  expect(failures[0]).toMatchObject({action:'migration-restore',target:'codex',code:'ENOENT',message:'旧对话缺失 [key] Bearer [token]'});
+  expect(JSON.stringify(failures)).not.toContain('tfl_');expect(JSON.stringify(failures)).not.toContain('raw-token');expect(JSON.stringify(failures)).not.toContain('at hidden');
+ }finally{restore.mockRestore();await service.app.close();await rm(root,{recursive:true,force:true});}
 });
