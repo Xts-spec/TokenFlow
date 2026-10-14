@@ -81,7 +81,7 @@ exit 3`;
         }
       }
       await this.until(true);
-      return {message:target==='qoder'?'Qoder 已重新打开，请在「模型 → 自定义」选择 token-flow 模型。':`${this.app.name} 已重新打开，请确认模型选择。`};
+      return {message:target==='qoder'?'Qoder 已重新打开，请在「模型 → 自定义」选择 TokenFlow 模型。':`${this.app.name} 已重新打开，请确认模型选择。`};
     }finally{this.busy=false;}
   }
 }

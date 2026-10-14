@@ -30,10 +30,12 @@ export function AgentModelPicker({open,title,local,current,selected,onConfirm,on
  const chosenIds=chosen.map(item=>item.model),visibleIds=active?.models.map(model=>model.id)??[];
  const move=(from:string,to:string,items:readonly string[],after=false)=>{moveModel(from,to,items,after);};
  const count=(id:string)=>draft.filter(item=>item.sourceId===id).length;
+ const sourceChoices=active?.models.map(model=>({sourceId:active.id,model:model.id})).filter(choice=>!draft.some(item=>item.model===choice.model&&!same(item,choice)))??[];
+ const sourceSelected=sourceChoices.length>0&&sourceChoices.every(choice=>draft.some(item=>same(item,choice)));
  return <FlowDialog open={open} title={title} className="tfAgentPicker" onClose={onClose}>
   <label className="tfSearch tfAgentPickerSearch"><Icon name="search" size={16}/><input ref={search} type="search" placeholder="搜索模型、来源或账号" aria-label="搜索厂商、账号或模型" value={query} onChange={event=>{if(list.current)positions.current.set(key,list.current.scrollTop);setQuery(event.target.value);}}/></label>
   <section className="tfAgentPicked" aria-label="已选模型">
-   <header><span>已选模型 <b aria-live="polite">{draft.length}</b></span><small>拖动调整顺序</small></header>
+   <header><span>已选模型 <b aria-live="polite">{draft.length}</b></span><button type="button" className="textButton" disabled={!draft.length} onClick={()=>setDraft([])}>清空选择</button></header>
    <ul>{chosen.map(choice=>{const group=all.find(group=>group.id===choice.sourceId);const label=modelLabel(local.models,choice.model);const ok=available(choice);return <li className={`tfAgentPickedTag tfDragRow ${ok?'':'unavailable'}`} key={`${choice.sourceId}/${choice.model}`} {...dropOrder('models',choice.model,chosenIds,move)} title={`${label} · ${group?.accountLabel??'来源不可用'}`}>
     <DragHandle kind="models" id={choice.model} label={label} items={chosenIds} move={move}/><ProviderIcon provider={modelManufacturer(choice.model,local)} size={16}/><strong>{label}</strong><button type="button" className="iconButton" aria-label={`移除 ${label}`} onClick={()=>toggle(choice)}><Icon name="close" size={12}/></button>
    </li>;})}</ul>{!chosen.length&&<p>从下方选择模型</p>}
@@ -48,14 +50,14 @@ export function AgentModelPicker({open,title,local,current,selected,onConfirm,on
    </div>
    <section className="tfAgentPickerCatalog tfPickSource" id="agent-picker-catalog" role="tabpanel" aria-label={active?.label??'模型列表'}>
     {active?<>
-     <header><div><strong>{active.provider==='api'?active.accountLabel:active.providerLabel}</strong><small title={active.accountLabel}>{active.provider==='api'?`${active.models.length} 个模型`:active.accountLabel}</small></div>
+     <header><div><strong>{active.provider==='api'?active.accountLabel:active.providerLabel}</strong><small title={active.accountLabel}>{active.provider==='api'?`${active.models.length} 个模型`:active.accountLabel}</small></div><button type="button" className="textButton" disabled={!sourceChoices.length} onClick={()=>setDraft(items=>sourceSelected?items.filter(item=>!sourceChoices.some(choice=>same(item,choice))):[...items,...sourceChoices.filter(choice=>!items.some(item=>same(item,choice)))])}>{sourceSelected?'取消本页选择':'选择本页模型'}</button>
       {active.quota&&active.remaining!==null&&<details key={active.id} className="tfAgentPickerQuota"><summary><span className={active.remaining<=10?'low':''}>剩余 {Math.round(active.remaining)}%</span></summary><div><QuotaDetails quota={active.quota} label={active.accountLabel} compact/></div></details>}
      </header>
      <div ref={list} className="tfPickBody tfAgentPickerModelList" onScroll={event=>positions.current.set(key,event.currentTarget.scrollTop)}><div className="tfPickOptions">
       {active.models.map(model=>{const choice={sourceId:active.id,model:model.id};const on=draft.some(item=>same(item,choice));const duplicate=draft.some(item=>item.model===model.id&&!same(item,choice));return <div key={model.id} className="tfPickDraggableRow tfDragRow" {...dropOrder('models',model.id,visibleIds,move)}>
        <DragHandle kind="models" id={model.id} label={model.label} items={visibleIds} move={move}/>
        <button type="button" className={`tfPickModel ${on?'on':''}`} aria-label={model.label} aria-pressed={on} disabled={duplicate} title={duplicate?'已从其他账号选择此模型，请先移除原选择':model.id} onClick={()=>toggle(choice)}>
-        <ProviderIcon provider={modelManufacturer(model.id,local)} size={22}/><span><strong>{model.label}</strong>{duplicate&&<small>已从其他账号选择</small>}</span><span className={`tfAgentPickCheck ${on?'on':''}`} aria-hidden="true">{on?'✓':<Icon name="plus" size={12}/>}</span>
+        <ProviderIcon provider={modelManufacturer(model.id,local)} size={22}/><span><strong>{model.label}</strong><small className="tfModelIdentity">{model.id}</small>{duplicate&&<small>已从其他账号选择</small>}</span><span className={`tfAgentPickCheck ${on?'on':''}`} aria-hidden="true">{on?'✓':<Icon name="plus" size={12}/>}</span>
        </button>
       </div>;})}
      </div></div>

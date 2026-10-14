@@ -1,0 +1,144 @@
+/* ZCode-inspired graphite surfaces. Colour is reserved for real state and the logo. */
+:root[data-theme=dark]{color-scheme:dark;color:#ececef;background:#161719;--text:#ececef;--muted:#a5a6ad;--canvas:#161719;--surface:#202123;--soft:#2a2b2e;--line:#37383c;--accent:#b4c7ed;--accent-soft:#2c3342;--success:#92c6ae;--danger:#e9a0aa}
+:root[data-theme=dark] *{scrollbar-color:#46474b transparent}
+:root[data-theme=dark] :is(button,input,textarea,select){background:var(--soft);border-color:var(--line);color:var(--text)}
+:root[data-theme=dark] :is(input,textarea,select)::placeholder{color:#92949c}
+:root[data-theme=dark] label{color:var(--muted)}
+:root[data-theme=dark] button:hover:not(:disabled){}
+:root[data-theme=dark] button.primary{background:#e1e3e8;border-color:#e1e3e8;color:#1d1e21;font-weight:600}
+:root[data-theme=dark] button.primary:hover:not(:disabled){}
+:root[data-theme=dark] button.danger{color:var(--danger)}
+:root[data-theme=dark] :is(button,input,textarea,select,summary):focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+:root[data-theme=dark] .tfSide{background:#222325;border-color:transparent}
+:root[data-theme=dark] .tfBrand{color:var(--text)}
+:root[data-theme=dark] .tfNavGroup{color:#92949b}
+:root[data-theme=dark] .tfSide nav button{color:#bebfc5;background:transparent}
+:root[data-theme=dark] .tfSide nav button:hover:not(:disabled){}
+:root[data-theme=dark] .tfSide nav button.on{background:#35363a;color:#f1f1f3;box-shadow:none}
+:root[data-theme=dark] :is(.tfPanel,.tfProviderPanel){background:transparent}
+:root[data-theme=dark] :is(.tfCard,.tfKeyCard,.tfDialog,.tfPicker,.tfToast,.tfUsageSummary,.tfBreakdown,.tfTokenActivity,.tfRepair,.tfRepairDrawer,.tfRepairModelMenu,.tfRepairModelPopover,.tfTraceDetail,.tfTraceTool pre){background:var(--surface);color:var(--text);border-color:var(--line)}
+:root[data-theme=dark] :is(.tfTile,.tfProviderTabs>button,.tfAgentPickerSources button,.tfAgentPicker .tfPickModel,.tfDragHandle,.tfAddButton,.textButton,.iconButton,.tfFlipAction,.tfApiCardManage button,.tfCardFoot button,.tfPanelHead button,.tfDetailManage button){background:transparent;border-color:transparent;color:var(--muted)}
+:root[data-theme=dark] :is(.tfTile[aria-selected=true],.tfProviderTabs>button[aria-selected=true]){background:#2a2b2e;color:var(--text);box-shadow:none}
+:root[data-theme=dark] :is(.tfTile:hover:not(:disabled),.tfProviderTabs>button:hover:not(:disabled),.tfAgentPicker .tfPickModel:hover:not(:disabled),.tfAgentPickerSources button:hover:not(:disabled),.textButton:hover:not(:disabled),.iconButton:hover:not(:disabled)){}
+:root[data-theme=dark] :is(.tfAccountTabs>button,.tfLines>li,.tfList>li,.tfAccountModels li.tfDragRow,.tfLineMain,.tfRowButton,.tfRepairModelOptions button){background:transparent;border-color:var(--line);color:var(--text)}
+:root[data-theme=dark] :is(.tfAccountTabs>button[aria-selected=true],.tfLines>li.on,.tfList>li.open,.tfAgentPicker .tfPickModel.on,.tfAgentPickerSources button[aria-selected=true],.tfPickRow.on,.tfPickModel.on,.tfRepairModelOptions button.on){background:var(--accent-soft);border-color:transparent;color:var(--text)}
+:root[data-theme=dark] :is(.tfLineMain:hover:not(:disabled),button.tfRowButton:hover:not(:disabled),.tfAccountModels li.tfDragRow:hover){}
+:root[data-theme=dark] :is(.tfUsage,.tfUsageFoldHead,.tfAgentPickedTag,.tfRange,.tfKind,.tfAgentPickCheck,.tfPickCheck,.tfAgentPickerSearch,.tfSearch,.tfRepairMessages,.tfRepairInput,.tfRepairComposer,.tfTraceSummary){background:var(--soft);color:var(--muted);border-color:transparent}
+:root[data-theme=dark] :is(.tfAgentPickerSearch input,.tfAgentPickerSearch:focus-within input,.tfSearch input){background:transparent;color:var(--text)}
+:root[data-theme=dark] :is(.tfAgentPickerSearch:focus-within,.tfAgentPickerSources button[aria-selected=true] small){color:var(--muted);border-color:var(--line)}
+:root[data-theme=dark] :is(.tfUsing,.tfAgentPickerQuota summary,.tfToastIcon){background:#263b32;color:var(--success)}
+:root[data-theme=dark] :is(.tfDialogContent>header,.tfAgentPicker .tfDialogContent>footer,.tfPickerFooter,.tfKeyManage,.tfApiEditor,.tfKeyCreate,.tfApiEditorDialog .tfApiEditor,.tfAgentPickerQuota>div,.tfRepairHead){background:var(--surface);color:var(--text);border-color:var(--line);box-shadow:none}
+:root[data-theme=dark] .tfApiEditorDialog .tfApiEditor{background:transparent}
+:root[data-theme=dark] :is(.tfConnectionModels .tfKeyModels li,.tfDetailTabs,.tfKeyModels li,.tfAccountTabs,.tfApiSourceModels){border-color:var(--line)}
+:root[data-theme=dark] :is(.tfKeyStatus.on,.tfPickQuota b,.quotaMeta b,.quotaWindowDetails b,.tfQuotaSide strong,.tfQuotaSide .quotaWindow b){color:var(--success)}
+:root[data-theme=dark] :is(.tfRowText strong,.tfCatalogModelName strong,.tfUsage strong,.tfModelsHead h3,.tfAgentTitle h2){color:var(--text)}
+:root[data-theme=dark] :is(.quotaWindowDetails small,.quotaObserved,.tfQuotaSide small,.tfAgentVersion,.tfRowText small,.tfHint,.tfKeyLast,.tfTraceHeader,.tfTraceTool summary){color:var(--muted)}
+:root[data-theme=dark] :is(.bar,.tfQuotaBar,.tfTraceBar){background:#3a3b3f}
+:root[data-theme=dark] .tfAgentPicker .tfAgentPickCheck.on{background:var(--accent);color:#202123}
+:root[data-theme=dark] .tfToast.error .tfToastIcon{background:#422b30;color:var(--danger)}
+:root[data-theme=dark] .tfToast.warning .tfToastIcon{background:#433d2b;color:#d9c792}
+:root[data-theme=dark] :is(.tfDialog::backdrop,.tfPicker::backdrop){background:#08090a80}
+:root[data-theme=dark] .tfRailArrow{background:var(--soft);color:var(--text);border-color:var(--line)}
+:root[data-theme=dark] .tfRepairFab{background:#e2e4e9;color:#222326;box-shadow:0 6px 20px #0003}
+:root[data-theme=dark] .tfRepairFab:hover:not(:disabled){}
+
+/* Structure changes also apply to light mode; the refinement is more than a palette swap. */
+.tfSide{border-right:0;gap:24px;padding-inline:14px}
+.tfSide nav button{border-radius:6px;min-height:38px}
+.tfSide nav button.on{box-shadow:none}
+.tfBrand{font-size:16px;letter-spacing:-.5px;padding-inline:8px}
+.tfSide nav .tfThemeSwitch{margin-top:12px;font-size:11px;min-height:30px;color:var(--muted)}
+.tfPage,.tfPage.tfApiPage,.tfPage.tfProxyPage{padding-top:12px;gap:20px}
+.tfPanel,.tfProviderPanel{padding:18px 6px;border-radius:0}
+.tfPanelHead h2{font-size:22px;letter-spacing:-.6px}
+.tfProviderPanel{gap:20px}
+.tfAgentColumns,.tfAccountColumns{margin-top:12px}
+.tfAgentSectionHead h3,.tfAccountColumns h3{font-size:13px;font-weight:550;color:var(--muted)}
+.tfAgentColumns .tfLines>li,.tfAccountColumns .tfAccountModels li.tfDragRow{border:0;border-radius:6px}
+.tfAgentColumns .tfLines>li.on{border:0}
+.tfAccountTabs{border:0;padding-bottom:4px}
+.tfAccountTabs>button{background:transparent;border:0}
+.tfTile{border-radius:6px;min-height:62px}
+.tfTile[aria-selected=true]{box-shadow:none}
+.tfTileText strong{font-size:12px}
+.tfCollectionHead{margin-bottom:4px;align-items:center}
+.tfCollectionHead h2{font-size:26px;letter-spacing:-.8px;font-weight:600}
+.tfCollectionHead h2 span{font-size:13px;font-weight:400;margin-left:12px}
+.tfCollectionHead p{font-size:12px;line-height:1.7;max-width:55ch;margin-top:8px}
+.tfCollectionHead>button{font-size:12px;min-height:34px}
+.tfApiSourceGrid{grid-template-columns:repeat(auto-fill,minmax(min(340px,100%),1fr));gap:20px;padding-top:8px;align-items:start}
+.tfApiSourceCard{background:transparent;border:0;border-radius:0;overflow:visible;perspective:1600px;transition:none}
+.tfApiSourceCard:hover{}
+.tfCredential{perspective:1600px}
+.tfCredentialInner{position:relative;display:grid;transform-style:preserve-3d;transition:transform .48s cubic-bezier(.3,.05,.2,1);will-change:auto}
+.tfCredential.flipped .tfCredentialInner{transform:rotateY(180deg)}
+.tfCredentialFace{grid-area:1/1;display:flex;flex-direction:column;gap:0;min-height:382px;padding:24px;border-radius:16px;border:1px solid var(--line);background:var(--surface);backface-visibility:hidden;-webkit-backface-visibility:hidden;box-shadow:0 3px 12px #00000008;overflow:hidden}
+.tfCredentialFace[aria-hidden=false]{pointer-events:auto}
+.tfCredentialFace[aria-hidden=true]{pointer-events:none}
+.tfApiSourceBody{transform:translateZ(1px)}
+.tfCredentialBack{transform:rotateY(180deg) translateZ(1px);gap:18px;background:var(--surface)}
+.tfApiSourceHead{align-items:start;gap:12px}
+.tfApiSourceHead h3{font-size:22px;font-weight:550;line-height:1.35;letter-spacing:-.6px;margin-top:8px}
+.tfApiSourceHead .tfApiProtocol{font-size:10px;letter-spacing:.02em;margin:0;color:var(--muted)}
+.tfApiSourceHead>.tfKeyStatus{padding-top:2px;font-size:10px}
+.tfCardModelSummary{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:26px 0 12px}
+.tfCardModelSummary>span{color:var(--muted);font-size:11px}
+.tfCardModelSummary strong{font-size:24px;letter-spacing:-.5px;line-height:1;font-weight:500;font-variant-numeric:tabular-nums}
+.tfCardModelSummary small{font-size:10px;font-weight:400;letter-spacing:0;margin-left:6px}
+.tfApiModelPreview{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px;list-style:none;padding:0;margin:0 0 8px}
+.tfApiModelPreview li{min-width:0;display:flex;align-items:center;min-height:30px;padding:7px 9px;border-radius:5px;background:var(--soft)}
+.tfApiModelPreview code{font-family:inherit;font-size:11px;line-height:1.5;color:var(--text);overflow-wrap:anywhere}
+.tfApiMoreModels{font-size:10px;color:var(--muted);margin-top:4px}
+.tfApiSourceBody .tfApiAddress{margin-top:auto;padding-top:22px;gap:8px}
+.tfApiAddress code{font-family:inherit;font-size:11px;line-height:1.5;color:var(--muted)}
+.tfApiSourceBody .tfApiCardFoot{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:14px 0 0;margin-top:14px;border-top:1px solid var(--line)}
+.tfApiCardFoot button{font-size:11px;min-height:28px;padding:2px 0;color:var(--text)}
+.tfApiCardFoot .tfFlipAction{margin:0;align-self:auto;padding:2px 0;gap:8px}
+.tfApiCardManage{display:flex;justify-content:flex-end;gap:14px;padding-top:8px}
+.tfApiCardManage button{min-height:24px;padding:2px 0;font-size:10px;color:var(--muted)}
+.tfCredentialBack>header{font-size:10px;color:var(--muted)}
+.tfCredentialBack>header .textButton{padding:0;min-height:24px;font-size:10px}
+.tfCredentialBack h3{font-size:22px;font-weight:550;letter-spacing:-.6px;line-height:1.35;overflow-wrap:anywhere}
+.tfCredentialMeta{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:0}
+.tfCredentialMeta div{display:grid;gap:5px}
+.tfCredentialMeta dt{font-size:10px;color:var(--muted)}
+.tfCredentialMeta dd{font-size:11px;color:var(--text);margin:0;line-height:1.5}
+.tfCredentialBack label{display:block;font-size:10px;color:var(--muted)}
+.tfCredentialBack .inputAction{margin-top:8px;background:var(--soft);border-radius:6px;padding:2px 6px}
+.tfCredentialBack .inputAction input{background:transparent;border:0;padding:8px 4px;min-height:34px;font-size:11px}
+.tfCredentialBack .inputAction button{background:transparent;border:0;padding:4px 6px;min-height:28px;color:var(--text);font-size:10px}
+.tfCredentialBack .tfHint{font-size:10px;line-height:1.6}
+.tfCredentialBack>footer{margin-top:auto;display:flex;justify-content:space-between;gap:12px;border-top:1px solid var(--line);padding-top:14px}
+.tfCredentialBack>footer button{font-size:10px;min-height:26px;padding:0}
+.tfApiSourceModels{margin-top:14px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px}
+.tfKeyCard{border-radius:14px}
+.tfKeyCardMain{min-height:228px;padding:24px}
+.tfKeyCard h3{font-size:22px;font-weight:550;letter-spacing:-.5px}
+.tfKeyCard .tfKeyPurpose{font-size:11px;color:var(--muted)}
+.tfKeyPreview li{font-size:12px}
+.tfKeyTotal b{font-size:26px;font-weight:500}
+.tfDialog.tfAgentPicker,.tfDialog.tfKeyDetail,.tfDialog.tfApiEditorDialog{box-shadow:0 28px 90px #0005;border-radius:16px}
+.tfAgentPicker .tfDialogContent>header h2,.tfKeyDetail .tfDialogContent>header h2{font-size:20px;font-weight:550;letter-spacing:-.4px}
+.tfAgentPicker .tfPickModel{min-height:60px;border-radius:6px}
+.tfAgentPickedTag{border-radius:5px}
+.tfAgentPicker .tfDialogContent>footer button:not(.primary){border:0;background:transparent}
+.tfAgentPicker .tfModelIdentity{opacity:.8}
+:root[data-theme=dark] .tfCredentialFace{border-color:#414247;background:#242527;box-shadow:none}
+:root[data-theme=dark] .tfCredentialBack{background:#292a2d}
+:root[data-theme=dark] .tfApiModelPreview li{background:#303135}
+:root[data-theme=dark] .tfApiSourceCard.off .tfCredentialFace{background:#1e1f21;border-color:#333438}
+:root[data-theme=dark] .tfApiSourceCard.off h3{color:var(--muted)}
+:root[data-theme=dark] :is(.tfApiCardFoot button,.tfCredentialBack>footer button){color:var(--text)}
+:root[data-theme=dark] .tfApiCardManage .danger{color:var(--danger)}
+:root[data-theme=dark] .tfCredentialBack .inputAction input{background:transparent}
+:root[data-theme=dark] .tfCredentialBack .inputAction button{background:transparent;color:var(--text);border:0}
+@media(max-width:760px){.tfPanel,.tfProviderPanel{padding:12px 2px}.tfApiSourceGrid{gap:16px}.tfCredentialFace{padding:20px;min-height:370px}.tfCollectionHead h2{font-size:23px}.tfApiModelPreview{gap:6px 8px}.tfPage,.tfPage.tfApiPage,.tfPage.tfProxyPage{gap:16px}}
+@media(prefers-reduced-motion:reduce){.tfCredentialInner{transition:none}}
+:root[data-theme=dark] .tfProviderIcon:is([src$="/codex.ico"],[src$="/xai.svg"]){filter:invert(1)}
+:root[data-theme=dark] .quotaRingTrack{stroke:var(--line)}
+:root[data-theme=dark] .quotaRing>span{color:var(--text)}
+:root[data-theme=dark] .tfUpdateDot{box-shadow:0 0 0 2px var(--canvas)}
+/* Model names form a readable list, without another layer of decorative boxes. */
+.tfApiModelPreview li{background:transparent;padding:5px 0;min-height:28px;border-radius:0}
+.tfApiModelPreview code{font-size:12px}
+:root[data-theme=dark] .tfApiModelPreview li{background:transparent}

@@ -10,7 +10,7 @@ html,body,#root{height:100%;overflow:hidden;overscroll-behavior:none}
 .tfNavGroup{font-size:10px;font-weight:600;letter-spacing:.08em;color:#8a97ab;padding:10px 10px 4px}
 .tfNavGroup:first-child{padding-top:0}
 .tfSide nav button{justify-content:flex-start;gap:10px;width:100%;min-height:36px;padding:7px 10px;border:0;background:transparent;color:#42526b;font-size:13px;border-radius:8px}
-.tfSide nav button:hover:not(:disabled){background:#e8eef8;border:0}
+.tfSide nav button:hover:not(:disabled){}
 .tfSide nav button.on{background:#fff;color:var(--accent);font-weight:600;box-shadow:0 1px 2px #0f172a14}
 .tfSideFoot{margin-top:auto}
 .tfMain{min-width:0;min-height:0;overflow:auto;overflow-anchor:none;display:flex;flex-direction:column;background:var(--canvas)}
@@ -28,7 +28,7 @@ html,body,#root{height:100%;overflow:hidden;overscroll-behavior:none}
 .tfToastText strong{font-size:13px;font-weight:600;line-height:1.5}
 .tfToastText p{margin:6px 0 0;font-size:12px;line-height:1.7;color:var(--muted);overflow-wrap:anywhere;white-space:pre-wrap}
 .tfToastClose{flex-shrink:0;display:grid;place-items:center;width:28px;min-height:28px;padding:0;border:0;background:transparent;color:var(--muted);border-radius:6px}
-.tfToastClose:hover{background:var(--soft);color:var(--text)}
+.tfToastClose:hover{}
 .tfToastClose:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .tfToastAction{flex-shrink:0;min-height:28px;padding:4px 10px;font-size:12px}
 @keyframes tfToastIn{0%{opacity:0;transform:translateY(-8px)}
@@ -44,7 +44,7 @@ to{opacity:1;transform:translateY(0)}
 .tfPageHead h1{font-size:20px;font-weight:650;letter-spacing:-.4px}
 .tfProviderTabs{display:flex;flex-wrap:wrap;gap:8px;min-width:0}
 .tfProviderTabs>button{gap:8px;min-height:44px;padding:8px 12px;background:transparent;border-color:transparent;color:var(--muted);font-size:12px}
-.tfProviderTabs>button:hover{background:var(--surface);border-color:var(--line)}
+.tfProviderTabs>button:hover{}
 .tfProviderTabs>button[aria-selected=true]{background:var(--surface);border-color:var(--accent);color:var(--text);font-weight:600}
 .tfProviderTabs small{display:grid;place-items:center;min-width:20px;height:20px;padding:0 4px;border-radius:6px;background:var(--soft);color:var(--muted);font-size:10px}
 .tfProviderIcon{object-fit:contain;flex-shrink:0}
@@ -89,7 +89,7 @@ to{opacity:1;transform:translateY(0)}
 .tfPanelHead h2{font-size:16px;font-weight:650}
 .tfAgentTitle{display:flex;align-items:center;gap:6px}
 .tfAgentUpdate{position:relative;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:28px;height:28px;padding:0;border:0;background:transparent;color:var(--muted);border-radius:6px}
-.tfAgentUpdate:hover:not(:disabled){background:var(--canvas);color:var(--accent)}
+.tfAgentUpdate:hover:not(:disabled){}
 .tfUpdateDot{position:absolute;top:2px;right:2px;width:6px;height:6px;border-radius:50%;background:#dc2626;box-shadow:0 0 0 2px #fff}
 @media(pointer:coarse){.tfAgentUpdate{width:40px;height:40px}
 }
@@ -99,7 +99,7 @@ to{opacity:1;transform:translateY(0)}
 .tfPanel .logs{max-height:260px;overflow:auto;font-size:11px;background:var(--canvas);padding:10px;border-radius:8px;white-space:pre-wrap;margin-top:8px}
 .tfTiles{display:flex;gap:10px;overflow-x:auto;padding:2px}
 .tfTile{flex:1 0 168px;justify-content:flex-start;gap:11px;min-height:64px;padding:12px 14px;background:#fff;border:1px solid var(--line);border-radius:12px;text-align:left;color:var(--text);position:relative}
-.tfTile:hover:not(:disabled){border-color:#bcd0f2;background:#fff}
+.tfTile:hover:not(:disabled){}
 .tfTile[aria-selected=true]{border-color:var(--accent);box-shadow:0 0 0 3px #2563eb1a}
 .tfTile .dot{position:absolute;top:10px;right:10px;width:7px;height:7px;margin:0}
 .tfTileText{display:grid;gap:2px;min-width:0}
@@ -112,7 +112,7 @@ to{opacity:1;transform:translateY(0)}
 .tfLines>li.on{border-color:#9dbcf2;background:#f6f9ff}
 .tfLine{display:flex;align-items:center;gap:8px;padding-right:12px}
 .tfLineMain{flex:1;min-width:0;justify-content:flex-start;gap:12px;min-height:52px;padding:9px 12px;border:0;background:transparent;border-radius:10px;text-align:left;color:var(--text)}
-.tfLineMain:hover:not(:disabled){background:#f2f6fd;border:0}
+.tfLineMain:hover:not(:disabled){}
 .tfLineMain:disabled{opacity:1;cursor:default}
 li:not(.on)>.tfLine>.tfLineMain:disabled{color:var(--muted)}
 .tfKind{font-size:10px;font-weight:600;padding:2px 7px;border-radius:6px;background:var(--soft);color:var(--muted);flex-shrink:0}
@@ -126,7 +126,7 @@ li:not(.on)>.tfLine>.tfLineMain:disabled{color:var(--muted)}
 .tfList>li{border:1px solid var(--line);border-radius:10px;background:#fff;min-width:0}
 .tfList>li.open{border-color:#c9d8f3}
 .tfRowButton{width:100%;display:flex;align-items:center;gap:11px;padding:10px 12px;border:0;background:transparent;border-radius:10px;text-align:left;min-height:52px;color:var(--text)}
-button.tfRowButton:hover:not(:disabled){background:#f7faff;border:0}
+button.tfRowButton:hover:not(:disabled){}
 .tfRowButton.static{cursor:default}
 .tfMark{display:grid;place-items:center;width:30px;height:30px;border-radius:8px;background:var(--accent-soft);color:var(--accent);font-size:12px;font-weight:650;flex-shrink:0}
 .tfMark.big{width:40px;height:40px;border-radius:11px;font-size:16px}
@@ -158,8 +158,8 @@ button.tfRowButton:hover:not(:disabled){background:#f7faff;border:0}
 .tfChip{display:inline-flex;border:1px solid var(--line);border-radius:99px;overflow:hidden;background:#fff}
 .tfChip button{border:0;border-radius:0;min-height:28px;padding:3px 11px;font-size:12px;background:transparent}
 .tfChip button+button{border-left:1px solid var(--line);color:var(--muted);padding:3px 9px}
-.tfChip button:hover:not(:disabled){background:var(--accent-soft);border:0;color:var(--accent)}
-.tfChip button+button:hover:not(:disabled){border-left:1px solid var(--line)}
+.tfChip button:hover:not(:disabled){}
+.tfChip button+button:hover:not(:disabled){}
 .tfAddButton{border-style:dashed;color:var(--accent);background:transparent;min-height:40px}
 .tfForm{display:grid;gap:12px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--canvas)}
 .tfForm label{gap:6px}
@@ -191,7 +191,7 @@ button.tfRowButton:hover:not(:disabled){background:#f7faff;border:0}
 .tfPickSource.hasSelection{border-color:#bcd0f2}
 .tfPickSource>summary{display:flex;align-items:center;gap:12px;padding:16px;cursor:pointer;list-style:none;min-width:0;border-radius:12px}
 .tfPickSource>summary::-webkit-details-marker{display:none}
-.tfPickSource>summary:hover{background:var(--canvas)}
+.tfPickSource>summary:hover{}
 .tfPickSource>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .tfPickSource>summary>.uiIcon{color:var(--muted);flex-shrink:0}
 .tfPickSource[open]>summary>.uiIcon{transform:rotate(90deg)}
@@ -204,7 +204,7 @@ button.tfRowButton:hover:not(:disabled){background:#f7faff;border:0}
 .tfPickModelHint{display:flex;justify-content:space-between;gap:8px;margin:0 0 8px;font-size:11px;color:var(--muted)}
 .tfPickOptions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .tfPickRow{width:100%;justify-content:flex-start;gap:12px;min-height:72px;padding:12px;border:1px solid var(--line);background:var(--surface);border-radius:10px;text-align:left;color:var(--text);min-width:0}
-.tfPickRow:hover:not(:disabled){background:var(--canvas);border-color:#bcd0f2}
+.tfPickRow:hover:not(:disabled){}
 .tfPickRow:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .tfPickRowText{display:grid;gap:4px;min-width:0;flex:1}
 .tfPickRowText strong{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -242,7 +242,7 @@ button.tfRowButton:hover:not(:disabled){background:#f7faff;border:0}
 to{opacity:1;transform:none}
 }
 .tfRepairFab{position:fixed;right:20px;bottom:20px;z-index:40;gap:8px;min-height:44px;padding:0 16px 0 14px;border:0;border-radius:99px;background:var(--accent);color:#fff;font-size:13px;font-weight:600;box-shadow:0 10px 28px #2563eb47}
-.tfRepairFab:hover:not(:disabled){background:#1d4ed8;border:0;color:#fff}
+.tfRepairFab:hover:not(:disabled){}
 .tfRepairFab.busy:after{content:"";width:8px;height:8px;border-radius:50%;background:#fbbf24;box-shadow:0 0 0 3px #fbbf2440}
 .tfRepairHead .textButton{font-size:12px;flex-shrink:0}
 .tfRepairHead{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line)}
@@ -347,7 +347,7 @@ to{opacity:1;transform:none}
 .tfKeysHead>button{display:flex;align-items:center;gap:6px;flex-shrink:0}
 .tfKeyGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));gap:20px;align-items:start}
 .tfKeyCard{min-width:0;border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow:hidden;transition:border-color .16s ease}
-.tfKeyCard:hover{border-color:color-mix(in srgb,var(--accent) 40%,var(--line))}
+.tfKeyCard:hover{}
 .tfKeyCard.off{background:var(--canvas)}
 .tfKeyCardMain{display:block;width:100%;border:0;border-radius:0;background:transparent!important;color:inherit;text-align:left;padding:22px;cursor:pointer}
 .tfKeyCardMain:focus-visible{outline:2px solid var(--accent);outline-offset:-3px}
@@ -459,7 +459,7 @@ to{opacity:1;transform:none}
 }
 .tfRange{display:inline-flex;gap:2px;padding:2px;border-radius:9px;background:var(--soft);flex-shrink:0}
 .tfRange button{min-height:28px;padding:3px 11px;border:0;background:transparent;border-radius:7px;font-size:12px;color:var(--muted)}
-.tfRange button:hover:not(:disabled){background:transparent;border:0;color:var(--text)}
+.tfRange button:hover:not(:disabled){}
 .tfRange button[aria-pressed=true]{background:var(--surface);color:var(--accent);font-weight:600;box-shadow:0 1px 2px #0f172a14}
 .tfRange button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .tfUsageSummary{display:grid;gap:14px;padding:18px 20px;border:1px solid var(--line);border-radius:12px;background:var(--surface);min-width:0}
@@ -489,7 +489,7 @@ to{opacity:1;transform:none}
 .tfDaily{margin:0;display:grid;gap:6px;min-width:0}
 .tfDailyBars{display:flex;align-items:flex-end;gap:3px;height:72px;padding:0 2px;border-bottom:1px solid var(--line)}
 .tfDailyBars i{flex:1;min-width:2px;border-radius:3px 3px 0 0;background:color-mix(in srgb,var(--accent) 65%,#fff)}
-.tfDailyBars i:hover{background:var(--accent)}
+.tfDailyBars i:hover{}
 .tfDailyBars i.quiet{background:var(--line)}
 .tfDaily figcaption{display:flex;justify-content:space-between;gap:12px;font-size:10px;color:var(--muted)}
 .tfUsageColumns{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));gap:16px;align-items:start}
@@ -549,11 +549,11 @@ to{opacity:1;transform:none}
 .tfTraceLane .lane-1{background:#9a78c5}
 .tfTraceLane .lane-2{background:#dc902c}
 .tfTraceLane .failed{background:var(--danger)}
-.tfTraceLane button:hover{filter:brightness(.85)}
+.tfTraceLane button:hover{}
 .tfTraceList{list-style:none;padding:0;margin:0;max-height:460px;overflow:auto}
 .tfTraceList li+li{border-top:1px solid var(--line)}
 .tfTraceList li>button{width:100%;display:flex;align-items:center;gap:12px;text-align:left;border:0;background:transparent;padding:12px 2px;border-radius:0}
-.tfTraceList li>button:hover{background:var(--soft)}
+.tfTraceList li>button:hover{}
 .tfTraceState{width:6px;height:6px;background:var(--success);border-radius:50%;flex-shrink:0}
 .tfTraceState.bad{background:var(--danger)}
 .tfTraceIdentity{flex:1;min-width:0}
@@ -576,7 +576,7 @@ to{opacity:1;transform:none}
 .tfUsageFoldHead{display:inline-flex;width:auto;max-width:100%;align-items:center;gap:7px;padding:6px 10px;border:0;border-radius:99px;background:#f0f2f5;font-size:12px;font-weight:400;color:var(--muted);text-align:left;min-height:30px}
 .tfUsageFoldHead b{font-weight:500;color:var(--text);font-variant-numeric:tabular-nums}
 .tfUsageFoldHead .uiIcon:last-child{margin-left:3px;transform:rotate(90deg)}
-.tfUsageFoldHead:hover{background:#e8ecf2}
+.tfUsageFoldHead:hover{}
 .tfUsageFoldHead[aria-expanded=true]{color:var(--accent,#2563eb)}
 .tfUsagePopover{position:fixed;z-index:100;width:360px;max-width:calc(100vw - 24px);max-height:calc(100vh - 24px);overflow:auto;background:var(--surface,#fff);border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:0 10px 40px #1c253618;font-size:13px}
 .tfUsagePopover>header{display:flex;align-items:center;gap:8px;padding-bottom:14px;border-bottom:1px solid var(--line);font-size:14px}
@@ -690,7 +690,7 @@ to{transform:translate(0)}
 .tfPickerFooter{padding:16px 20px;flex-wrap:wrap}
 }
 .tfDragHandle{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:26px;min-width:26px;min-height:28px;padding:4px;border:0;background:transparent;color:var(--muted);cursor:grab;touch-action:none}
-.tfDragHandle:hover:not(:disabled){color:var(--text);background:var(--canvas)}
+.tfDragHandle:hover:not(:disabled){}
 .tfDragHandle:active{cursor:grabbing}
 .tfDragHandle:disabled{opacity:.35;cursor:default}
 .tfDragHandle:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
@@ -864,7 +864,7 @@ to{transform:translate(0)}
 .tfAccountModelDetail .tfAccountModels li.tfDragRow{display:flex;gap:8px;padding:16px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);min-width:0}
 .tfCatalogModelName{flex:1;min-width:0;line-height:1.5}
 .tfCatalogModelName strong{font-weight:550}
-.tfAccountModelDetail .tfAccountModels li.tfDragRow:hover{background:var(--canvas);border-color:#c6d5eb}
+.tfAccountModelDetail .tfAccountModels li.tfDragRow:hover{}
 .tfAccountModelDetail .tfAccountModels li button:last-child{flex-shrink:0}
 .tfCatalogToolbar .tfOrder{border:0;background:transparent}
 @media(max-width:700px){.tfAccountModelDetail .tfAccountModels ul{grid-template-columns:minmax(0,1fr)}
@@ -876,11 +876,11 @@ to{transform:translate(0)}
 .tfCatalogModelName{display:flex;align-items:center}
 .tfCatalogModelName strong{margin:0}
 .tfHeatmap button.hoverWeek,.tfHeatmap button.selectedWeek{filter:none;outline:0;box-shadow:none}
-.tfHeatmap button.hoverWeek.level0{background:#d3e8ff!important}
-.tfHeatmap button.hoverWeek.level1{background:#99cbff!important}
-.tfHeatmap button.hoverWeek.level2{background:#469fee!important}
-.tfHeatmap button.hoverWeek.level3{background:#1465b8!important}
-.tfHeatmap button.hoverWeek.level4{background:#0d4f97!important}
+
+
+
+
+
 .tfAccountColumns{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.8fr);gap:32px;margin-top:24px;align-items:start;transition:grid-template-columns .18s ease}
 .tfAccountColumns.active-quota{grid-template-columns:minmax(0,1.4fr) minmax(0,1fr)}
 .tfAccountColumns>section{min-width:0}
@@ -979,7 +979,7 @@ to{transform:translate(0)}
 .tfAgentPicked>header b{font-size:11px;font-weight:550;padding:2px 6px;border-radius:5px;background:var(--accent-soft);color:var(--accent);margin-left:4px}
 .tfAgentPicked ul{list-style:none;display:flex;flex-wrap:wrap;align-content:start;gap:6px;padding:2px 0;margin:0;max-height:112px;overflow:auto;overscroll-behavior:contain}
 .tfAgentPickedTag{display:flex;align-items:center;gap:6px;max-width:calc(50% - 3px);min-width:0;height:32px;padding:2px 6px 2px 2px;border:1px solid #dae5f5;border-radius:7px;background:#f5f8fd;transition:background .14s,border-color .14s}
-.tfAgentPickedTag:hover{background:var(--accent-soft);border-color:#b5cbef}
+.tfAgentPickedTag:hover{}
 .tfAgentPickedTag strong{font-size:11px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .tfAgentPickedTag .tfDragHandle{width:18px;min-width:18px;min-height:24px;padding:2px}
 .tfAgentPickedTag .iconButton{width:20px;min-width:20px;min-height:24px;padding:2px;color:var(--muted)}
@@ -989,7 +989,7 @@ to{transform:translate(0)}
 .tfAgentPickerSources{overflow:auto;min-height:0;overscroll-behavior:contain;padding:0 2px 16px 0;display:flex;flex-direction:column;gap:4px}
 .tfAgentPickerCaption{font-size:11px;color:var(--muted);padding:0 8px 8px}
 .tfAgentPickerSources button{display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:8px;text-align:left;align-items:center;min-height:60px;padding:8px;border:0;border-radius:8px;background:transparent;flex-shrink:0;transition:background .14s,color .14s}
-.tfAgentPickerSources button:hover{background:#f1f5fb}
+.tfAgentPickerSources button:hover{}
 .tfAgentPickerSources button[aria-selected=true]{background:var(--accent-soft);color:var(--accent)}
 .tfAgentPickerSources button>span{display:grid;gap:3px;min-width:0}
 .tfAgentPickerSources strong{font-size:12px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1010,7 +1010,7 @@ to{transform:translate(0)}
 .tfAgentPicker .tfPickOptions{display:flex;flex-direction:column;gap:4px}
 .tfAgentPicker .tfPickDraggableRow{display:grid;grid-template-columns:20px minmax(0,1fr);align-items:center;gap:4px;min-width:0;border-radius:8px}
 .tfAgentPicker .tfPickModel{display:flex;align-items:center;gap:10px;min-width:0;width:100%;min-height:46px;padding:10px;border:1px solid transparent;border-radius:8px;background:transparent;text-align:left;transition:background .14s,border-color .14s}
-.tfAgentPicker .tfPickModel:hover:not(:disabled){background:#f4f7fc;border-color:#e0e8f4}
+.tfAgentPicker .tfPickModel:hover:not(:disabled){}
 .tfAgentPicker .tfPickModel.on{background:var(--accent-soft);color:var(--accent);border-color:transparent}
 .tfAgentPicker .tfPickModel>span:nth-child(2){flex:1;min-width:0;display:grid;gap:3px}
 .tfAgentPicker .tfPickModel strong{font-size:12px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

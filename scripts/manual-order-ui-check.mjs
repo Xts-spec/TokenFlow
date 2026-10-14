@@ -5,7 +5,7 @@ export async function verifyManualOrdering({page,api,source,created,output}){
  const before=(await api('/api/gateway-keys')).keys.find(key=>key.id===created.key.id);
  const extra=await api('/api/gateway-keys',{name:'A Drag Key',purpose:'Manual sorting fixture',enabled:false,models:before.models,sourceId:source.id,agents:['openai'],tokenLimit:null});
  const nav=page.getByRole('navigation',{name:'主导航'});
- const proxy=async()=>{await nav.getByRole('button',{name:'API 代理',exact:true}).click();};
+ const proxy=async()=>{await nav.getByRole('button',{name:'CLI 代理',exact:true}).click();};
  await proxy();await page.setViewportSize({width:1320,height:900});await page.reload();await proxy();
  const card=page.getByRole('article',{name:'Z Key',exact:true}),other=page.getByRole('article',{name:'A Drag Key',exact:true});
  await page.getByRole('combobox',{name:'Key 排序',exact:true}).selectOption('name');
@@ -49,11 +49,10 @@ export async function verifyManualOrdering({page,api,source,created,output}){
  await page.screenshot({path:join(output,'manual-key-order.png')});
 
  await nav.getByRole('button',{name:'API 接口',exact:true}).click();
- const apiCard=page.getByRole('article',{name:'轨迹测试 API',exact:true});await apiCard.getByRole('button',{name:'支持模型（4）',exact:true}).click();
- assert.deepEqual(await apiCard.locator('.tfApiSourceModels li code').allTextContents(),['aaa-model','tool-model','model-10','model-2']);
- const apiRow=name=>apiCard.locator('.tfApiSourceModels li').filter({has:page.getByText(name,{exact:true})});
- await apiRow('model-2').getByRole('button',{name:'调整模型顺序',exact:true}).dragTo(apiRow('aaa-model'));
- assert.deepEqual(await apiCard.locator('.tfApiSourceModels li code').allTextContents(),['model-2','aaa-model','tool-model','model-10']);
+ const apiCard=page.getByRole('article',{name:'轨迹测试 API',exact:true});await apiCard.getByRole('button',{name:'翻面查看 轨迹测试 API 凭证',exact:true}).click({position:{x:8,y:8}});
+ assert.deepEqual(await apiCard.locator('.tfCredentialModels li code').allTextContents(),['aaa-model','tool-model','model-10','model-2']);
+ assert.equal(await apiCard.getByRole('button',{name:'复制全部',exact:true}).count(),1);
+ await apiCard.getByRole('button',{name:'返回 轨迹测试 API 卡片正面',exact:true}).click({position:{x:8,y:8}});
 
  await nav.getByRole('button',{name:'账号授权',exact:true}).click();
  const head=page.locator('.tfProviderHead');await head.locator('.tfUsageFoldHead').waitFor();

@@ -1,3 +1,4 @@
+import {callbackPage} from './callback-page.js';
 // 授权码 + 本机 loopback 回调流程（Codex / Claude / Antigravity）。
 import { createServer as createHTTPServer, type Server, type RequestListener } from 'node:http';
 import { z } from 'zod';
@@ -69,14 +70,14 @@ export async function listenForCallback(provider: LoginProvider, submit: (redire
   const {port, path} = callback;
   const handler: RequestListener = async (request, response) => {
     response.setHeader('Cache-Control', 'no-store');
-    response.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
-    response.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    response.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+    response.setHeader('Content-Type', 'text/html; charset=utf-8');
     if (request.method !== 'GET' || ![`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`].includes(request.headers.host ?? '') ||
         request.url?.split('?')[0] !== path) {response.writeHead(400); response.end('无效授权回调。'); return;}
     try {
       await submit(`http://localhost:${port}${request.url}`);
-      response.end('授权回调已收到。请返回 token-flow 查看连接结果，可以关闭此页面。');
-    } catch {response.writeHead(400); response.end('回调未被接受，可能已提交或会话已过期。请返回 token-flow 查看状态。');}
+      response.end(callbackPage(true));
+    } catch {response.writeHead(400); response.end(callbackPage(false));}
   };
   const servers: Server[] = [];
   try {

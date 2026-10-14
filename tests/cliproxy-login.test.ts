@@ -52,7 +52,7 @@ it('auto-starts, opens only official OAuth, confirms automatic callback and rest
   await manager.openLogin(snapshot.login!.id);expect(opened).toHaveLength(2);
   const state=new URL(snapshot.login!.url!).searchParams.get('state');
   expect((await fetch('http://127.0.0.1:1455/auth/callback?state=wrong&code=nope')).status).toBe(400);
-  expect((await fetch(`http://127.0.0.1:1455/auth/callback?state=${state}&code=fixture-code`)).ok).toBe(true);
+  const callback=await fetch(`http://127.0.0.1:1455/auth/callback?state=${state}&code=fixture-code`);expect(callback.ok).toBe(true);expect(callback.headers.get('content-type')).toContain('text/html');const confirmation=await callback.text();expect(confirmation).toContain('授权回调已收到');expect(confirmation).not.toContain('fixture-code');expect(confirmation).not.toContain(state);expect(callback.headers.get('cache-control')).toBe('no-store');
   await expect.poll(() => manager.snapshot().loginState).toBe('completed');
   snapshot=manager.snapshot();expect(snapshot.accounts[0].label).toBe('user@example.test');expect(snapshot.models[0].id).toBe('codex/fixture-codex-model');
   expect(JSON.stringify(snapshot)).not.toMatch(/never-expose|private\/credentials|fixture-key|code_challenge/);

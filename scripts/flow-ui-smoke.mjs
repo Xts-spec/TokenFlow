@@ -348,7 +348,7 @@ try{
   await deferRestart();
 
   // Other apps: a local API Key.
-  await nav.getByRole('button',{name:'API 代理'}).click();
+  await nav.getByRole('button',{name:'CLI 代理'}).click();
   const keys=page.getByRole('region',{name:'本地 API Key'});
   await keys.getByRole('button',{name:'创建 Key',exact:true}).click();
   await keys.getByLabel('名称',{exact:true}).fill('团队编码');await keys.getByLabel('用途',{exact:true}).fill('Cursor 日常开发');

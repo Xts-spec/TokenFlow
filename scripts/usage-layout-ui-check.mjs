@@ -27,10 +27,10 @@ export async function verifyUsageLayout({page,output}){
  await page.getByRole('button',{name:'活动',exact:true}).click();assert.equal(await page.locator('.tfUsageSummary,.tfBreakTabs').count(),0);
  await page.getByRole('button',{name:'设置',exact:true}).click();assert.equal(await page.locator('.tfUsageOverview').count(),0);
  await page.getByRole('button',{name:'用量总览',exact:true}).click();const tabs=page.getByRole('tablist',{name:'用量分类',exact:true});assert.equal(await tabs.getByRole('tab').count(),3);assert.equal(await page.locator('.tfCoverage,.tfTokenActivity footer').count(),0);assert.deepEqual(await page.locator('.tfUsageOverview h3').allTextContents().then(t=>t.slice(0,3)),['Token 活动']);
- for(const title of ['使用方式','登录/API','模型']){await tabs.getByRole('tab',{name:title,exact:true}).click();assert.equal(await page.locator('[role=tabpanel] .tfBreakdown').count(),1);}
+ for(const title of ['使用方式','来源','模型']){await tabs.getByRole('tab',{name:title,exact:true}).click();assert.equal(await page.locator('[role=tabpanel] .tfBreakdown').count(),1);}
  const overview=page.getByRole('region',{name:'用量总览',exact:true});
  assert.equal(await overview.getByRole('region',{name:'官方账号与 API Key',exact:true}).count(),0);
- assert.equal(await overview.getByRole('region',{name:'本地 Agent 与 API 代理',exact:true}).count(),0);
+ assert.equal(await overview.getByRole('region',{name:'本地 Agent 与 CLI 代理',exact:true}).count(),0);
  assert.equal(await overview.locator('.tfTokenTrend,.tfOverviewCharts').count(),0);
  for(const width of [1320,480]){await page.setViewportSize({width,height:900});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:join(output,`settings-charts-${width}.png`)});}
  await page.setViewportSize({width:1320,height:900});

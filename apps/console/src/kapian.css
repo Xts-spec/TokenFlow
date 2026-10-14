@@ -1,0 +1,95 @@
+/* Compact desktop surfaces, with disclosure reserved for credentials and details. */
+.tfPage,.tfPage.tfApiPage,.tfPage.tfProxyPage{max-width:1440px;padding:14px 24px 40px;gap:16px}
+.tfCollectionHead{margin-bottom:18px}
+.tfCollectionHead h2{font-size:18px}
+.tfCollectionHead p{margin-top:5px}
+.tfPanel,.tfProviderPanel{border:0;padding:20px;border-radius:12px}
+.tfRail{position:relative;min-width:0}
+.tfRailTrack{flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin;scrollbar-color:var(--line) transparent;padding:4px 2px 10px;scroll-padding-inline:32px}
+.tfRailTrack>button{flex-shrink:0}
+.tfRailArrow{position:absolute;top:50%;transform:translateY(-50%);z-index:2;width:28px;min-height:32px;padding:0;border:1px solid var(--line);background:var(--surface);box-shadow:0 2px 8px #17243b12;border-radius:8px;color:var(--muted)}
+.tfRailArrow.previous{left:0}
+.tfRailArrow.previous svg{transform:rotate(180deg)}
+.tfRailArrow.next{right:0}
+.tfTiles{gap:6px}
+.tfTile{flex:1 0 126px;min-height:66px;gap:8px;padding:10px;border:0;background:transparent;border-radius:8px}
+.tfTile .tfProviderIcon{width:24px;height:24px}
+.tfTile:hover:not(:disabled){}
+.tfTile[aria-selected=true]{background:var(--surface);border:0;box-shadow:0 1px 3px #17243b0d}
+.tfTileText strong{font-size:12px;white-space:normal;line-height:1.4}
+.tfTileText small{font-size:10px;max-width:120px}
+.tfTile .dot{top:7px;right:7px;width:5px;height:5px}
+.tfProviderTabs>button,.tfProviderTabs>button:hover,.tfProviderTabs>button[aria-selected=true]{}
+.tfProviderTabs>button[aria-selected=true]{background:var(--surface);color:var(--accent)}
+.tfAccountTabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin;overscroll-behavior-x:contain}
+.tfAccountTabs>button{flex-shrink:0;max-width:300px}
+.tfApiSourceGrid,.tfKeyGrid{gap:16px}
+.tfApiSourceCard,.tfKeyCard{border:1px solid color-mix(in srgb,var(--line) 65%,transparent);border-radius:14px;transition:box-shadow .18s,border-color .18s}
+.tfApiSourceCard:hover,.tfKeyCard:hover{}
+.tfApiSourceIcon{background:transparent;width:26px;height:28px;border-radius:0}
+.tfApiSourceHead{gap:10px}
+.tfApiSourceHead h3,.tfKeyCard h3{font-size:16px}
+.tfApiSourceBody{padding:20px;display:flex;flex-direction:column}
+.tfApiAddress{margin-top:20px}
+.tfFlipAction{justify-content:flex-start;gap:6px;font-size:11px;margin-top:auto;padding:16px 0 0;align-self:flex-start;color:var(--muted)}
+.tfFlipAction:hover:not(:disabled){}
+.tfApiSourceCard>footer{border-top:0;padding:8px 16px 14px;gap:4px}
+.tfApiSourceCard>footer button{font-size:11px;min-height:30px;padding:4px}
+.tfCredential{perspective:1200px}
+.tfCredentialInner{display:grid;transform-style:preserve-3d;transition:transform .42s cubic-bezier(.22,1,.36,1)}
+.tfCredential.flipped .tfCredentialInner{transform:rotateY(180deg)}
+.tfCredentialFace{grid-area:1/1;min-width:0;min-height:190px;backface-visibility:hidden;-webkit-backface-visibility:hidden}
+.tfCredentialBack{transform:rotateY(180deg);padding:18px 20px;display:flex;flex-direction:column;gap:12px;background:var(--soft)}
+.tfCredentialBack>header{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11px;color:var(--muted)}
+.tfCredentialBack>header span,.tfCredentialBack>header button{display:flex;align-items:center;gap:6px}
+.tfCredentialBack>strong{font-size:13px;overflow-wrap:anywhere}
+.tfCredentialBack label{font-size:11px}
+.tfCredentialBack .inputAction{margin-top:6px}
+.tfCredentialBack .inputAction input{width:100%;min-width:0;font-size:12px}
+.tfCredentialBack .inputAction button{padding:6px 8px;font-size:11px}
+.tfCredentialBack .tfHint{font-size:10px;margin:0}
+.tfKeyCardMain{min-height:210px;padding:20px}
+.tfKeyPreview{margin-bottom:20px}
+.tfKeyTotal b{font-size:20px}
+.tfKeysHead{justify-content:space-between;margin-bottom:2px}
+/* These focused tasks float above the collection and return to the same card on close. */
+.tfDialog.tfKeyDetail,.tfDialog.tfAgentPicker,.tfDialog.tfApiEditorDialog{inset:0;margin:auto;width:min(900px,calc(100vw - 64px));height:min(780px,calc(100dvh - 80px));max-height:calc(100dvh - 80px);border:1px solid var(--line);border-radius:18px;box-shadow:0 24px 80px #17243b29;overflow:auto}
+.tfDialog.tfApiEditorDialog{width:min(720px,calc(100vw - 64px));height:fit-content}
+.tfDialog.tfNativeMacDialog.tfKeyDetail,.tfDialog.tfNativeMacDialog.tfAgentPicker,.tfDialog.tfNativeMacDialog.tfApiEditorDialog{top:40px;max-height:calc(100dvh - 96px)}
+.tfDialog.tfAgentPicker{overflow:hidden}
+.tfKeyDetail .tfDialogContent,.tfApiEditorDialog .tfDialogContent{padding:0 28px 28px}
+.tfKeyDetail .tfDialogContent>header,.tfApiEditorDialog .tfDialogContent>header{top:0;padding:24px 0 16px;margin-bottom:12px}
+.tfKeyDetail .tfDialogContent>header h2,.tfApiEditorDialog .tfDialogContent>header h2{font-size:18px}
+.tfDialog.tfKeyDetail::backdrop,.tfDialog.tfAgentPicker::backdrop,.tfDialog.tfApiEditorDialog::backdrop{background:#17243b33;backdrop-filter:blur(3px)}
+.tfDialog.tfKeyDetail[open],.tfDialog.tfAgentPicker[open],.tfDialog.tfApiEditorDialog[open]{animation:tfSurfaceEnter .22s cubic-bezier(.22,1,.36,1)}
+.tfApiEditorDialog .tfApiEditor{border:0;margin:0;padding:0;gap:20px}
+.tfApiEditorDialog .tfApiEditor>.tfHint{margin:0}
+.tfDetailManage{gap:8px;flex-wrap:wrap}
+.tfDetailManage>button{border:0;background:transparent;font-size:12px}
+.tfDetailTabs{margin:16px 0}
+.tfKeyModels{gap:12px}
+.tfKeyModels li{padding-bottom:12px}
+.tfAgentPickedTag{height:auto;min-height:30px;max-width:100%;border:0;background:var(--soft);border-radius:6px}
+.tfAgentPickedTag strong{white-space:normal;overflow-wrap:anywhere;line-height:1.5}
+.tfAgentPicked>header button{font-size:11px;min-height:24px;padding:2px 0}
+.tfAgentPickerBrowser{grid-template-columns:200px minmax(0,1fr);gap:20px}
+.tfAgentPicker .tfPickModel{min-height:58px;border:0}
+.tfAgentPicker .tfPickModel:hover:not(:disabled){}
+.tfAgentPicker .tfPickModel strong{white-space:normal;overflow-wrap:anywhere;line-height:1.5}
+.tfAgentPicker .tfModelIdentity{overflow-wrap:anywhere;font-size:10px;line-height:1.5}
+.tfAgentPickerCatalog>header{flex-wrap:wrap;column-gap:8px}
+.tfAgentPickerCatalog>header>.textButton{font-size:11px;min-height:28px;padding:4px 0;margin-left:auto}
+.tfAgentPickerSources strong,.tfAgentPickerSources small{white-space:normal;overflow-wrap:anywhere;line-height:1.5}
+.tfAgentPicker .tfDialogContent>footer{box-shadow:none;border-top:1px solid var(--line)}
+@keyframes tfSurfaceEnter{from{opacity:0;transform:translateY(12px) scale(.985)}to{opacity:1;transform:none}}
+@media(min-width:1600px){.tfPage{padding-inline:28px}}
+@media(max-width:760px){.tfPage,.tfPage.tfApiPage,.tfPage.tfProxyPage{padding:12px 16px 32px}.tfPanel,.tfProviderPanel{padding:16px}.tfTile{flex-basis:138px}.tfAccountTabs>button{width:auto}.tfDialog.tfKeyDetail,.tfDialog.tfAgentPicker,.tfDialog.tfApiEditorDialog{width:calc(100vw - 24px);height:calc(100dvh - 32px);max-height:calc(100dvh - 32px);border-radius:14px}.tfDialog.tfApiEditorDialog{height:fit-content}.tfDialog.tfNativeMacDialog.tfKeyDetail,.tfDialog.tfNativeMacDialog.tfAgentPicker,.tfDialog.tfNativeMacDialog.tfApiEditorDialog{max-height:calc(100dvh - 64px)}.tfKeyDetail .tfDialogContent,.tfApiEditorDialog .tfDialogContent{padding:0 18px 20px}.tfKeyDetail .tfDialogContent>header,.tfApiEditorDialog .tfDialogContent>header{padding-top:20px;flex-wrap:wrap}.tfAgentPickerBrowser{grid-template-columns:140px minmax(0,1fr);gap:12px}.tfAgentPicker .tfPickModel{padding:8px}.tfAgentPickerQuota>div{position:fixed;top:24%;right:24px;max-width:calc(100vw - 48px)}}
+@media(max-width:400px){.tfAgentPickerBrowser{grid-template-columns:108px minmax(0,1fr);gap:8px}.tfAgentPickerSources button{padding:6px}.tfAgentPicker .tfDialogContent>footer{gap:8px}.tfAgentPicker footer>span{font-size:11px}}
+@media(prefers-reduced-motion:reduce){.tfCredentialInner{transition:none}.tfDialog.tfKeyDetail[open],.tfDialog.tfAgentPicker[open],.tfDialog.tfApiEditorDialog[open]{animation:none}.tfApiSourceCard,.tfKeyCard{transition:none}}
+/* Explicit split controls replace implicit changes in column width. */
+@media(min-width:951px){.tfAccountColumns,.tfAgentColumns.hasLogin{grid-template-columns:minmax(0,var(--split,36%)) 8px minmax(0,1fr);gap:12px}.tfColumnDivider{display:block;align-self:stretch;min-height:180px;position:relative;cursor:col-resize;touch-action:none;border-radius:6px}.tfColumnDivider::after{content:"";position:absolute;width:1px;inset:0 auto 0 50%;background:var(--line);transition:background .15s}.tfColumnDivider:hover::after,.tfColumnDivider:focus-visible::after,.tfSplitDragging .tfColumnDivider::after{}.tfColumnDivider:focus-visible{outline:2px solid var(--accent);outline-offset:3px}.tfSplitDragging{user-select:none;cursor:col-resize}}
+@media(max-width:950px){.tfColumnDivider{display:none}}
+.tfAgentPickerSearch{background:var(--soft);border-color:transparent}
+.tfAgentPickerSearch input,.tfAgentPickerSearch:focus-within input{background:transparent;border:0}
+.tfAgentPickerSearch:focus-within{background:var(--surface);border-color:#b5cbef;box-shadow:0 0 0 2px #2563eb0a}
+.tfAgentPicker .tfAgentPickCheck.on{background:var(--accent);color:var(--surface)}

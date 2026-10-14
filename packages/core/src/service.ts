@@ -130,7 +130,7 @@ export async function createDesktopService(options:ServiceOptions) {
       if(runConfig.historyMode==='previous_response_id'&&!runProbe.previousResponseId)throw new Error('当前 Provider 不支持 previous_response_id，请选择无状态历史。');
       if(runConfig.reasoning!=='off'&&!runProbe.reasoning)throw new Error('当前 Provider 未通过 reasoning 探测');
       const endpoint=browserSource==='extension'?extension.endpoint():await host.open();
-      session=await launchJavaScriptSession({endpoint,workerPath:fileURLToPath(new URL(import.meta.url.endsWith('.ts')?'./javascript-worker.ts':'./javascript-worker.js',import.meta.url)),browserMode:options.headless?'headless':'headful',screenshotDir:context.screenshotDirectory,targetLabel:browserSource==='extension'?'Chrome / selected tab':'token-flow Browser / default',url:'',signal:context.signal,executionTimeoutMs:desktopControl?60000:30000,desktop:desktopControl});
+      session=await launchJavaScriptSession({endpoint,workerPath:fileURLToPath(new URL(import.meta.url.endsWith('.ts')?'./javascript-worker.ts':'./javascript-worker.js',import.meta.url)),browserMode:options.headless?'headless':'headful',screenshotDir:context.screenshotDirectory,targetLabel:browserSource==='extension'?'Chrome / selected tab':'TokenFlow Browser / default',url:'',signal:context.signal,executionTimeoutMs:desktopControl?60000:30000,desktop:desktopControl});
       await context.syncBrowserState(session);
       await context.captureScreenshot(session,'start');
       const initial=await session.readState();
@@ -593,7 +593,7 @@ export async function createDesktopService(options:ServiceOptions) {
     const gateway=ledger.list(0).map(row=>({...row,origin:'gateway' as const,channel:sources.has(row.sourceId)||row.model.startsWith('api-')?'api' as const:'official' as const,provider:row.model.split('/')[0]}));
     const nativeRows=native.rows.map(row=>({...row,sourceId:row.channel==='official'&&row.nativeAccountId?identities.get(row.nativeAccountId)??'':''}));
     const allRows=[...gateway,...nativeRows];const cutoff=new Date();cutoff.setDate(cutoff.getDate()-Math.max(0,days-1));const day=`${cutoff.getFullYear()}-${String(cutoff.getMonth()+1).padStart(2,'0')}-${String(cutoff.getDate()).padStart(2,'0')}`;const keep=(r:{day:string})=>!days||r.day>=day;
-    return {rows:gateway.filter(keep),nativeRows:nativeRows.filter(keep),combinedRows:allRows.filter(keep),allRows,coverage:native.coverage,scanning:native.scanning,generatedAt:native.updatedAt??new Date().toISOString(),warning:native.warning||ledger.warning||'',note:'本机记录与网关用量合并；带有 token-flow 路由标记的本机请求不重复累计。没有历史账号或渠道标记时单独显示，官方额度不换算为 Token。'};
+    return {rows:gateway.filter(keep),nativeRows:nativeRows.filter(keep),combinedRows:allRows.filter(keep),allRows,coverage:native.coverage,scanning:native.scanning,generatedAt:native.updatedAt??new Date().toISOString(),warning:native.warning||ledger.warning||'',note:'本机记录与网关用量合并；带有 TokenFlow 路由标记的本机请求不重复累计。没有历史账号或渠道标记时单独显示，官方额度不换算为 Token。'};
   });
   app.get('/api/gateway-keys', async()=>({keys:gatewayKeys.list()}));
   const scopedInput = async (body: unknown, existingId?: string, modelOnly=false) => {

@@ -1,5 +1,5 @@
 {
-  "name": "token-flow",
+  "name": "tokenflow",
   "version": "10.13.26",
   "private": true,
   "type": "module",
@@ -39,7 +39,10 @@
     "package:mac:intel": "node scripts/build-sidecar.mjs darwin-x64 && npm run build && electron-builder --mac --x64 --dir --publish never",
     "test:notification-hit": "node scripts/notification-hit-smoke.mjs",
     "test:usage-overview": "node scripts/usage-overview-ui-smoke.mjs",
-    "test:key-detail-return": "node scripts/key-detail-return-smoke.mjs"
+    "test:key-detail-return": "node scripts/key-detail-return-smoke.mjs",
+    "test:cards": "node scripts/card-interface-ui-smoke.mjs",
+    "test:refinement": "node scripts/refinement-ui-smoke.mjs",
+    "icon:render": "node scripts/render-app-icon.mjs"
   },
   "dependencies": {
     "@cua-sample/contracts": "*",
@@ -75,7 +78,7 @@
   "build": {
     "buildVersion": "10.13.26.1",
     "appId": "local.browseragent.desktop",
-    "productName": "token-flow",
+    "productName": "TokenFlow",
     "files": [
       "dist/**",
       "package.json"

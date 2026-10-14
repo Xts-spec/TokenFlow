@@ -52,7 +52,7 @@ export async function verifyOtherDetailReturns({page,api,models,source,output}){
  };
  for(const width of [1024,480]){
   await page.setViewportSize({width,height:800});
-  await nav.getByRole('button',{name:'API 代理',exact:true}).click();
+  await nav.getByRole('button',{name:'CLI 代理',exact:true}).click();
   const cards=page.locator('.tfKeyCard');
   await page.getByRole('combobox',{name:'Key 排序',exact:true}).selectOption('name');
   await cards.last().getByRole('button',{name:'调整 Key 顺序',exact:true}).dragTo(cards.first());
@@ -97,14 +97,17 @@ export async function verifyOtherDetailReturns({page,api,models,source,output}){
 
   await nav.getByRole('button',{name:'API 接口',exact:true}).click();
   const apiCard=page.getByRole('article',{name:source.name,exact:true});
-  const apiModelsOpen=apiCard.getByRole('button',{name:'支持模型（16）',exact:true});await apiModelsOpen.scrollIntoViewIfNeeded();const apiModelBefore=await location();await apiModelsOpen.click();
-  const apiRows=apiCard.locator('.tfApiSourceModels li');if(width>=700)await apiRows.nth(2).getByRole('button',{name:'调整模型顺序',exact:true}).dragTo(apiRows.first());
-  const apiOrder=await apiRows.locator('code').allTextContents(),apiRanks=await ranks();
+  assert.equal(await apiCard.getByRole('button',{name:/支持模型/}).count(),0,'model copies live on the credential face');
+  await apiCard.getByRole('button',{name:`翻面查看 ${source.name} 凭证`,exact:true}).click({position:{x:8,y:8}});
+  const apiRows=apiCard.locator('.tfCredentialModels li');assert.equal(await apiRows.count(),16);
+  const apiOrder=await apiRows.locator('code').allTextContents();
+  await apiCard.getByRole('button',{name:`返回 ${source.name} 卡片正面`,exact:true}).click({position:{x:8,y:8}});
   const edit=apiCard.getByRole('button',{name:'编辑',exact:true});await edit.scrollIntoViewIfNeeded();const apiBefore=await location();
   await edit.click();const editor=page.locator('.tfApiEditor');await editor.waitFor();await editor.hover();await page.mouse.wheel(0,1200);
   await editor.getByRole('button',{name:'取消',exact:true}).click();await editor.waitFor({state:'hidden'});
-  assert.deepEqual(await location(),apiBefore,'API editor: returning must preserve the source list position');assert.deepEqual(await apiRows.locator('code').allTextContents(),apiOrder);assert.deepEqual(await ranks(),apiRanks);
-  await main.hover();await page.mouse.wheel(0,900);await apiCard.getByRole('button',{name:'收起模型',exact:true}).click();assert.deepEqual(await location(),apiModelBefore,'API models: collapsing must restore the original list position');await apiModelsOpen.click();assert.deepEqual(await apiRows.locator('code').allTextContents(),apiOrder);
+  assert.deepEqual(await location(),apiBefore,'API editor: returning preserves the card position');
+  await apiCard.getByRole('button',{name:`翻面查看 ${source.name} 凭证`,exact:true}).click({position:{x:8,y:8}});assert.deepEqual(await apiRows.locator('code').allTextContents(),apiOrder);
+  await apiCard.getByRole('button',{name:`返回 ${source.name} 卡片正面`,exact:true}).click({position:{x:8,y:8}});
 
   await nav.getByRole('button',{name:'账号授权',exact:true}).click();await page.getByRole('tab',{name:/^Codex/}).click();
   const account=page.locator('.tfAccountDetail');assert.equal(await account.getByRole('button',{name:/查看模型/}).count(),0);const accountRows=account.locator('.tfAccountModels li');assert.equal(await accountRows.count(),16);const quotaSide=account.getByRole('region',{name:'账号额度',exact:true}),modelSide=account.getByRole('region',{name:'账号模型',exact:true});if(width>=950){const modelWidth=(await modelSide.boundingBox()).width;assert.ok(modelWidth>(await quotaSide.boundingBox()).width);await quotaSide.hover();await page.waitForTimeout(220);assert.equal((await modelSide.boundingBox()).width,modelWidth);await modelSide.hover();await page.waitForTimeout(220);}
@@ -126,10 +129,12 @@ export async function verifyOtherDetailReturns({page,api,models,source,output}){
   await modelTrigger.click();await repair.getByRole('textbox').click();await repairMenu.waitFor({state:'hidden'});assert.equal(await repair.isVisible(),true);
   // Opening a child dialog does not collapse its parent chat.
 
-  await repair.getByRole('button',{name:'修改 Agent 配置',exact:true}).click();
-  await modal('Agent 的来源和模型',repair.getByRole('region',{name:'修改 Agent 配置',exact:true}).getByRole('button',{name:/model-|选择来源和模型/}).first(),{escape:width<700,outside:width>=700});
-  await repair.getByRole('region',{name:'修改 Agent 配置',exact:true}).getByRole('button',{name:'取消',exact:true}).click();await page.mouse.click(20,Math.min(500,(await repair.boundingBox()).y+30));await repair.waitFor({state:'hidden'});await page.getByRole('button',{name:'打开维修师傅',exact:true}).click();assert.equal(await repair.getByText(issuePrompt,{exact:true}).count(),1);await repair.getByRole('button',{name:'收起',exact:true}).click();await page.unroute('**/api/maintenance');await page.unroute('**/api/maintenance/run');
+  assert.equal(await repair.getByRole('button',{name:'修改 Agent 配置',exact:true}).count(),0);
+  const repairTarget=repair.getByRole('combobox',{name:'维修目标 Agent',exact:true});await repairTarget.selectOption('pi');assert.equal(await repairTarget.inputValue(),'pi');
+  await repair.getByRole('button',{name:'收起',exact:true}).click();await page.getByRole('button',{name:'打开维修师傅',exact:true}).click();assert.equal(await repairTarget.inputValue(),'pi');
+  await repair.getByRole('button',{name:'收起',exact:true}).click();await page.unroute('**/api/maintenance');await page.unroute('**/api/maintenance/run');
+
   await page.screenshot({path:join(output,`other-pages-${width}.png`)});
  }
- console.log(JSON.stringify({otherDetailReturns:'passed',checked:results,inlineAccountAndAPIDetails:true,listPositionsAndDragOrderPreserved:true}));
+ console.log(JSON.stringify({otherDetailReturns:'passed',checked:results,credentialModels:true,listPositionsAndDragOrderPreserved:true}));
 }

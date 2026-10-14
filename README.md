@@ -1,12 +1,12 @@
 <div align="center">
-  <img src="apps/console/public/logo.svg" width="64" alt="token-flow" />
-  <h1>token-flow</h1>
+  <img src="apps/console/public/logo.svg" width="64" alt="TokenFlow" />
+  <h1>TokenFlow</h1>
   <p><strong>让你的模型，流向每个 Agent。</strong></p>
 </div>
 
-token-flow 是本地桌面模型网关：集中管理 GPT/Codex 等平台的多个账号与独立 API，查看来源模型和额度，再把 WorkBuddy、Qoder 等账号可用的模型接入 Codex、Claude Code 等开发工具。
+TokenFlow 是本地桌面模型网关：集中管理 GPT/Codex 等平台的多个账号与独立 API，查看来源模型和额度，再把 WorkBuddy、Qoder 等账号可用的模型接入 Codex、Claude Code 等开发工具。
 
-既可以切换 Agent 自己的官方登录，也可以通过本地网关反代所选来源。你继续在熟悉的客户端工作，token-flow 管理模型选择、配置备份、独立 Key、协议转换和用量记录。
+既可以切换 Agent 自己的官方登录，也可以通过本地网关反代所选来源。你继续在熟悉的客户端工作，TokenFlow 管理模型选择、配置备份、独立 Key、协议转换和用量记录。
 
 **[访问官网](https://token-flow.haruinia.chatgpt.site/)** · **[观看中文使用演示](docs/media/quickstart.mp4)** · **[查看使用指南](docs/usage.md)**
 
@@ -18,7 +18,7 @@ token-flow 是本地桌面模型网关：集中管理 GPT/Codex 等平台的多�
 
 在 **账号授权 → Codex** 分别添加 ChatGPT / OpenAI 账号，按账号查看模型、5 小时 / 周等可查询额度。在 **本地 Agent → Codex → 官方登录账号** 选择账号，保存工作并完全退出重开 Codex，加载新的登录状态。
 
-切换官方账号会恢复接入前的接口；官方直连的逐次请求不经过 token-flow。此功能切换 Codex 的登录，不修改 ChatGPT 网页的浏览器登录。
+切换官方账号会恢复接入前的接口；官方直连的逐次请求不经过 TokenFlow。此功能切换 Codex 的登录，不修改 ChatGPT 网页的浏览器登录。
 
 ### WorkBuddy、Qoder 等来源额度反代
 

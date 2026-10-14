@@ -1,5 +1,6 @@
-import {DragHandle,dropOrder,ModelOrderControl,orderModels,useModelOrder} from './display-order';
-import { useRef, useState } from 'react';
+import {orderModels,useModelOrder} from './display-order';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {FlowDialog} from './FlowDialog';
 import type { ApiSource } from '../../../packages/core/src/api-sources';
 import type { LocalAgentSnapshot } from '../../../packages/core/src/cliproxy';
 import { requestJSON } from './request';
@@ -7,6 +8,8 @@ import { Icon } from './Icons';
 import { parseModels, protocolNames, validateDraft, type DraftErrors } from './api-source-draft';
 import type { Notify } from './notify';
 import type { UsageData } from './usage-data';
+import {UsageFold} from './UsagePanel';
+import {compactTokens,localDay,totalsOf} from './usage-model';
 import {useListReturn} from './list-return';
 
 
@@ -14,20 +17,43 @@ import {copyText} from './clipboard';
 
 const json=(method:string,body:unknown)=>({method,headers:{'content-type':'application/json'},body:JSON.stringify(body)});
 
-function ApiSourceCard({local,source,disabled,editing,notify,onEdit,onToggle,onRemove}:{local:LocalAgentSnapshot;source:ApiSource;disabled:boolean;editing:boolean;notify:Notify;onEdit:()=>void;onToggle:()=>void;onRemove:()=>void}){
- const [modelOrder,setModelOrder,modelRanks,moveModel]=useModelOrder();
- const identity=(model:string)=>`api-${source.id}/${model}`;const sortedModels=orderModels(source.models,model=>model,modelOrder,modelRanks,identity);const modelIds=sortedModels.map(identity);
- const [expanded,setExpanded]=useState(false);const [copied,setCopied]=useState('');
- const rememberModels=useListReturn(expanded);
+function ApiSourceCard({local,source,usage,disabled,editing,notify,onEdit,onToggle,onRemove}:{usage:UsageData;local:LocalAgentSnapshot;source:ApiSource;disabled:boolean;editing:boolean;notify:Notify;onEdit:()=>void;onToggle:()=>void;onRemove:()=>void}){
+ const [modelOrder,,modelRanks]=useModelOrder();
+ const identity=(model:string)=>`api-${source.id}/${model}`;const sortedModels=orderModels(source.models,model=>model,modelOrder,modelRanks,identity);
+ const todayRows=usage.allRows.filter(row=>row.sourceId===source.id&&row.day===localDay(new Date())&&row.origin!=='native');
+ const today=totalsOf(todayRows);
+ const [copied,setCopied]=useState('');
+ const [flipped,setFlipped]=useState(false),[secret,setSecret]=useState(''),[revealing,setRevealing]=useState(false);
+ const revealVersion=useRef(0);const flipButton=useRef<HTMLButtonElement>(null),returnButton=useRef<HTMLButtonElement>(null),didFlip=useRef(false);
+ useLayoutEffect(()=>{if(didFlip.current)(flipped?returnButton:flipButton).current?.focus({preventScroll:true});},[flipped]);
+ useEffect(()=>()=>{revealVersion.current++;},[]);
+ const flip=()=>{didFlip.current=true;revealVersion.current++;setSecret('');setRevealing(false);setFlipped(value=>!value);};
+ const reveal=async()=>{if(secret){revealVersion.current++;setSecret('');return;}const version=++revealVersion.current;setRevealing(true);try{const result=await requestJSON<{apiKey:string}>(`/api/sources/${source.id}/reveal-key`,json('POST',{}));if(version===revealVersion.current)setSecret(result.apiKey);}catch(error){if(version===revealVersion.current)notify({kind:'error',text:error instanceof Error?error.message:'读取凭证失败，请重试。'});}finally{if(version===revealVersion.current)setRevealing(false);}};
  const copy=async(value:string,id:string)=>{try{await copyText(value);setCopied(id);setTimeout(()=>setCopied(''),1500);}catch{notify({kind:'error',text:'复制失败，请选中后手动复制。'});}};
 
- return <article className={`tfApiSourceCard ${source.enabled?'':'off'}`} aria-label={source.name}>
-  <div className="tfApiSourceBody">
-   <header className="tfApiSourceHead"><span className="tfApiSourceIcon"><Icon name="plug" size={20}/></span><div><h3>{source.name}</h3><span className="tfApiProtocol">{protocolNames[source.protocol]}</span></div><span className={`tfKeyStatus ${source.enabled&&source.hasKey?'on':source.enabled?'warn':''}`}>{!source.enabled?'已停用':source.hasKey?'已启用':'密钥不可读'}</span></header>
-   <div className="tfApiAddress"><code title={source.baseURL}>{source.baseURL}</code><button className="iconButton" aria-label={`复制 ${source.name} 接口地址`} title={copied==='url'?'已复制':'复制接口地址'} onClick={()=>void copy(source.baseURL,'url')}><Icon name={copied==='url'?'checkCircle':'copy'} size={14}/></button></div>
-  </div>
-  <footer><div><button className="textButton" aria-expanded={expanded} aria-controls={`api-models-${source.id}`} onClick={()=>{if(!expanded)rememberModels();setExpanded(!expanded);}}>{expanded?'收起模型':`支持模型（${source.models.length}）`}</button></div><div><button className="textButton" disabled={disabled} onClick={onEdit}>{editing?'编辑中':'编辑'}</button><button className="textButton" disabled={disabled} onClick={onToggle}>{source.enabled?'停用':'启用'}</button><button className="textButton danger" disabled={disabled} onClick={onRemove}>删除</button></div></footer>
-  {expanded&&<div className="tfApiSourceModels" id={`api-models-${source.id}`}><header><strong>上游模型 ID</strong><ModelOrderControl value={modelOrder} onChange={setModelOrder}/><button className="textButton" onClick={()=>void copy(sortedModels.join('\n'),'models')}>{copied==='models'?'已复制':'复制列表'}</button></header>{!source.models.length&&<p className="tfHint">尚未配置模型，可在编辑中添加。</p>}<ul>{sortedModels.map(model=><li key={model} className="tfDragRow" {...dropOrder('models',identity(model),modelIds,moveModel)}><DragHandle kind="models" id={identity(model)} label={model} items={modelIds} move={moveModel}/><code>{model}</code><button className="iconButton" aria-label={`复制模型 ${model}`} onClick={()=>void copy(model,model)}><Icon name={copied===model?'checkCircle':'copy'} size={14}/></button></li>)}</ul></div>}
+ return <article className={`tfApiSourceCard ${source.enabled?'':'off'} ${flipped?'isFlipped':''}`} aria-label={source.name}>
+  <div className={`tfCredential ${flipped?'flipped':''}`}><div className="tfCredentialInner">
+   <div className="tfApiSourceBody tfCredentialFace" aria-hidden={flipped} inert={flipped}>
+    <button ref={flipButton} className="tfCardFlipSurface" aria-label={`翻面查看 ${source.name} 凭证`} onClick={flip}/>
+    <div className="tfApiCardTools"><span className="tfApiProtocol">{protocolNames[source.protocol]}</span><div className="tfApiCardManage"><button className="textButton" disabled={disabled} onClick={onEdit}>{editing?'编辑中':'编辑'}</button><button className="textButton" disabled={disabled} onClick={onToggle}>{source.enabled?'停用':'启用'}</button><button className="textButton danger" disabled={disabled} onClick={onRemove}>删除</button></div></div>
+    <header className="tfApiSourceHead"><div><h3>{source.name}</h3></div><span className={`tfKeyStatus ${source.enabled&&source.hasKey?'on':source.enabled?'warn':''}`}>{!source.enabled?'已停用':source.hasKey?'已启用':'密钥不可读'}</span></header>
+
+    <ul className="tfApiModelPreview" aria-label={`${source.name} 模型预览`}>{sortedModels.slice(0,3).map(model=><li key={model}><code title={model}>{model}</code></li>)}</ul>
+    {!source.models.length&&<p className="tfHint">尚未添加模型，编辑接口后即可接入。</p>}
+    {source.models.length>3&&<span className="tfApiMoreModels">另有 {source.models.length-3} 个模型</span>}
+    <div className="tfKeyTotal tfApiToday"><span>今日 tok</span><b>{compactTokens(today.totalTokens)}</b></div>
+   </div>
+   <div className="tfCredentialFace tfCredentialBack" aria-hidden={!flipped} inert={!flipped}>
+    <button ref={returnButton} className="tfCardFlipSurface" aria-label={`返回 ${source.name} 卡片正面`} onClick={flip}/>
+    <h3>{source.name}</h3>
+    <dl className="tfCredentialMeta"><div><dt>协议</dt><dd>{protocolNames[source.protocol]}</dd></div><div><dt>模型权限</dt><dd>{source.models.length} 个模型</dd></div></dl>
+    <label>接口地址<div className="inputAction"><input aria-label={`${source.name} 接口地址`} readOnly value={source.baseURL} onFocus={event=>event.target.select()}/><button type="button" onClick={()=>void copy(source.baseURL,'url')}>{copied==='url'?'已复制':'复制'}</button></div></label>
+    <label>API Key<div className="inputAction"><input aria-label={`${source.name} API Key`} type={secret?'text':'password'} readOnly value={secret||'****************'} onFocus={event=>event.target.select()}/><button type="button" disabled={revealing||!source.hasKey} onClick={()=>void reveal()}>{revealing?'读取中…':secret?'隐藏':'显示'}</button>{secret&&<button type="button" onClick={()=>void copy(secret,'key')}>{copied==='key'?'已复制':'复制'}</button>}</div></label>
+    <section className="tfCredentialModels" aria-label={`${source.name} 完整模型列表`}><header><strong>模型 · {source.models.length}</strong><button className="textButton" onClick={()=>void copy(sortedModels.join('\n'),'models')}>{copied==='models'?'已复制':'复制全部'}<Icon name="copy" size={13}/></button></header><ul>{sortedModels.map(model=><li key={model}><code>{model}</code><button className="iconButton" aria-label={`复制模型 ${model}`} onClick={()=>void copy(model,model)}><Icon name={copied===model?'checkCircle':'copy'} size={13}/></button></li>)}</ul></section>
+
+   </div>
+  </div></div>
+
  </article>;
 }
 
@@ -41,11 +67,12 @@ export function ApiInflow({local,usage,onChange,notify}:{local:LocalAgentSnapsho
  const model=modelRows.map(row=>row.value).join('\n');const modelCount=parseModels(model).length;
  const [keyEditing,setKeyEditing]=useState(false);const [visible,setVisible]=useState(false);const [revealed,setRevealed]=useState('');const [revealing,setRevealing]=useState(false);const revealVersion=useRef(0);
  const [errors,setErrors]=useState<DraftErrors>({});const [failure,setFailure]=useState('');
+ const [verificationOpen,setVerificationOpen]=useState(false);const [protocol,setProtocol]=useState<ApiSource['protocol']>('chat');
  const [busy,setBusy]=useState(false);const controller=useRef<AbortController|null>(null);
  const nameOnly=!!form&&!apiKey.trim()&&baseURL.trim()===form.baseURL&&JSON.stringify(parseModels(model))===JSON.stringify(form.models);
 
- const open=(source:ApiSource|null)=>{if(form===undefined)rememberEditor();revealVersion.current++;setKeyEditing(!source?.hasKey);setVisible(false);setRevealed('');setRevealing(false);setForm(source);setName(source?.name??'');setBaseURL(source?.baseURL??'');setApiKey('');setModelRows((source?.models.length?source.models:['']).map(value=>({id:nextModelId.current++,value})));setErrors({});setFailure('');};
- const close=()=>{revealVersion.current++;setVisible(false);setRevealed('');controller.current?.abort();setForm(undefined);setApiKey('');setFailure('');};
+ const open=(source:ApiSource|null)=>{if(form===undefined)rememberEditor();revealVersion.current++;setKeyEditing(!source?.hasKey);setVisible(false);setRevealed('');setRevealing(false);setVerificationOpen(false);setProtocol(source?.protocol??'chat');setForm(source);setName(source?.name??'');setBaseURL(source?.baseURL??'');setApiKey('');setModelRows((source?.models.length?source.models:['']).map(value=>({id:nextModelId.current++,value})));setErrors({});setFailure('');};
+ const close=()=>{setVerificationOpen(false);revealVersion.current++;setVisible(false);setRevealed('');controller.current?.abort();setForm(undefined);setApiKey('');setFailure('');};
 
  // A source that Agents or Keys use asks once before it changes, instead of blocking up front.
  async function guarded<T>(run:(acknowledge:boolean)=>Promise<T>,usedText:string):Promise<T|undefined>{
@@ -60,14 +87,20 @@ export function ApiInflow({local,usage,onChange,notify}:{local:LocalAgentSnapsho
   event.preventDefault();if(busy)return;
   const found=validateDraft({name,baseURL,apiKey,model},!!form);setErrors(found);setFailure('');
   if(Object.keys(found).length)return;
+  if(nameOnly){void save(false);return;}
+  setVerificationOpen(true);
+ }
+
+ async function save(verify:boolean){
+  if(busy)return;
   const abort=new AbortController();controller.current=abort;setBusy(true);
   try{
-   const saved=await guarded(acknowledge=>requestJSON<ApiSource&{routingError?:string}>('/api/sources/quick',{...json('POST',{id:form?.id,name:name.trim(),baseURL:baseURL.trim(),apiKey:apiKey.trim()||undefined,model,acknowledge:acknowledge||undefined}),signal:abort.signal},90000),'此来源正被 Agent 或本地 Key 使用，修改会影响它们。');
+   const saved=await guarded(acknowledge=>requestJSON<ApiSource&{routingError?:string}>(verify?'/api/sources/quick':form?`/api/sources/${form.id}`:'/api/sources',{...json(verify||!form?'POST':'PUT',verify?{id:form?.id,name:name.trim(),baseURL:baseURL.trim(),apiKey:apiKey.trim()||undefined,model,acknowledge:acknowledge||undefined}:{name:name.trim(),baseURL:baseURL.trim(),apiKey:apiKey.trim()||undefined,protocol,models:parseModels(model),enabled:form?.enabled??true,acknowledge:acknowledge||undefined}),signal:abort.signal},90000),'此来源正被 Agent 或本地 Key 使用，修改会影响它们。');
    if(!saved)return;
-   revealVersion.current++;setRevealed('');setVisible(false);setForm(undefined);setApiKey('');
+   setVerificationOpen(false);revealVersion.current++;setRevealed('');setVisible(false);setForm(undefined);setApiKey('');
    notify({kind:saved.routingError?'error':'ok',text:saved.routingError??(nameOnly?`名称备注已保存：${saved.name}`:`${form?'已更新':'已添加'}：${saved.name}，${saved.models.length} 个模型（${protocolNames[saved.protocol]}）`)});
    await onChange();
-  }catch(error){setFailure(error instanceof Error?error.message:'验证失败，请检查填写内容。');}
+  }catch(error){setVerificationOpen(false);setFailure(error instanceof Error?error.message:'保存失败，请检查填写内容。');}
   finally{controller.current=null;setBusy(false);}
  }
 
@@ -84,9 +117,9 @@ export function ApiInflow({local,usage,onChange,notify}:{local:LocalAgentSnapsho
  }
 
  return <section className="tfApis" aria-label="API 接口">
-  <header className="tfCollectionHead"><div><h2>已保存的接口 <span>{sources.length}</span></h2><p>连接已有接口，供本地 Agent 和 API 代理使用。</p></div><button className="primary" disabled={busy||form!==undefined} onClick={()=>open(null)}><Icon name="plus" size={15}/>添加 API</button></header>
-  {form!==undefined&&<form className="tfForm tfApiEditor" onSubmit={event=>void submit(event)} noValidate aria-label={form?'编辑 API':'添加 API'}>
-   <header className="tfApiEditorHead"><div><h3>{form?`编辑 API · ${form.name}`:'添加 API'}</h3><p>填写地址、密钥和可用模型，保存时自动识别协议。</p></div><button type="button" className="iconButton" aria-label="关闭编辑" onClick={close}><Icon name="close" size={18}/></button></header>
+  <header className="tfCollectionHead"><UsageFold title="API 接口用量" subtitle="所有 API 来源的用量与缓存命中" rows={usage.rows.filter(row=>sources.some(source=>source.id===row.sourceId))} range={usage.range}/><button className="primary" disabled={busy||form!==undefined} onClick={()=>open(null)}><Icon name="plus" size={15}/>添加 API</button></header>
+  {form!==undefined&&<FlowDialog open title={form?`编辑 API · ${form.name}`:'添加 API'} className="tfApiEditorDialog" onClose={close}><form className="tfForm tfApiEditor" onSubmit={event=>void submit(event)} noValidate aria-label={form?'编辑 API':'添加 API'}>
+   <p className="tfHint">填写地址、密钥和可用模型。添加时可选择验证接口。</p>
    <div className="tfKeyFields">
    <label>名称备注<input name="name" autoComplete="off" aria-invalid={!!errors.name} value={name} disabled={busy} onChange={event=>{setName(event.target.value);setErrors(e=>({...e,name:undefined}));}} placeholder="例如：公司中转 · Kimi" autoFocus/>{errors.name&&<span className="tfError">{errors.name}</span>}</label>
    <label>URL<input name="baseURL" inputMode="url" autoComplete="off" spellCheck={false} aria-invalid={!!errors.baseURL} value={baseURL} disabled={busy} onChange={event=>{setBaseURL(event.target.value);setErrors(e=>({...e,baseURL:undefined}));}} placeholder="https://api.example.com/v1"/>{errors.baseURL&&<span className="tfError">{errors.baseURL}</span>}</label>
@@ -109,16 +142,22 @@ export function ApiInflow({local,usage,onChange,notify}:{local:LocalAgentSnapsho
     </div>)}
     {errors.model&&<span className="tfError" role="alert">{errors.model}</span>}
     <button type="button" className="tfAddButton" disabled={modelRows.length>=50} onClick={()=>setModelRows(rows=>[...rows,{id:nextModelId.current++,value:''}])}><Icon name="plus" size={15}/>添加模型</button>
-    <p className="tfHint">最多 50 个，也可在一项中用逗号分隔多个模型。保存时用第一个模型识别接口协议，其余模型需由该 Key 授权。</p>
+    <p className="tfHint">最多 50 个，也可在一项中用逗号分隔多个模型。验证时用第一个模型识别接口协议，其余模型需由该 Key 授权。</p>
    </fieldset>
    {failure&&<p className="tfError" role="alert">{failure}</p>}
-   {busy&&<p className="tfHint" role="status">{nameOnly?'正在保存名称备注…':'正在验证接口并识别协议…'}</p>}
-   <footer className="tfApiFormFoot"><p>{nameOnly?'备注名称可直接保存。':'验证会请求模型，可能产生少量用量。'}</p><div className="tfRow">
-    <button className="primary" disabled={busy||!name.trim()||!baseURL.trim()||(!form&&!apiKey.trim())||!parseModels(model).length}>{busy?'保存中…':nameOnly?'保存名称备注':form?'验证并保存':'验证并添加'}</button>
-    <button type="button" onClick={close}>{busy?'取消验证':'取消'}</button>
+   {busy&&<p className="tfHint" role="status">{'正在保存…'}</p>}
+   <footer className="tfApiFormFoot"><p/><div className="tfRow">
+    <button className="primary" disabled={busy||!name.trim()||!baseURL.trim()||(!form&&!apiKey.trim())||!parseModels(model).length}>{busy?'保存中…':form?'保存':'添加'}</button>
+    <button type="button" onClick={close}>取消</button>
    </div></footer>
-  </form>}
-  {sources.length>0?<div className="tfApiSourceGrid">{sources.map(source=><ApiSourceCard key={source.id} local={local} source={source} disabled={busy||form!==undefined} editing={form?.id===source.id} notify={notify} onEdit={()=>open(source)} onToggle={()=>void toggle(source)} onRemove={()=>void remove(source)}/>)}</div>:form===undefined&&<div className="tfKeyEmpty"><h3>添加第一个 API 接口</h3><p>支持 Responses、Chat Completions 和 Anthropic Messages。<br/>填写已有接口的地址、Key 和模型，即可接入。</p></div>}
+  </form></FlowDialog>}
+  <FlowDialog open={verificationOpen} title="验证接口？" className="tfVerifyDialog" busy={busy} onClose={()=>setVerificationOpen(false)}>
+   <p>是否需要验证可用性并自动识别接口协议？</p>
+   <p className="tfHint">验证会发送一次模型请求，可能产生少量用量。</p>
+   <label>跳过验证时使用的协议<select aria-label="接口协议" disabled={busy} value={protocol} onChange={event=>setProtocol(event.target.value as ApiSource['protocol'])}>{Object.entries(protocolNames).map(([id,label])=><option key={id} value={id}>{label}</option>)}</select></label>
+   <footer><button disabled={busy} onClick={()=>void save(false)}>{busy?'保存中…':'跳过验证，直接保存'}</button><button className="primary" disabled={busy} onClick={()=>void save(true)}>{busy?'处理中…':'验证并保存'}</button></footer>
+  </FlowDialog>
+  {sources.length>0?<div className="tfApiSourceGrid">{sources.map(source=><ApiSourceCard key={source.id} local={local} usage={usage} source={source} disabled={busy||form!==undefined} editing={form?.id===source.id} notify={notify} onEdit={()=>open(source)} onToggle={()=>void toggle(source)} onRemove={()=>void remove(source)}/>)}</div>:form===undefined&&<div className="tfKeyEmpty"><h3>添加第一个 API 接口</h3><p>支持 Responses、Chat Completions 和 Anthropic Messages。<br/>填写已有接口的地址、Key 和模型，即可接入。</p></div>}
 
  </section>;
 }

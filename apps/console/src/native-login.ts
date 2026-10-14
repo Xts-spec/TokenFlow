@@ -29,7 +29,7 @@ export function useNativeLogin(provider:LoginProvider,local:LocalAgentSnapshot){
  });
  const current=accounts.find(a=>a.current);
 
- // A client routed through token-flow ignores its own login, so switching first restores its original config.
+ // A client routed through TokenFlow ignores its own login, so switching first restores its original config.
  const releaseGateway=async()=>{
   if(provider==='antigravity')return;
   const targets=(await requestJSON<{targets:Awaited<ReturnType<AgentConnections['status']>>}>('/api/a2a')).targets;
@@ -48,7 +48,7 @@ export function useNativeLogin(provider:LoginProvider,local:LocalAgentSnapshot){
   if(released&&provider!=='codex'){await releaseGateway();latest=await requestJSON<Status>(base(provider));}
   const body=provider==='codex'?{revision:latest.revision,allowRunning:true,restartCodex,sourceId:id,model}:provider==='claude'?{revision:latest.revision,sourceId:id,...(model?{model}:{})}:{revision:latest.revision,sourceId:id};
   setStatus(await requestJSON<Status>(`${base(provider)}/switch`,post(body),provider==='codex'?600000:20000));
-  return released?`已先断开 token-flow 接入，${loginNames[provider]} 现在直接使用自己的登录。`:'';
+  return released?`已先断开 TokenFlow 接入，${loginNames[provider]} 现在直接使用自己的登录。`:'';
  };
  const restore=async()=>{
   const latest=await requestJSON<Status>(base(provider));

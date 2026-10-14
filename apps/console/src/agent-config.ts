@@ -2,8 +2,8 @@ import { isProviderVisible } from './provider-visibility';
 import { a2aCapabilities } from '@cua-sample/contracts/a2a';
 export type AgentKind='codex'|'claude'|'openai'|'qoder'|'cursor'|'pi'|'deepseek';
 export const agentCatalog=[
- {id:'pi' as const,name:'Pi Agent',protocol:'Chat Completions',path:'/v1/chat/completions',description:'将配置保存到 ~/.pi/agent/models.json，打开 /model 选择 token-flow 模型。',docs:'https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/models.md'},
- {id:'deepseek' as const,name:'DeepSeek Harness',protocol:'Chat Completions',path:'/v1/chat/completions',description:'将插件补丁保存到 ~/.dsh/cordis.patch.yml，运行 dsh web，在模型菜单中选择 token-flow。',docs:'https://deepseek-harness.github.io/deepseek-harness/guide/providers'},
+ {id:'pi' as const,name:'Pi Agent',protocol:'Chat Completions',path:'/v1/chat/completions',description:'将配置保存到 ~/.pi/agent/models.json，打开 /model 选择 TokenFlow 模型。',docs:'https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/models.md'},
+ {id:'deepseek' as const,name:'DeepSeek Harness',protocol:'Chat Completions',path:'/v1/chat/completions',description:'将插件补丁保存到 ~/.dsh/cordis.patch.yml，运行 dsh web，在模型菜单中选择 TokenFlow。',docs:'https://deepseek-harness.github.io/deepseek-harness/guide/providers'},
  {id:'cursor' as const,name:'Cursor',protocol:'Chat Completions',path:'/v1/chat/completions',description:'Cursor Settings → Models → API Keys。自定义请求经过 Cursor 服务器，需要外网可访问的 HTTPS 网关；本机地址不能直接使用。Tab 补全继续使用 Cursor 内置模型。',docs:'https://cursor.com/help/models-and-usage/api-keys'},
  {id:'qoder' as const,name:'Qoder 独立应用',protocol:'Responses API',path:'/v1/responses',description:'Qoder 独立应用：Settings → Models → Add → OpenAI Compatible → Responses。仅适用于支持自定义地址的版本，不适用于 Qoder IDE。',docs:'https://docs.qoder.com/qoder/custom-models'},
  {id:'codex' as const,name:'Codex',protocol:'Responses API',path:'/v1/responses',description:'直接使用统一 Responses 接口，保留工具调用和流式响应。',docs:'https://developers.openai.com/codex/config-reference'},
@@ -22,7 +22,7 @@ export function agentConfig(kind:AgentKind,origin:string,model:string,powershell
  const quote=powershell?ps:shell;const baseURL=`${url.origin}/v1`;
  const assign=(key:string,value:string)=>powershell?`$env:${key} = ${quote(value)}`:`export ${key}=${quote(value)}`;
  if(kind==='codex')return [assign('TOKEN_FLOW_KEY','替换为此 Agent 的客户端 Key'),'codex '+[
-  ...(a2aCapabilities(model)?.serverTools===false?['web_search="disabled"']:[]),'model_provider="token_flow"','model_providers.token_flow.name="token-flow"',`model_providers.token_flow.base_url=${JSON.stringify(baseURL)}`,
+  ...(a2aCapabilities(model)?.serverTools===false?['web_search="disabled"']:[]),'model_provider="token_flow"','model_providers.token_flow.name="TokenFlow"',`model_providers.token_flow.base_url=${JSON.stringify(baseURL)}`,
   'model_providers.token_flow.env_key="TOKEN_FLOW_KEY"','model_providers.token_flow.wire_api="responses"','model_providers.token_flow.requires_openai_auth=false','model_providers.token_flow.supports_websockets=false',
  ].map(value=>`-c ${quote(value)}`).join(' ')+` --model ${quote(model)}`].join('\n\n');
  if(kind==='claude')return [

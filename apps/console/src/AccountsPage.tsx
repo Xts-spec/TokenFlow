@@ -1,3 +1,6 @@
+import {FlowDialog} from './FlowDialog';
+import {ColumnDivider} from './ColumnDivider';
+import {ScrollRail} from './ScrollRail';
 import {copyText} from './clipboard';
 import {localDay} from './usage-model';
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
@@ -36,15 +39,18 @@ export type AccountActions={
 };
 
 function LoginProgress({local,disabled,actions}:{local:LocalAgentSnapshot;disabled:boolean;actions:AccountActions}){
- const login=local.login;const [callback,setCallback]=useState('');const [dismissed,setDismissed]=useState('');
- useEffect(()=>setCallback(''),[login?.id,login?.status]);
- if(!login||login.status==='completed'||login.status==='idle'||dismissed===login.id)return null;
+ const login=local.login;const [callback,setCallback]=useState('');const [copiedURL,setCopiedURL]=useState(false);const [copyFailure,setCopyFailure]=useState(false);const [dismissed,setDismissed]=useState(()=>{try{return localStorage.getItem('token-flow.login.dismissed')??'';}catch{return '';}});
+ useEffect(()=>{setCallback('');setCopiedURL(false);setCopyFailure(false);},[login?.id]);
+ if(!login||login.status==='idle'||dismissed===login.id)return null;
+ const dismiss=()=>{setDismissed(login.id);try{localStorage.setItem('token-flow.login.dismissed',login.id);}catch{}};
  const pending=pendingStates.includes(login.status);
  const label=local.providers.find(p=>p.id===login.provider)?.label??(login.provider==='workbuddy-overseas'?'WorkBuddy 海外':login.provider);
- return <div className="tfLogin" role="status">
-  <div className="tfLoginHead"><strong>{label}{pending?' · 等待授权':''}</strong>{!pending&&<button className="textButton" onClick={()=>setDismissed(login.id)}>关闭</button>}</div>
+ return <FlowDialog open title={login.status==='completed'?`${label} 已连接`:`连接 ${label}`} className="tfLoginDialog" onClose={()=>{if(pending)void actions.login('cancel',{id:login.id});dismiss();}}><div className="tfLogin" role="status">
+  <div className="tfLoginHead"><ProviderIcon provider={login.provider} size={28}/><strong>{login.status==='completed'?'账号与模型已保存':pending?'在浏览器完成授权':'授权未完成'}</strong></div>
   <p>{login.message}</p>
   {pending&&login.flow==='device'&&login.userCode&&<p className="tfCode">设备码 <b className="mono">{login.userCode}</b></p>}
+  {pending&&login.url&&<label className="tfAuthorizationURL">授权链接<div className="inputAction"><input readOnly aria-label="授权链接" value={login.url} onFocus={event=>event.target.select()}/><button type="button" onClick={()=>void copyText(login.url??'').then(()=>{setCopiedURL(true);setCopyFailure(false);}).catch(()=>setCopyFailure(true))}>{copiedURL?'已复制':'复制'}</button></div></label>}
+  {copyFailure&&<p className="tfError" role="alert">复制失败，请选中授权链接手动复制。</p>}
   {pending&&<div className="tfRow">
    <button disabled={disabled||!login.url} onClick={()=>void actions.login('open',{id:login.id})}>打开授权页</button>
    <button disabled={disabled} onClick={()=>void actions.login('cancel',{id:login.id})}>取消</button>
@@ -55,8 +61,8 @@ function LoginProgress({local,disabled,actions}:{local:LocalAgentSnapshot;disabl
     <button disabled={disabled||!callback.trim()||login.status==='verifying'}>提交</button>
    </form>
   </details>}
-  {!pending&&<button disabled={disabled} onClick={()=>void actions.connect(login.provider)}>重新连接</button>}
- </div>;
+  {login.status==='completed'?<button className="primary" onClick={dismiss}>完成</button>:!pending&&<button disabled={disabled} onClick={()=>void actions.connect(login.provider)}>重新连接</button>}
+ </div></FlowDialog>;
 }
 
 /** Authorized accounts with their quota up front, plus switching the client's own login where it has one. */
@@ -84,12 +90,12 @@ export function AccountsPage({local,usage,disabled,actions,notify}:{local:LocalA
  };
 
  return <div className="tfPage">
-  <div className="tfProviderTabs" role="tablist" aria-label="授权平台" onKeyDown={navigateTabs}>
+  <ScrollRail className="tfProviderTabs" role="tablist" aria-label="授权平台" onKeyDown={navigateTabs}>
    {providers.map(item=><button key={item.id} id={`provider-tab-${item.id}`} role="tab" aria-selected={provider?.id===item.id} aria-controls={`provider-panel-${item.id}`} tabIndex={provider?.id===item.id?0:-1} onClick={()=>chooseProvider(item.id)}>
     <ProviderIcon provider={item.id}/><span>{item.label}</span>
     {!!item.accounts.length&&<small>{item.accounts.length}<span className="srOnly"> 个已授权账号</span></small>}
    </button>)}
-  </div>
+  </ScrollRail>
   <LoginProgress local={local} disabled={disabled||switching} actions={actions}/>
   {!provider&&<p className="tfHint">正在读取授权平台…</p>}
   {provider&&<section id={`provider-panel-${provider.id}`} role="tabpanel" aria-labelledby={`provider-tab-${provider.id}`} className="tfProviderPanel">
@@ -125,6 +131,7 @@ export function AccountsPage({local,usage,disabled,actions,notify}:{local:LocalA
       {account.retryable&&<small className="tfHint">上次请求暂时失败，可稍后重试。</small>}
       <div className="tfAccountColumns">
        <section className="tfQuotaSide" aria-label="账号额度"><h3>额度</h3>{quota&&!account.disabled?<QuotaDetails quota={quota} label={account.label} compact/>:<small className="tfHint">{account.disabled?'已停用，不参与调用':'额度暂未提供'}</small>}</section>
+       <ColumnDivider storageKey="token-flow.layout.account-split" label="调整额度与模型宽度"/>
        <section className="tfModelsSide" aria-label="账号模型"><div className="tfAccountModels" id={`models-${account.id}`}>
        <h3>模型</h3>
        {account.models?.length?<ul aria-label={`${account.label} 支持的模型`}>{shownModels.map(id=><li key={id} className="tfDragRow" {...dropOrder('models',id,shownModels,moveModel)}><DragHandle kind="models" id={id} label={modelLabel(local.models,id)} items={shownModels} move={moveModel}/><ProviderIcon provider={modelManufacturer(id,local)} size={20}/><span className="tfCatalogModelName"><strong title={modelLabel(local.models,id)}>{modelLabel(local.models,id)}</strong></span><button className="textButton" aria-label={`复制模型 ${modelLabel(local.models,id)}`} title={id} onClick={()=>void copyText(id).then(()=>notify({kind:'ok',text:'模型 ID 已复制'})).catch(()=>notify({kind:'error',text:'复制失败'}))}>复制</button></li>)}</ul>:<p className="tfHint">尚未获取到模型，请启用账号后刷新。</p>}

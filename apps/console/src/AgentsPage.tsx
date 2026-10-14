@@ -1,3 +1,5 @@
+import {ColumnDivider} from './ColumnDivider';
+import {ScrollRail} from './ScrollRail';
 import {localDay} from './usage-model';
 import type {AgentInstallation} from '../../../packages/core/src/agent-installation';
 import type {AgentUpdate} from '../../../packages/core/src/agent-updates';
@@ -56,18 +58,18 @@ export function AgentsPage({local,calls,usage,notify,onRepair,onAgent}:{local:Lo
  useEffect(()=>{onAgent(target?.id??tab);},[target?.id,tab,onAgent]);
 
  return <div className="tfPage">
-  <div className="tfTiles" role="tablist" aria-label="本地 Agent">
+  <ScrollRail className="tfTiles" role="tablist" aria-label="本地 Agent">
    {targets?.map(item=>{
     const connection=item.connection&&isSourceSelectionAvailable(available,item.connection)?item.connection:undefined;
     const native=logins[item.id]?.current;
     const problem=!!problemOf(item,calls,available);
-    return <button key={item.id} role="tab" aria-selected={target?.id===item.id} className="tfTile" onClick={()=>choose(item.id)}>
+    return <button key={item.id} role="tab" aria-selected={target?.id===item.id} tabIndex={target?.id===item.id?0:-1} className="tfTile" onClick={()=>choose(item.id)}>
      <ProviderIcon provider={item.id} size={30}/>
      <span className="tfTileText"><strong>{item.name}</strong><small>{connection?modelLabel(local.models,connection.model):native?`账号 · ${native.label}`:item.connection?'模型不可用':'未接入'}</small></span>
      <i className={`dot ${problem?'bad':connection||native?'ok':''}`} aria-label={problem?'有问题':connection||native?'使用中':'未接入'}/>
     </button>;
    })}
-  </div>
+  </ScrollRail>
   {!targets&&<p className="tfHint">正在读取本机 Agent…</p>}
   {target&&<AgentPanel key={target.id} target={target} update={updates[target.id]} login={logins[target.id]} local={local} usage={usage} problem={problemOf(target,calls,available)} notify={notify} onRepair={onRepair} onChanged={refresh} onProgramChanged={refreshUpdates}/>}
  </div>;
@@ -180,6 +182,7 @@ function AgentPanel({target,update,login,local,usage,problem,notify,onRepair,onC
    <ProviderIcon provider={target.id} size={40}/>
    <div><div className="tfAgentTitle"><h2>{target.name}</h2><button className="tfAgentUpdate" disabled={busy} aria-label={`${target.installation.installed?'更新':'安装'} ${target.name}`} title={updateAvailable?`有新版本 ${update.latestVersion}，点击更新`:target.installation.installed?'下载最新版':'安装官方客户端'} onClick={()=>target.installation.installed?void manageProgram('update'):askProgram('install')}><Icon name="download" size={15}/>{updateAvailable&&<span className="tfUpdateDot" role="img" aria-label="有可用更新"/>}</button>{target.installation.installed&&<span className="tfAgentVersion">已安装{target.installation.version?` · ${target.installation.version}`:''}</span>}</div><UsageFold title={`${target.name} 用量`} rows={allAgentRows} range="today"/></div>
    <div className="tfRow">
+    {!models.length&&<button className="textButton" disabled={busy||!running||!!target.error||!available.length} onClick={()=>setPicking(true)}><Icon name="plus" size={15}/>选择模型</button>}
     {desktopRestart&&<button className="textButton" disabled={busy||!target.installation.installed} onClick={()=>{setRestartError('');setRestartOpen(true);}}>{restartPending?'重启生效':'重启…'}</button>}
     {connection&&<button disabled={busy} onClick={()=>{if(target.id==='codex'){setRestoreHistory(false);setRestoreOpen(true);}else void restore();}}>恢复原配置</button>}
     <button className={problem?'primary':''} onClick={repair}><Icon name="wrench" size={14}/>维修</button>
@@ -219,7 +222,7 @@ function AgentPanel({target,update,login,local,usage,problem,notify,onRepair,onC
   {!running&&<p className="tfHint">网关未运行，暂时不能切换模型。</p>}
   {login?.error&&<p className="tfError">{login.error}</p>}
 
-  <div className={`tfAgentColumns${login&&accounts.length?' hasLogin':''}`}>
+  <div className={`tfAgentColumns${login&&accounts.length&&models.length?' hasLogin':''}`}>
   {login&&accounts.length>0&&<section className="tfAgentSection" aria-label="官方登录账号">
    <header className="tfAgentSectionHead"><h3>官方登录账号</h3></header>
   <ul className="tfLines" aria-label={`${target.name} 官方登录账号`}>
@@ -245,7 +248,8 @@ function AgentPanel({target,update,login,local,usage,problem,notify,onRepair,onC
   </ul>
   {hiddenCount>0&&<button className="textButton" onClick={()=>hide([])}>恢复已删除的 {hiddenCount} 项</button>}
   </section>}
-  <section className="tfAgentSection tfGatewaySection" aria-label="网关模型">
+  {login&&accounts.length>0&&models.length>0&&<ColumnDivider storageKey="token-flow.layout.agent-split" label="调整账号与网关模型宽度"/>}
+  {models.length>0&&<section className="tfAgentSection tfGatewaySection" aria-label="网关模型">
    <header className="tfAgentSectionHead"><div className="tfGatewayTitle"><h3>网关模型</h3><button className="tfAddButton" disabled={busy||!running||!!target.error||!available.length} onClick={()=>setPicking(true)}><Icon name="plus" size={15}/>{available.length?(models.length?'管理所选模型':'选择模型'):'先添加账号或 API 接口'}</button>{draftDirty&&<small className="tfPendingModels">待应用</small>}</div><label className="toggle"><input type="checkbox" role="switch" aria-label="启用网关模型" checked={gatewayPending??(!!connection&&target.configurationState==='configured'&&!draftDirty)} disabled={busy||!running||(!connection&&!models.length)} onChange={event=>{const enabled=event.target.checked;if(!enabled)saveDraft(models);setGatewayPending(enabled);void Promise.resolve(enabled?applySelected(shownModels):restore(false)).finally(()=>setGatewayPending(undefined));}}/><span>启动</span></label></header>
    {target.id==='claude'&&<p className="tfHint">自定义模型菜单需要 Claude Code 2.1.242 或更新版本；旧版可用 /model 模型ID 切换。</p>}
   <ul className="tfLines" aria-label={`${target.name} 网关模型`}>
@@ -275,7 +279,7 @@ function AgentPanel({target,update,login,local,usage,problem,notify,onRepair,onC
    })}
   </ul>
 
-  </section>
+  </section>}
   </div>
   <AgentModelPicker open={picking} title={`${target.name} 使用的模型`} local={local} current={current} selected={models} onConfirm={choices=>{saveDraft(choices);if(connection)void applySelected(choices);else void applySelected(choices);}} onClose={()=>setPicking(false)}/>
  </section>;

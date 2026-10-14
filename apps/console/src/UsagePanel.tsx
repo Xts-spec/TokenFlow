@@ -85,13 +85,13 @@ const tokenSeries=[['uncached','输入','uncachedTokens','#2563eb'],['cached','�
 const tokenParts=(totals:UsageTotals)=>tokenSeries.map(([key,label,field,color])=>({key,label:key==='uncached'?(totals.unknownCacheTokens?'输入／未拆分':'未缓存输入'):label,value:totals[field],color}));
 export function TokenLegend(){return <div className="tfTokenLegend" aria-label="Token 图例">{tokenSeries.map(([key,label,,color])=><span key={key}><i style={{background:color}}/>{label}</span>)}</div>;}
 /** Rows ranked by tokens, each with a bar scaled to the biggest consumer. */
-export function UsageBreakdown({ title, items, empty, limit = 8 }: { title: string; items: BreakdownItem[]; empty: string; limit?: number }) {
+export function UsageBreakdown({ title, items, empty, limit = 8, headerExtra }: { headerExtra?:ReactNode; title: string; items: BreakdownItem[]; empty: string; limit?: number }) {
   const [all, setAll] = useState(false);
   const peak = Math.max(...items.map(item => item.totals.totalTokens), 1);
   const total=items.reduce((sum,item)=>sum+item.totals.totalTokens,0);
   const shown = all ? items : items.slice(0, limit);
   return <section className="tfBreakdown" aria-label={title}>
-    <header><h4>{title}</h4>{items.length > 0 && <small>{items.length} 项</small>}</header>
+    <header><h4>{title}</h4>{headerExtra}{items.length > 0 && <small>{items.length} 项</small>}</header>
     {items.length>0&&<TokenLegend/>}
     {!items.length && <p className="tfHint">{empty}</p>}
     <ul>
@@ -102,7 +102,6 @@ export function UsageBreakdown({ title, items, empty, limit = 8 }: { title: stri
           <div className="tfBreakValue"><b>{compactTokens(item.totals.totalTokens)} <small>tok</small></b><span>{percentText(total?item.totals.totalTokens/total:null)} 的用量</span></div>
         </div>
         <svg className="tfStackedTokens" viewBox="0 0 1000 20" preserveAspectRatio="none" role="img" aria-label={`${item.label} Token 构成，总量 ${formatTokens(item.totals.totalTokens)}；${tokenParts(item.totals).map(p=>`${p.label} ${formatTokens(p.value)}`).join('，')}`}>
-         {[0,250,500,750,1000].map(x=><line key={x} x1={x} x2={x} y1="0" y2="20" stroke="#e3e9f1"/>)}
          {tokenParts(item.totals).map((part,index,parts)=><rect key={part.key} x={parts.slice(0,index).reduce((sum,p)=>sum+p.value,0)/peak*1000} y="2" width={part.value/peak*1000} height="16" fill={part.color}><title>{part.label} {formatTokens(part.value)} tok</title></rect>)}
         </svg>
         <dl className="tfBreakParts">{tokenParts(item.totals).filter(p=>p.key!=='write'||p.value>0).map(part=><div key={part.key}><dt>{part.label}</dt><dd>{formatTokens(part.value)}</dd></div>)}</dl>
@@ -127,7 +126,7 @@ export function describeSource(local: LocalAgentSnapshot, key: string): { label:
 }
 
 /** Per account / API: tokens spent through the gateway, with the account's remaining quota beside them. */
-export function SourceUsage({ local, rows, title = '按来源账号', empty = '还没有经过网关的请求。', showQuota = true, expandQuota = false }: { local: LocalAgentSnapshot; rows: readonly UsageRow[]; title?: string; empty?: string; showQuota?: boolean;expandQuota?:boolean }) {
+export function SourceUsage({ local, rows, title = '按来源账号', empty = '还没有经过网关的请求。', showQuota = true, expandQuota = false, headerExtra }: { headerExtra?:ReactNode; local: LocalAgentSnapshot; rows: readonly UsageRow[]; title?: string; empty?: string; showQuota?: boolean;expandQuota?:boolean }) {
   const [open, setOpen] = useState('');
   const items: BreakdownItem[] = groupUsage(rows, sourceKey).map(group => {
     const info = describeSource(local, group.key);
@@ -144,7 +143,7 @@ export function SourceUsage({ local, rows, title = '按来源账号', empty = '�
       </div> : undefined,
     };
   });
-  return <UsageBreakdown title={title} items={items} empty={empty} />;
+  return <UsageBreakdown title={title} items={items} empty={empty} headerExtra={headerExtra} />;
 }
 
 export function modelManufacturer(model:string,local:LocalAgentSnapshot){
@@ -158,7 +157,7 @@ export function modelManufacturer(model:string,local:LocalAgentSnapshot){
  if(/doubao/.test(id))return 'doubao';
  return local.models.find(item=>item.id===model)?.provider??(model.startsWith('api-')?'api':model.split('/')[0]);
 }
-export function ModelUsage({ local, rows, title = '按模型', empty = '还没有经过网关的请求。' }: { local: LocalAgentSnapshot; rows: readonly UsageRow[]; title?: string; empty?: string }) {
+export function ModelUsage({ local, rows, title = '按模型', empty = '还没有经过网关的请求。', headerExtra }: { headerExtra?:ReactNode; local: LocalAgentSnapshot; rows: readonly UsageRow[]; title?: string; empty?: string }) {
   const items: BreakdownItem[] = groupUsage(rows, row => row.model).map(group => ({ key: group.key, label: qualifiedModelLabel(local, group.key), icon:<ProviderIcon provider={modelManufacturer(group.key,local)} size={22}/>, totals: group.totals }));
-  return <UsageBreakdown title={title} items={items} empty={empty} />;
+  return <UsageBreakdown title={title} items={items} empty={empty} headerExtra={headerExtra} />;
 }

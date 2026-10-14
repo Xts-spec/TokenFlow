@@ -13,14 +13,19 @@ const here=dirname(fileURLToPath(import.meta.url));
 const profile=resolveProfile(app.getPath('appData'),process.env.AGENT_DATA_ROOT);
 mkdirSync(profile,{recursive:true,mode:0o700});
 app.setPath('userData',profile);
-app.setName('token-flow');
+// macOS encryption retains the original keychain service across the display-name change.
+app.setName(process.platform==='darwin'?'token-flow':'TokenFlow');
 if(!app.requestSingleInstanceLock()) app.quit();
-else { void start().catch(error=>{dialog.showErrorBox('token-flow 启动失败',error instanceof Error?error.message:String(error));app.exit(1);}); }
+else { void start().catch(error=>{dialog.showErrorBox('TokenFlow 启动失败',error instanceof Error?error.message:String(error));app.exit(1);}); }
 async function start() {
   let window:BrowserWindow|undefined;
   let closing=false;
   let tray:Tray|undefined;
   await app.whenReady();
+  if(process.platform==='darwin'){
+    if(safeStorage.isEncryptionAvailable())safeStorage.encryptString('');
+    app.setName('TokenFlow');
+  }
   const icon=join(here,'console','app-icon.png');
   if(process.platform==='darwin')app.dock?.setIcon(nativeImage.createFromPath(icon));
   const root=process.env.AGENT_DATA_ROOT?resolve(process.env.AGENT_DATA_ROOT):app.getPath('userData');
@@ -43,8 +48,9 @@ async function start() {
   });
   await session.defaultSession.cookies.set({url:address,name:'agent_session',value:token,httpOnly:true,sameSite:'strict',path:'/'});
   const show=async()=>{
+    if(process.platform==='darwin')await app.dock?.show();
     if(window){if(window.isMinimized())window.restore();window.show();window.focus();return;}
-    window=new BrowserWindow({width:1320,height:900,minWidth:900,minHeight:640,show:false,backgroundColor:'#ffffff',title:'token-flow',icon,...(process.platform==='darwin'?{titleBarStyle:'hiddenInset' as const,trafficLightPosition:{x:20,y:20}}:{}),webPreferences:{preload:join(here,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+    window=new BrowserWindow({width:1320,height:900,minWidth:900,minHeight:640,show:false,backgroundColor:'#161719',title:'TokenFlow',icon,...(process.platform==='darwin'?{titleBarStyle:'hiddenInset' as const,trafficLightPosition:{x:20,y:20}}:{}),webPreferences:{preload:join(here,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
     window.webContents.setWindowOpenHandler(({url})=>{
       if(['https://github.com/haruinia/token-flow/issues','https://github.com/haruinia/token-flow/blob/main/README.md','https://github.com/haruinia/token-flow/blob/main/docs/usage.md'].includes(url))void shell.openExternal(url).catch(()=>{
         dialog.showErrorBox('无法打开项目页面',`请在浏览器中打开 ${url}`);
@@ -57,22 +63,24 @@ async function start() {
       if(closing)return;
       event.preventDefault();
       window?.hide();
+      if(process.platform==='darwin')app.dock?.hide();
     });
     window.on('closed',()=>{window=undefined;});
     await window.loadURL(address);
     window.show();
     window.focus();
   };
-  const trayIcon=nativeImage.createFromPath(icon).resize({width:18,height:18});
+  const trayIcon=nativeImage.createFromPath(process.platform==='darwin'?join(here,'console','tray-icon.png'):icon).resize({width:14,height:14});
   if(process.platform==='darwin')trayIcon.setTemplateImage(true);
   tray=new Tray(trayIcon);
-  tray.setToolTip('token-flow');
-  tray.setContextMenu(Menu.buildFromTemplate([
+  tray.setToolTip('TokenFlow');
+  const trayMenu=Menu.buildFromTemplate([
     {label:'打开工作台',click:()=>{void show();}},
     {label:'维修师傅',click:()=>{void show().then(()=>window?.webContents.send('repair:open'));}},
     {type:'separator'},
-    {label:'退出 token-flow',click:()=>app.quit()},
-  ]));
+    {label:'退出 TokenFlow',click:()=>app.quit()},
+  ]);
+  tray.on('right-click',()=>tray?.popUpContextMenu(trayMenu));
   tray.on('click',()=>{void show();});
   app.on('will-quit',()=>tray?.destroy());
   app.on('second-instance',()=>{void show();});app.on('activate',()=>{void show();});
