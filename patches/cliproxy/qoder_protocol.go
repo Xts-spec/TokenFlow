@@ -396,14 +396,13 @@ func BuildQoderRequestBody(payload []byte, modelKey string, isReasoning bool) ([
 			"source":       "system",
 		},
 		"business": map[string]any{
-			"model_key": modelKey,
-			"product":   "cli",
-			"version":   "1.0.0",
-			"type":      "agent",
-			"stage":     "start",
-			"id":        uuid.NewString(),
-			"name":      lastUserText,
-			"begin_at":  time.Now().UnixMilli(),
+			"product":  "cli",
+			"version":  "1.0.0",
+			"type":     "agent",
+			"stage":    "start",
+			"id":       uuid.NewString(),
+			"name":     lastUserText,
+			"begin_at": time.Now().UnixMilli(),
 		},
 	}
 
