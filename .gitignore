@@ -81,3 +81,22 @@ codex-upgrade.lock
 # Publish one product video; keep generated demo screenshots and variants local.
 docs/media/*
 !docs/media/quickstart.mp4
+
+# Project documentation (internal)
+docs/
+
+# Browser extensions (internal)
+extensions/
+
+# Temporary and tool directories
+.tmp/
+.playwright-cli/
+.ai-tracker/
+.local-notes/
+
+# Output artifacts
+output/
+
+# Miscellaneous
+.impeccable.md
+.DS_Store
