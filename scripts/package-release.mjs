@@ -2,10 +2,13 @@ import {readFile,mkdir,writeFile,readdir,access} from 'node:fs/promises';
 import {spawnSync} from 'node:child_process';
 import {resolve} from 'node:path';
 import {homedir} from 'node:os';
+import {cleanPackage} from './clean-package.mjs';
 
 // Build output only: never copy the developer's profile or repository wholesale.
 const pkg=JSON.parse(await readFile('package.json','utf8'));
 const version=pkg.build.buildVersion;
+// Clean once per invocation so all requested architectures survive this run.
+await cleanPackage();
 const output=resolve('release',`v${version}`);
 await mkdir(output,{recursive:true});
 for(const [platform,arch] of [['darwin','arm64'],['darwin','x64'],['win32','x64']]){
