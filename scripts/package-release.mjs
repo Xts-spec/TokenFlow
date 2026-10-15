@@ -31,7 +31,7 @@ for(const [platform,arch] of [['darwin','arm64'],['darwin','x64'],['win32','x64'
   const result=spawnSync('npx',['electron-builder','--config',configPath,platform==='darwin'?'--mac':'--win','--dir',`--${arch}`,'--publish','never'],{stdio:'inherit'});
   if(result.status!==0)process.exit(result.status??1);
   const bundleDir=resolve(output,spec,platform==='darwin'?(arch==='arm64'?'mac-arm64':'mac'):'win-unpacked');
-  const zip=spawnSync('zip',['-q','-r','-y','-1',resolve(output,spec,config.artifactName),platform==='darwin'?'token-flow.app':'.'],{cwd:bundleDir,stdio:'inherit'});
+  const zip=spawnSync('zip',['-q','-r','-y','-1',resolve(output,spec,config.artifactName),platform==='darwin'?`${pkg.build.productName}.app`:'.'],{cwd:bundleDir,stdio:'inherit'});
   if(zip.status!==0)process.exit(zip.status??1);
 }
-console.log(`Three release archives created in ${output}`);
+console.log(`Release archives created in ${output}`);

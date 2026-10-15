@@ -171,3 +171,9 @@ it('distinguishes a ZCode account without Coding Plan from authentication or unk
  expect(noPlan.plan).toContain('未开通'); expect(noPlan.windows).toEqual([]); expect(noPlan.note).not.toContain('重新登录');
  await expect(quotaProviders.zcode.fetch(async () => json({code: 500, msg: 'temporary failure', success: false}), {provider: 'zcode'})).rejects.toThrow('未成功');
 });
+
+it('does not present a zero-sized Qoder resource package as 100% remaining',async()=>{
+ const report=await quotaProviders.qoder.fetch(async()=>json({userQuota:{total:0,used:0,remaining:0,percentage:0},addOnQuota:{total:800,used:67,remaining:733,percentage:0.08}}),{provider:'qoder'});
+ expect(report.windows[0]).toMatchObject({limit:0,usedPercent:null,note:expect.stringContaining('未分配额度')});
+ expect(report.windows[1].usedPercent).toBe(67/800*100);
+});

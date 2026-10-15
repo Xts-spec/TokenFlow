@@ -1,4 +1,5 @@
 import { retryQuotaCall, QuotaTransportError, transientQuotaStatus } from './quota/retry.js';
+import {qoderAccountingReader} from './qoder-accounting.js';
 import {accountLabel} from './account-label.js';
 import { nativeCredentialSchema, nativeConflict, type NativeProvider } from './native-accounts.js';
 import { readConfig } from './agent-connections.js';
@@ -196,7 +197,11 @@ export class CLIProxyManager {
         this.login_.fail('Local Agent 已退出，请重新启动并连接账号。');
         this.log(`Local Agent 已退出 (${code})`);
       });
-      child.stdout?.resume(); child.stderr?.resume();
+      // Retain only validated Qoder billing scalars; discard all other sidecar output.
+      for(const stream of [child.stdout,child.stderr]) {
+        const receive=qoderAccountingReader(message=>this.log(message));
+        stream?.on('data',receive);
+      }
       for (let i = 0; i < 100; i++) {
         if (failure) throw failure;
         if (child.exitCode !== null) throw new Error('CLIProxyAPI 启动失败');
@@ -286,6 +291,9 @@ export class CLIProxyManager {
       const names = new Map([...this.names].filter(([id])=>retainedIDs.has(id)));
       const authIDs = new Map([...this.authIDs].filter(([id])=>retainedIDs.has(id)));
       const quotaTargets = new Map([...this.quotaTargets].filter(([id])=>retainedIDs.has(id)));
+      // Local display names never change the upstream authentication identity.
+      let accountLabels:Record<string,string>={};
+      try{accountLabels=z.record(z.string().trim().min(1).max(200)).parse(JSON.parse(await readConfig(join(this.root,'account-labels.json'))??'{}'));}catch{/* Optional local display metadata. */}
       const accounts: LocalAccount[] = [...retained,...await Promise.all(result.files.map(async file => {
         const id = createHash('sha256').update(file.name).digest('hex').slice(0, 24);
         names.set(id, file.name);
@@ -298,7 +306,7 @@ export class CLIProxyManager {
         if (file.auth_index !== undefined) quotaTargets.set(id, {authIndex: String(file.auth_index), account: {provider, email: file.email, domain:typeof identity.domain==='string'?identity.domain:undefined,
           projectId: file.project_id, accountType: file.account_type, chatgptAccountId: file.id_token?.chatgpt_account_id, planType: file.id_token?.plan_type}});
         return {
-          id, provider, label: accountLabel(provider,file,identity)+(provider==='workbuddy'&&['www.workbuddy.ai','https://www.workbuddy.ai'].includes(String(identity.domain))?' · 海外':''),
+          id, provider, label: (accountLabels[id]??accountLabel(provider,file,identity))+(provider==='workbuddy'&&['www.workbuddy.ai','https://www.workbuddy.ai'].includes(String(identity.domain))?' · 海外':''),
           status: file.status ?? 'unknown',
           disabled: file.disabled ?? false,
           unavailable: file.unavailable ?? false,

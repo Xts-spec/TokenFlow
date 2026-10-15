@@ -1,6 +1,5 @@
 import {FlowDialog} from './FlowDialog';
 import {ColumnDivider} from './ColumnDivider';
-import {ScrollRail} from './ScrollRail';
 import {copyText} from './clipboard';
 import {localDay} from './usage-model';
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
@@ -89,13 +88,12 @@ export function AccountsPage({local,usage,disabled,actions,notify}:{local:LocalA
   finally{await logins[provider].refresh();lock.current=false;setSwitching(false);}
  };
 
- return <div className="tfPage">
-  <ScrollRail className="tfProviderTabs" role="tablist" aria-label="授权平台" onKeyDown={navigateTabs}>
+ return <div className="tfPage tfAccountsPage">
+  <div className="tfProviderTabs" role="tablist" aria-label="授权平台" onKeyDown={navigateTabs}>
    {providers.map(item=><button key={item.id} id={`provider-tab-${item.id}`} role="tab" aria-selected={provider?.id===item.id} aria-controls={`provider-panel-${item.id}`} tabIndex={provider?.id===item.id?0:-1} onClick={()=>chooseProvider(item.id)}>
     <ProviderIcon provider={item.id}/><span>{item.label}</span>
-    {!!item.accounts.length&&<small>{item.accounts.length}<span className="srOnly"> 个已授权账号</span></small>}
    </button>)}
-  </ScrollRail>
+  </div>
   <LoginProgress local={local} disabled={disabled||switching} actions={actions}/>
   {!provider&&<p className="tfHint">正在读取授权平台…</p>}
   {provider&&<section id={`provider-panel-${provider.id}`} role="tabpanel" aria-labelledby={`provider-tab-${provider.id}`} className="tfProviderPanel">
@@ -114,7 +112,7 @@ export function AccountsPage({local,usage,disabled,actions,notify}:{local:LocalA
     <div className="tfAccountTabs" role="tablist" aria-label={`${provider.label} 已授权账号`} onKeyDown={navigateTabs}>
      {provider.accounts.map(item=><button key={item.id} id={`account-tab-${item.id}`} role="tab" aria-selected={account.id===item.id} aria-controls={`account-panel-${item.id}`} tabIndex={account.id===item.id?0:-1} onClick={()=>{setSelectedAccounts(previous=>({...previous,[provider.id]:item.id}));}}>
       <Icon name="user" size={14}/><span title={item.label}>{item.label}</span>
-      {login?.accounts.some(a=>a.id===item.id&&a.current)?<b className="tfUsing">本机登录中</b>:item.disabled?<small>已停用</small>:null}
+      {login?.accounts.some(a=>a.id===item.id&&a.current)?<b className="tfUsing">登录中</b>:item.disabled?<small>已停用</small>:null}
      </button>)}
     </div>
     {(()=>{
@@ -122,8 +120,7 @@ export function AccountsPage({local,usage,disabled,actions,notify}:{local:LocalA
      const shownModels=orderModels(account.models??[],id=>modelLabel(local.models,id),modelOrder==='manual'?'manual':'name',modelRanks);
      return <div id={`account-panel-${account.id}`} role="tabpanel" aria-labelledby={`account-tab-${account.id}`} className={`tfAccountDetail ${account.disabled?'off':''}`}>
       <div className="tfAccountTop">
-       <span className="tfRowText"><strong title={account.label}>{account.label}</strong><small>{account.models?.length??0} 个模型{account.disabled?' · 已停用':''}</small></span>
-       {native?.current&&<b className="tfUsing">本机登录中</b>}{login&&native&&!native.current&&<button disabled={locked||!native.switchable} title={native.switchable?`把 ${loginNames[provider.id as LoginProvider]} 自己的登录换成这个账号`:native.reason} onClick={()=>void switchLogin(provider.id as LoginProvider,account.id,account.label)}>{switching?'正在切换…':'设为本机登录'}</button>}
+       {login&&native&&!native.current&&<button className="textButton tfAccountLogin" disabled={locked||!native.switchable} title={native.switchable?`把 ${loginNames[provider.id as LoginProvider]} 自己的登录换成这个账号`:native.reason} onClick={()=>void switchLogin(provider.id as LoginProvider,account.id,account.label)}>{switching?'正在切换…':'登录此账号'}</button>}
        <div className="tfAccountManage"><label className="toggle" title={account.disabled?'启用':'停用'}><input type="checkbox" checked={!account.disabled} disabled={locked||local.state!=='running'} onChange={()=>void actions.toggle(account.id,account.disabled)}/><span>启用</span></label>
        <button className="textButton danger" disabled={locked||local.state!=='running'} onClick={()=>{if(window.confirm(`删除账号 ${account.label} 的登录凭据？`))void actions.remove(account.id);}}>删除</button></div>
       </div>
@@ -133,7 +130,7 @@ export function AccountsPage({local,usage,disabled,actions,notify}:{local:LocalA
        <section className="tfQuotaSide" aria-label="账号额度"><h3>额度</h3>{quota&&!account.disabled?<QuotaDetails quota={quota} label={account.label} compact/>:<small className="tfHint">{account.disabled?'已停用，不参与调用':'额度暂未提供'}</small>}</section>
        <ColumnDivider storageKey="token-flow.layout.account-split" label="调整额度与模型宽度"/>
        <section className="tfModelsSide" aria-label="账号模型"><div className="tfAccountModels" id={`models-${account.id}`}>
-       <h3>模型</h3>
+       <header className="tfAccountModelsHead"><h3>模型</h3><small className="tfAccountModelCount">{account.models?.length??0} 个模型</small></header>
        {account.models?.length?<ul aria-label={`${account.label} 支持的模型`}>{shownModels.map(id=><li key={id} className="tfDragRow" {...dropOrder('models',id,shownModels,moveModel)}><DragHandle kind="models" id={id} label={modelLabel(local.models,id)} items={shownModels} move={moveModel}/><ProviderIcon provider={modelManufacturer(id,local)} size={20}/><span className="tfCatalogModelName"><strong title={modelLabel(local.models,id)}>{modelLabel(local.models,id)}</strong></span><button className="textButton" aria-label={`复制模型 ${modelLabel(local.models,id)}`} title={id} onClick={()=>void copyText(id).then(()=>notify({kind:'ok',text:'模型 ID 已复制'})).catch(()=>notify({kind:'error',text:'复制失败'}))}>复制</button></li>)}</ul>:<p className="tfHint">尚未获取到模型，请启用账号后刷新。</p>}
       </div></section></div>
       {login?.error&&<p className="tfWarn">本机登录状态读取失败：{login.error}</p>}

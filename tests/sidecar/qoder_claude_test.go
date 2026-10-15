@@ -1,14 +1,19 @@
 package executor
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	log "github.com/sirupsen/logrus"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	_ "github.com/router-for-me/CLIProxyAPI/v7/internal/translator"
@@ -29,7 +34,7 @@ func TestQoderClaudeWireFormat(t *testing.T) {
 	}))
 	defer server.Close()
 	exec := NewQoderExecutor(&config.Config{})
-	auth := &cliproxyauth.Auth{ID: "fixture", Provider: "qoder", Attributes: map[string]string{"chat_url": server.URL}, Metadata: map[string]any{"access_token": "synthetic"}}
+	auth := &cliproxyauth.Auth{ID: "fixture", Provider: "qoder", Attributes: map[string]string{"chat_url": server.URL}, Metadata: map[string]any{"access_token": "synthetic", "uid": "fixture-user"}}
 	req := cliproxyexecutor.Request{Model: "kmodel_latest", Payload: []byte(`{"model":"kmodel_latest","messages":[{"role":"user","content":"Reply OK"}],"max_tokens":16}`)}
 	opts := cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatClaude, OriginalRequest: req.Payload}
 	t.Run("stream", func(t *testing.T) {
@@ -121,7 +126,7 @@ func TestQoderToolCallAndInvalidStream(t *testing.T) {
 			}))
 			defer server.Close()
 			exec := NewQoderExecutor(&config.Config{})
-			auth := &cliproxyauth.Auth{ID: "fixture", Provider: "qoder", Attributes: map[string]string{"chat_url": server.URL}, Metadata: map[string]any{"access_token": "synthetic"}}
+			auth := &cliproxyauth.Auth{ID: "fixture", Provider: "qoder", Attributes: map[string]string{"chat_url": server.URL}, Metadata: map[string]any{"access_token": "synthetic", "uid": "fixture-user"}}
 			req := cliproxyexecutor.Request{Model: "kmodel_latest", Payload: []byte(`{"model":"kmodel_latest","stream":true,"system":"fixture-system","messages":[{"role":"user","content":"use lookup"}],"tools":[{"name":"lookup","description":"fixture","input_schema":{"type":"object","properties":{"path":{"type":"string"}}}}],"max_tokens":64}`)}
 			opts := cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatClaude, OriginalRequest: req.Payload, Stream: true}
 			result, err := exec.Execute(context.Background(), auth, req, opts)
@@ -224,5 +229,167 @@ func TestQoderInvalidParameterIsRequestFault(t *testing.T) {
 	}
 	if !strings.Contains(failure.Error(), "a2a_invalid_request") || strings.Contains(failure.Error(), "private-payload") {
 		t.Fatal("missing safe request category or exposed diagnostic")
+	}
+}
+
+func TestQoderRejectsMissingAccountIdentity(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(http.StatusOK) }))
+	defer server.Close()
+	exec := NewQoderExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{ID: "fixture", Provider: "qoder", Attributes: map[string]string{"chat_url": server.URL}, Metadata: map[string]any{"access_token": "synthetic"}}
+	_, err := exec.Execute(context.Background(), auth, cliproxyexecutor.Request{Model: "kmodel_latest", Payload: []byte(`{"messages":[{"role":"user","content":"OK"}]}`)}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FromString("openai")})
+	if err == nil || !strings.Contains(err.Error(), "account identity missing") {
+		t.Fatalf("expected missing identity rejection, got %v", err)
+	}
+	if calls != 0 {
+		t.Fatal("request with missing account identity reached upstream")
+	}
+}
+
+// A blocked upstream body must be released when the caller stops a long task.
+func TestQoderStreamCancellationClosesBody(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	stream := readAgentChatStream(ctx, &http.Response{Body: reader, Header: http.Header{}}, "qoder")
+	cancel()
+	select {
+	case _, ok := <-stream.Chunks:
+		if ok {
+			t.Fatal("cancelled stream returned an event")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancel did not unblock the upstream reader")
+	}
+}
+
+func TestQoderLargeToolArgumentsAndStandaloneUsage(t *testing.T) {
+	argument := strings.Repeat("x", 2*1024*1024)
+	body, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": "large", "type": "function", "function": map[string]any{"name": "write", "arguments": argument}}}}, "finish_reason": "tool_calls"}}})
+	wire := "data: " + string(body) + "\n\ndata: {\"usage\":{\"prompt_tokens\":300,\"completion_tokens\":4,\"total_tokens\":304,\"prompt_tokens_details\":{\"cached_tokens\":250}}}\n\ndata: [DONE]\n\n"
+	stream := readAgentChatStream(context.Background(), &http.Response{Body: io.NopCloser(strings.NewReader(wire)), Header: http.Header{}}, "qoder")
+	events := 0
+	for chunk := range stream.Chunks {
+		if chunk.Err != nil {
+			t.Fatal(chunk.Err)
+		}
+		events++
+		if events == 1 && len(gjson.GetBytes(chunk.Payload, "choices.0.delta.tool_calls.0.function.arguments").String()) != len(argument) {
+			t.Fatal("large tool arguments truncated")
+		}
+		if events == 2 && (gjson.GetBytes(chunk.Payload, "usage.prompt_tokens").Int() != 300 || !gjson.GetBytes(chunk.Payload, "choices").IsArray()) {
+			t.Fatal("standalone usage lost")
+		}
+	}
+	if events != 2 {
+		t.Fatalf("got %d events, expected tool + usage", events)
+	}
+}
+
+func TestQoderStandaloneUsageReachesClientAccounting(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"OK\"},\"finish_reason\":\"stop\"}]}\n\ndata: {\"usage\":{\"prompt_tokens\":300,\"completion_tokens\":4,\"total_tokens\":304,\"prompt_tokens_details\":{\"cached_tokens\":250}}}\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+	exec := NewQoderExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{ID: "fixture", Provider: "qoder", Attributes: map[string]string{"chat_url": server.URL}, Metadata: map[string]any{"access_token": "synthetic", "uid": "fixture-user"}}
+	req := cliproxyexecutor.Request{Model: "kmodel_latest", Payload: []byte(`{"input":"OK","max_output_tokens":16}`)}
+	result, err := exec.Execute(context.Background(), auth, req, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAIResponse})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]int64{"usage.input_tokens": 300, "usage.output_tokens": 4, "usage.input_tokens_details.cached_tokens": 250} {
+		if got := gjson.GetBytes(result.Payload, path).Int(); got != want {
+			t.Fatalf("%s=%d, want %d", path, got, want)
+		}
+	}
+}
+
+func TestQoderWireKeepsHeaderAndSelectedModelConsistent(t *testing.T) {
+	for _, format := range []sdktranslator.Format{sdktranslator.FormatOpenAI, sdktranslator.FormatOpenAIResponse, sdktranslator.FormatClaude} {
+		for _, model := range []string{"Kimi-K3", "Qwen3.8-Max"} {
+			t.Run(string(format)+model, func(t *testing.T) {
+				key := "kmodel_latest"
+				if model == "Qwen3.8-Max" {
+					key = "qmodel_preview"
+				}
+				checked := false
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					raw, err := io.ReadAll(r.Body)
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					const alphabet = "_doRTgHZBKcGVjlvpC,@aFSx#DPuNJme&i*MzLOEn)sUrthbf%Y^w.(kIQyXqWA!"
+					const standard = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+					var b strings.Builder
+					for _, c := range string(raw) {
+						if c == '$' {
+							b.WriteByte('=')
+						} else if i := strings.IndexRune(alphabet, c); i >= 0 {
+							b.WriteByte(standard[i])
+						} else {
+							t.Error("invalid encoded byte")
+							return
+						}
+					}
+					encoded := b.String()
+					n := len(encoded) / 3
+					decoded, err := base64.StdEncoding.DecodeString(encoded[len(encoded)-n:] + encoded[n:len(encoded)-n] + encoded[:n])
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					for _, path := range []string{"model_config.key", "chat_context.extra.modelConfig.key", "business.model_key"} {
+						if got := gjson.GetBytes(decoded, path).String(); got != key {
+							t.Errorf("%s=%s, want %s", path, got, key)
+						}
+					}
+					if r.Header.Get("X-Model-Key") != key {
+						t.Error("model header diverged")
+					}
+					checked = true
+					fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"OK\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+				}))
+				defer server.Close()
+				payload := []byte(`{"model":"stale","messages":[{"role":"user","content":"OK"}],"input":"OK","max_tokens":16,"max_output_tokens":16}`)
+				auth := &cliproxyauth.Auth{Provider: "qoder", Attributes: map[string]string{"chat_url": server.URL}, Metadata: map[string]any{"access_token": "synthetic", "uid": "fixture"}}
+				_, err := NewQoderExecutor(&config.Config{}).Execute(context.Background(), auth, cliproxyexecutor.Request{Model: model, Payload: payload}, cliproxyexecutor.Options{SourceFormat: format, OriginalRequest: payload})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !checked {
+					t.Fatal("request was not sent")
+				}
+			})
+		}
+	}
+}
+
+func TestQoderAccountingLogsOnlyTypedBillingFields(t *testing.T) {
+	logger := log.StandardLogger()
+	originalHooks := logger.ReplaceHooks(make(log.LevelHooks))
+	defer logger.ReplaceHooks(originalHooks)
+	hook := logtest.NewGlobal()
+	for _, usage := range []string{`{"billable":false,"credits":0}`, `{"billable":true,"credits":0.125}`} {
+		logQoderAccounting(gjson.Parse(`{"usage":` + usage + `,"content":"PRIVATE","authorization":"SECRET"}`))
+		entry := hook.LastEntry()
+		if entry == nil {
+			t.Fatal("missing billing log")
+		}
+		if len(entry.Data) != 3 || entry.Data["billable"] != gjson.Get(usage, "billable").Bool() || entry.Data["credits"] != gjson.Get(usage, "credits").Float() {
+			t.Fatalf("unexpected fields: %v", entry.Data)
+		}
+		serialized, _ := entry.String()
+		if bytes.Contains([]byte(serialized), []byte("PRIVATE")) || bytes.Contains([]byte(serialized), []byte("SECRET")) {
+			t.Fatal("private data leaked")
+		}
+	}
+	hook.Reset()
+	logQoderAccounting(gjson.Parse(`{"usage":{"billable":"SECRET","credits":"PRIVATE"}}`))
+	if hook.LastEntry() != nil {
+		t.Fatal("invalid accounting fields logged")
 	}
 }

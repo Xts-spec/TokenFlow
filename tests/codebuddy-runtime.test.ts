@@ -41,3 +41,23 @@ it('accepts client tools whose schema is not a plain object',async()=>{
  expect(result.calls.map(call=>call.name)).toEqual(['union','unconvertible']);
  expect(result.calls[0]!.arguments).toBe(JSON.stringify(args));
 });
+
+it('overrides the coding preset and emits partial text once before completion',async()=>{
+ let complete!:()=>void;const gate=new Promise<void>(resolve=>{complete=resolve;});const deltas:string[]=[];
+ sdk.query.mockImplementation((request:{options:Record<string,any>})=>{
+  expect(request.options.systemPrompt).toContain('CALLER_SYSTEM');
+  expect(request.options.systemPrompt).toContain('client owns task execution');
+  expect(request.options.includePartialMessages).toBe(true);
+  return (async function*(){
+   yield {type:'stream_event',event:{type:'message_start',message:{model:'test'}}};
+   yield {type:'stream_event',event:{type:'content_block_start',index:1,content_block:{type:'text'}}};
+   yield {type:'stream_event',event:{type:'content_block_delta',index:1,delta:{type:'text_delta',text:'Live'}}};
+   yield {type:'assistant',message:{model:'test',content:[{type:'thinking',thinking:'not output'}]}};
+   await gate;
+   yield {type:'assistant',message:{model:'test',content:[{type:'text',text:'Live'}]}};
+   yield {type:'result',subtype:'success',is_error:false,result:'Live'};
+  })();
+ });
+ const pending=runOfficialSDK({token:'fixture',region:'china',model:'test',prompt:'hello',systemPrompt:'CALLER_SYSTEM',onText:text=>{deltas.push(text);complete();},tools:[],signal:new AbortController().signal,cwd:'/tmp',configDir:'/tmp'});
+ const result=await pending;expect(deltas).toEqual(['Live']);expect(result.text).toBe('Live');expect(result.failed).toBe(false);
+});

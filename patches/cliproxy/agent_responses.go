@@ -13,6 +13,7 @@ import (
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
+	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -49,6 +50,11 @@ func preserveAgentParameters(original, converted []byte, toChat bool) []byte {
 				break
 			}
 		}
+	}
+	// Anthropic expresses sequential tools inside tool_choice, unlike Chat /
+	// Responses. Losing this flag can cause independent proposals in one turn.
+	if gjson.GetBytes(original, "tool_choice.disable_parallel_tool_use").Bool() {
+		converted, _ = sjson.SetBytes(converted, "parallel_tool_calls", false)
 	}
 	return converted
 }
@@ -168,10 +174,21 @@ func startAgentResponses(ctx context.Context, auth *cliproxyauth.Auth, req clipr
 			}
 			return true
 		}
+		toolIndices := map[int64]bool{}
+		sequential := gjson.GetBytes(canonical, "parallel_tool_calls")
 		for chunk := range upstream.Chunks {
 			if chunk.Err != nil {
 				send(chunk)
 				return
+			}
+			if sequential.Exists() && !sequential.Bool() {
+				for _, call := range gjson.GetBytes(chunk.Payload, "choices.0.delta.tool_calls").Array() {
+					toolIndices[call.Get("index").Int()] = true
+				}
+				if len(toolIndices) > 1 {
+					send(cliproxyexecutor.StreamChunk{Err: statusErr{code: 502, msg: `{"error":{"type":"upstream_protocol_error","code":"a2a_parallel_tools_violated","message":"The source proposed multiple tools despite the caller's sequential-tool requirement."}}`}})
+					return
+				}
 			}
 			if !translate(restoreNames(chunk.Payload)) {
 				return
@@ -396,6 +413,10 @@ func readAgentChatStream(ctx context.Context, resp *http.Response, provider stri
 	go func() {
 		defer close(chunks)
 		defer resp.Body.Close()
+		// Closing the body interrupts a blocked Scan even if the transport does
+		// not itself bind reads to this consumer's cancellation context.
+		stopCancellation := context.AfterFunc(ctx, func() { _ = resp.Body.Close() })
+		defer stopCancellation()
 		send := func(chunk cliproxyexecutor.StreamChunk) bool {
 			select {
 			case chunks <- chunk:
@@ -408,7 +429,7 @@ func readAgentChatStream(ctx context.Context, resp *http.Response, provider stri
 			send(cliproxyexecutor.StreamChunk{Err: statusErr{code: 502, msg: provider + ": " + message}})
 		}
 		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+		scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 		seen, finished, toolCalls := false, false, false
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
@@ -441,7 +462,7 @@ func readAgentChatStream(ctx context.Context, resp *http.Response, provider stri
 				data = body.String()
 			} else if body.IsObject() {
 				data = body.Raw
-			} else if !envelope.Get("choices").Exists() {
+			} else if !envelope.Get("choices").Exists() && !envelope.Get("usage").IsObject() {
 				continue
 			}
 			if data == "[DONE]" {
@@ -457,6 +478,9 @@ func readAgentChatStream(ctx context.Context, resp *http.Response, provider stri
 				return
 			}
 			chunk := gjson.Parse(data)
+			if provider == "qoder" {
+				logQoderAccounting(chunk)
+			}
 			if chunk.Get("error").Exists() {
 				if chunk.Get("error.code").String() == "invalid_parameter_error" || chunk.Get("error.type").String() == "invalid_request_error" {
 					send(cliproxyexecutor.StreamChunk{Err: statusErr{code: 400, msg: `{"error":{"type":"invalid_request_error","code":"a2a_invalid_request","message":"The source rejected request parameters."}}`}})
@@ -466,7 +490,18 @@ func readAgentChatStream(ctx context.Context, resp *http.Response, provider stri
 				return
 			}
 			if !chunk.Get("choices").IsArray() {
-				continue
+				if !chunk.Get("usage").IsObject() {
+					continue
+				}
+				// Some sources send accounting in a standalone final SSE event.
+				// The Chat codec expects choices:[] for these usage-only chunks.
+				dataBytes, err := sjson.SetBytes([]byte(data), "choices", []any{})
+				if err != nil {
+					fail("invalid usage event")
+					return
+				}
+				data = string(dataBytes)
+				chunk = gjson.Parse(data)
 			}
 			if len(chunk.Get("choices").Array()) > 0 {
 				seen = true
@@ -495,4 +530,27 @@ func readAgentChatStream(ctx context.Context, resp *http.Response, provider stri
 		}
 	}()
 	return &cliproxyexecutor.StreamResult{Headers: resp.Header, Chunks: chunks}
+}
+
+// Keep upstream billing observable without logging prompts, account identifiers,
+// credentials, or inventing a Credits-to-token conversion for client protocols.
+func logQoderAccounting(chunk gjson.Result) {
+	fields := log.Fields{"provider": "qoder"}
+	if billable := chunk.Get("usage.billable"); billable.Type == gjson.True || billable.Type == gjson.False {
+		fields["billable"] = billable.Bool()
+	}
+	if credits := chunk.Get("usage.credits"); credits.Type == gjson.Number {
+		fields["credits"] = credits.Float()
+	}
+	if len(fields) > 1 {
+		// The sidecar formatter intentionally omits arbitrary structured fields.
+		// Repeat only these validated scalars in the message for the host reader.
+		parts := []string{"qoder upstream accounting"}
+		for _, key := range []string{"billable", "credits"} {
+			if value, ok := fields[key]; ok {
+				parts = append(parts, fmt.Sprintf("%s=%v", key, value))
+			}
+		}
+		log.WithFields(fields).Info(strings.Join(parts, " "))
+	}
 }

@@ -14,7 +14,7 @@ const profile=resolveProfile(app.getPath('appData'),process.env.AGENT_DATA_ROOT)
 mkdirSync(profile,{recursive:true,mode:0o700});
 app.setPath('userData',profile);
 // macOS encryption retains the original keychain service across the display-name change.
-app.setName(process.platform==='darwin'?'token-flow':'TokenFlow');
+app.setName(['darwin','linux'].includes(process.platform)?'token-flow':'TokenFlow');
 if(!app.requestSingleInstanceLock()) app.quit();
 else { void start().catch(error=>{dialog.showErrorBox('TokenFlow 启动失败',error instanceof Error?error.message:String(error));app.exit(1);}); }
 async function start() {
@@ -23,9 +23,10 @@ async function start() {
   let tray:Tray|undefined;
   await app.whenReady();
   if(process.platform==='darwin'){
-    if(safeStorage.isEncryptionAvailable())safeStorage.encryptString('');
-    app.setName('TokenFlow');
+    // Keep the legacy service name if the keychain cannot initialize; Secrets exposes its warning.
+    try{if(safeStorage.isEncryptionAvailable()){safeStorage.encryptString('');app.setName('TokenFlow');}}catch{}
   }
+  if(process.platform==='linux')app.setName('TokenFlow');
   const icon=join(here,'console','app-icon.png');
   if(process.platform==='darwin')app.dock?.setIcon(nativeImage.createFromPath(icon));
   const root=process.env.AGENT_DATA_ROOT?resolve(process.env.AGENT_DATA_ROOT):app.getPath('userData');
@@ -70,7 +71,7 @@ async function start() {
     window.show();
     window.focus();
   };
-  const trayIcon=nativeImage.createFromPath(process.platform==='darwin'?join(here,'console','tray-icon.png'):icon).resize({width:14,height:14});
+  const trayIcon=nativeImage.createFromPath(process.platform==='darwin'?join(here,'console','tray-icon.png'):icon).resize({width:18,height:18});
   if(process.platform==='darwin')trayIcon.setTemplateImage(true);
   tray=new Tray(trayIcon);
   tray.setToolTip('TokenFlow');

@@ -388,17 +388,22 @@ func BuildQoderRequestBody(payload []byte, modelKey string, isReasoning bool) ([
 			"features": []any{},
 			"text":     lastUserText,
 		},
+		// The top-level key selects the billed upstream model; the context and
+		// X-Model-Key header alone do not select the same accounting path.
 		"model_config": map[string]any{
-			"source": "system",
+			"key":          modelKey,
+			"is_reasoning": isReasoning,
+			"source":       "system",
 		},
 		"business": map[string]any{
-			"product":  "cli",
-			"version":  "1.0.0",
-			"type":     "agent",
-			"stage":    "start",
-			"id":       uuid.NewString(),
-			"name":     lastUserText,
-			"begin_at": time.Now().UnixMilli(),
+			"model_key": modelKey,
+			"product":   "cli",
+			"version":   "1.0.0",
+			"type":      "agent",
+			"stage":     "start",
+			"id":        uuid.NewString(),
+			"name":      lastUserText,
+			"begin_at":  time.Now().UnixMilli(),
 		},
 	}
 

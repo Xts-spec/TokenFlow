@@ -282,3 +282,32 @@ func TestAgentContractInterleavedReasoning(t *testing.T) {
 		t.Fatalf("got %d final reasoning segments, want 2", finalCount)
 	}
 }
+
+func TestAgentContractClaudeSequentialTools(t *testing.T) {
+	original := []byte(`{"messages":[{"role":"user","content":"read"}],"tool_choice":{"type":"auto","disable_parallel_tool_use":true}}`)
+	canonical, err := agentCanonicalRequest(cliproxyexecutor.Request{Model: "test", Payload: original}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatClaude})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value := gjson.GetBytes(canonical, "parallel_tool_calls"); !value.Exists() || value.Bool() {
+		t.Fatal("Claude sequential tools flag lost in canonical request")
+	}
+	native := preserveAgentParameters(original, []byte(`{"parallel_tool_calls":true}`), true)
+	if gjson.GetBytes(native, "parallel_tool_calls").Bool() {
+		t.Fatal("Claude sequential tools flag lost in native request")
+	}
+}
+
+func TestAgentContractRejectsParallelToolsWhenDisabled(t *testing.T) {
+	native := func(_ context.Context, _ *cliproxyauth.Auth, _ cliproxyexecutor.Request, _ cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+		chunks := make(chan cliproxyexecutor.StreamChunk, 1)
+		chunks <- cliproxyexecutor.StreamChunk{Payload: []byte(`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"a","type":"function","function":{"name":"read","arguments":"{}"}},{"index":1,"id":"b","type":"function","function":{"name":"read","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`)}
+		close(chunks)
+		return &cliproxyexecutor.StreamResult{Headers: http.Header{}, Chunks: chunks}, nil
+	}
+	req := cliproxyexecutor.Request{Model: "test", Payload: []byte(`{"input":"read","parallel_tool_calls":false}`)}
+	_, err := executeAgentResponse(context.Background(), nil, req, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAIResponse}, native)
+	if err == nil || !strings.Contains(err.Error(), "a2a_parallel_tools_violated") {
+		t.Fatalf("expected explicit sequential-tool error, got %v", err)
+	}
+}

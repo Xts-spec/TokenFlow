@@ -130,7 +130,7 @@ it('normalizes Codex agent_message items and strips encrypted_content blocks for
  });
  expect(normalized).toEqual([{type:'message',role:'developer',content:[{type:'input_text',text:'Subagent routing note'}]}]);
  const parsed=parseCodeBuddyInput('responses',{model:'workbuddy/deepseek-v4.1-flash',input:normalized});
- expect(parsed.prompt).toContain('Subagent routing note');
+ expect(parsed.systemPrompt).toContain('Subagent routing note');expect(parsed.prompt).not.toContain('Subagent routing note');
  expect(parsed.prompt).not.toContain('gAAAAABsecret');
 });
 

@@ -41,6 +41,7 @@ import { runResponsesCodeLoop } from './responses-loop.js';
 import { ResponsesProvider, providerSchema, defaultProvider, type ProviderConfig, type ProbeResult } from './providers.js';
 import { GatewayActivity, observeUsage } from './gateway-activity.js';
 import {GatewayTraces,requestTrace} from './gateway-traces.js';
+import {nativeActivityTrace,nativeActivitySummary} from './activity-traces.js';
 import type {ResponseObservation} from './gateway-observation.js';
 import { UsageLedger } from './usage-ledger.js';
 import { GatewayKeys, gatewayKeyInput, allowsProtocol, type GatewayKey } from './gateway-keys.js';
@@ -409,7 +410,7 @@ export async function createDesktopService(options:ServiceOptions) {
     const current=(await connections.status()).find(t=>t.id===target)!;
     if(!rewrite&&current.connection?.model===chain.model&&current.connection.sourceId===chain.sourceId&&current.configurationState==='configured'){
       const call=activity.snapshot().recent.find(c=>c.keyId===current.connection!.keyId&&c.model===chain.model);
-      return {needed:false,reason:call&&call.status>=400?(call.error?.code??'call_failed'):'configuration_matches',message:call&&call.status>=400?`接口、Key 和模型配置一致，但最近调用失败。${call.error?.message??`HTTP ${call.status}，请继续检查调用链路。`} 如需更换配置，可使用“修改 Agent 配置”。`:'接口、Key 和模型配置一致。如需更换来源、模型或重新生成 Key，请使用“修改 Agent 配置”。'};
+      return {needed:false,reason:call&&call.status>=400?(call.error?.code??'call_failed'):'configuration_matches',message:call&&call.status>=400?`接口、Key 和模型配置一致，但最近调用失败。${call.error?.message??`HTTP ${call.status}，请继续检查调用链路。`} 如需更换配置，请在维修对话中说明希望更换的来源和模型。`:'接口、Key 和模型配置一致。如需更换来源、模型或重新生成 Key，请在维修对话中说明希望更换的来源和模型。'};
     }
     const selections=current.connection?.selections?.some(item=>item.sourceId===chain.sourceId&&item.model===chain.model)?current.connection.selections:undefined;
     const preview=await connections.preview(target,origin,chain.model,true,selections);
@@ -581,6 +582,19 @@ export async function createDesktopService(options:ServiceOptions) {
   app.post('/api/maintenance/local/upgrade-plan',async req=>{z.object({}).strict().parse(req.body);return localMaintenance.prepareUpgrade();});
   app.post('/api/maintenance/local/upgrade',async req=>{await idle();const input=z.object({id:z.string().uuid(),approve:z.literal(true)}).strict().parse(req.body);if(maintenance.snapshot().status==='running'||maintenance.snapshot().readiness.status==='checking'||['reviewing','executing'].includes(approval.snapshot().proposal?.status??''))throw Object.assign(new Error('维修或审批正在运行，请结束后再升级'),{statusCode:409});return localMaintenance.executeUpgrade(input.id);});
   app.get('/api/gateway/activity',async()=>activity.snapshot());
+  app.get('/api/activity/traces',async req=>{
+    const {days,limit,origin}=z.object({days:z.coerce.number().int().min(0).max(3650).default(7),limit:z.coerce.number().int().min(1).max(300).default(100),origin:z.enum(['all','native','gateway']).default('all')}).parse(req.query);
+    const native=localUsage.snapshot(),cutoff=new Date();cutoff.setHours(0,0,0,0);cutoff.setDate(cutoff.getDate()-Math.max(0,days-1));
+    const records=[...(origin==='native'?[]:traces.list({days,limit}).map(row=>({...row,origin:'gateway' as const}))),...(origin==='gateway'?[]:(native.recent??[]).filter(row=>!days||Date.parse(row.last)>=cutoff.getTime()).map(nativeActivitySummary))].sort((a,b)=>b.startedAt.localeCompare(a.startedAt)).slice(0,limit);
+    return {records,scanning:native.scanning,coverage:native.coverage,warning:origin==='gateway'?traces.warning:native.warning||traces.warning||''};
+  });
+  app.get('/api/activity/traces/:id',async(req,reply)=>{
+    const id=z.string().regex(/^(?:native-[a-f0-9]{64}|[a-f0-9-]{36})$/).parse((req.params as {id:string}).id);
+    const native=id.startsWith('native-')?(localUsage.snapshot().recent??[]).find(row=>`native-${row.sampleId}`===id):undefined;
+    const record=native?nativeActivityTrace(native):id.startsWith('native-')?undefined:traces.get(id);
+    return record?{record}:reply.code(404).send({error:'记录已过期或本机索引尚未完成。'});
+  });
+
   // Day-by-day counters that survive restarts; `days=0` returns everything kept.
   app.get('/api/gateway/traces',async req=>{const filter=z.object({target:z.string().max(80).optional(),sourceId:z.string().max(80).optional(),keyId:z.string().max(80).optional(),kind:z.enum(['api']).optional(),days:z.coerce.number().int().min(0).max(3650).default(7),limit:z.coerce.number().int().min(1).max(300).default(100)}).parse(req.query);return {records:traces.list(filter),...(traces.warning?{warning:traces.warning}:{})};});
   app.get('/api/gateway/traces/:id',async(req,reply)=>{const id=z.string().uuid().parse((req.params as {id:string}).id);const record=traces.get(id);return record?{record}:reply.code(404).send({error:'轨迹已过期或不存在。'});});
@@ -828,7 +842,7 @@ export async function createDesktopService(options:ServiceOptions) {
           if(client.models.includes(model))try{selectedAuth=sourceAuth(model);}catch{record(503);return reply.code(503).send({error:{message:'Selected source account is unavailable',type:'source_unavailable'}});}
         }
       }
-      if(path==='models') return {object:'list',data:available.map(model=>({id:model.id,object:'model',owned_by:model.provider,...(model.displayName?{display_name:model.displayName}:{}),...(model.capabilities?{capabilities:model.capabilities}:model.textOnly?{capabilities:{text:true,tools:false,images:false}}:{})}))};
+      if(path==='models') return {object:'list',data:available.map(model=>({id:model.id,object:'model',owned_by:model.provider,name:modelLabel(available,model.id),display_name:modelLabel(available,model.id),...(model.capabilities?{capabilities:model.capabilities}:model.textOnly?{capabilities:{text:true,tools:false,images:false}}:{})}))};
       if(!allowsProtocol(client.agents,path)){record(403);return reply.code(403).send({error:{message:'This API key does not allow this agent protocol',type:'agent_not_allowed'}});}
       const model=z.object({model:z.string().min(1).max(300)}).parse(req.body).model;
       if(!client.models.includes(model)){record(403);return reply.code(403).send({error:{message:`此 Key 未授权请求模型。请将主模型、辅助模型及项目级配置统一为已授权的模型 ID（含提供商前缀）：${client.models.slice(0,5).join('、')||'暂无授权模型'}。无需重新登录厂商账号。`,type:'model_not_allowed'}});}

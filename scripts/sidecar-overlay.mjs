@@ -42,6 +42,15 @@ replacements[responseSource]=responsePatched;
 // Test files in a developer's checkout may already exist. Use the same destination
 // names so the overlay replaces them rather than registering duplicate tests.
 if(test){
+ // Official Qoder credentials require a real identity; keep the upstream success fixture synthetic.
+ const qoderTestSource=resolve('upstream/CLIProxyAPI/internal/runtime/executor/qoder_executor_test.go');
+ const qoderTestPatched=join(patchDir,'qoder_executor_test.go');
+ const qoderTest=readFileSync(qoderTestSource,'utf8');
+ const qoderFixture='"access_token": "test-qoder-token",';
+ if(!qoderTest.includes(qoderFixture))throw new Error('Upstream Qoder test identity fixture changed.');
+ writeFileSync(qoderTestPatched,qoderTest.replace(qoderFixture,qoderFixture+'\n\t\t\t"uid": "fixture-user",'));
+ replacements[qoderTestSource]=qoderTestPatched;
+
  replacements[resolve('upstream/CLIProxyAPI/internal/api/handlers/management/provider_login_test.go')]=resolve('tests/sidecar/provider_login_test.go');
  replacements[resolve('upstream/CLIProxyAPI/internal/auth/zcode/cli_polling_test.go')]=resolve('tests/sidecar/zcode_cli_polling_test.go');
  replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/agent_contract_test.go')]=resolve('tests/sidecar/agent_contract_test.go');

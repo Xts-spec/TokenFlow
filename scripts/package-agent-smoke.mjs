@@ -3,8 +3,8 @@ import {chromium} from 'playwright';
 import {extractFile} from '@electron/asar';
 import {execFileSync,spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {mkdtemp,readFile,rm,writeFile,mkdir} from 'node:fs/promises';
-import {join,resolve} from 'node:path';
+import {mkdtemp,readFile,rm,writeFile,mkdir,realpath} from 'node:fs/promises';
+import {join,resolve,basename} from 'node:path';
 import {tmpdir} from 'node:os';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:net';
@@ -15,7 +15,8 @@ const results=[];
 for(const [path,platform,arch] of [[arm,'darwin','arm64'],[intel,'darwin','x64'],[windows,'win32','x64']].filter(([path])=>!!path)){
  console.log(JSON.stringify({checking:platform+'-'+arch}));
  const root=resolve(path),resources=join(root,platform==='darwin'?'Contents/Resources':'resources');
- const binary=join(root,platform==='darwin'?'Contents/MacOS/token-flow':'token-flow.exe');
+ const productName=platform==='darwin'?basename(root,'.app'):'TokenFlow';
+ const binary=join(root,platform==='darwin'?`Contents/MacOS/${productName}`:`${productName}.exe`);
  const sidecar=join(resources,'sidecars',`${platform}-${arch}`,platform==='win32'?'cliproxyapi.exe':'cliproxyapi');
  const expected=platform==='win32'?'x86-64':arch==='arm64'?'arm64':'x86_64';
  for(const file of [binary,sidecar])assert.ok(execFileSync('file',[file],{encoding:'utf8'}).includes(expected),`wrong architecture: ${file}`);
@@ -24,7 +25,7 @@ for(const [path,platform,arch] of [[arm,'darwin','arm64'],[intel,'darwin','x64']
  const main=extractFile(asar,'dist/main.js').toString();assert.ok(main.includes('sidecars'));
  let startup='not executed on Windows';
  if(platform==='darwin'){
-  const home=await mkdtemp(join(tmpdir(),'token-flow-package-'));let browser,child,page,startupLog='';
+  const home=await mkdtemp(join(await realpath(tmpdir()),'token-flow-package-'));let browser,child,page,startupLog='';
   try{
    await mkdir(join(home,'codex/sessions'),{recursive:true});await writeFile(join(home,'codex/sessions/native-fixture.jsonl'),[JSON.stringify({type:'session_meta',payload:{id:'fixture-thread',model_provider:'openai'}}),JSON.stringify({type:'turn_context',payload:{model:'native-package-test'}}),JSON.stringify({type:'token_usage_record',timestamp:new Date().toISOString(),payload:{response_id:'fixture-response',usage:{input_tokens:100,cached_input_tokens:50,output_tokens:20}}})].join('\n')+'\n');
    const db=new DatabaseSync(join(home,'codex/logs_2.sqlite'));db.exec('CREATE TABLE logs(id INTEGER PRIMARY KEY,ts INTEGER,thread_id TEXT,target TEXT,feedback_log_body TEXT)');db.prepare('INSERT INTO logs(ts,thread_id,target,feedback_log_body) VALUES(?,?,?,?)').run(Math.floor(Date.now()/1000),'fixture-thread','codex_http_client::client','POST https://chatgpt.com/backend-api/codex/responses');db.close();
@@ -38,7 +39,7 @@ for(const [path,platform,arch] of [[arm,'darwin','arm64'],[intel,'darwin','x64']
    await page.route('**/api/a2a/program-updates',route=>route.fulfill({json:{updates:{}}}));
    await page.locator('.tfBrand .dot.ok').waitFor();
    await page.waitForFunction(async()=>{const stats=await fetch('/api/usage/overview?days=0').then(r=>r.json());if(stats.warning)throw Error(stats.warning);return !stats.scanning&&stats.nativeRows.some(r=>r.model==='native-package-test'&&r.inputTokens+r.outputTokens===120&&r.channel==='official');},undefined,{timeout:30000});
-   const targets=await page.evaluate(async()=>{const response=await fetch('/api/a2a');if(!response.ok)throw Error('Agent status unavailable');return (await response.json()).targets;});
+   const targets=await page.evaluate(async()=>{const response=await fetch('/api/a2a');if(!response.ok)throw Error('Agent status unavailable: '+response.status+' '+await response.text());return (await response.json()).targets;});
    assert.equal(targets.length,6);const pi=targets.find(t=>t.id==='pi');assert.ok(pi.installation.download.startsWith('https://pi.dev/'));assert.equal(pi.restartSupported,true);
    if(arch==='x64')assert.equal(targets.find(t=>t.id==='deepseek').installation.supported,false);
    await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'本地 Agent',exact:true}).click();

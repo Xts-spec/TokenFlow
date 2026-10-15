@@ -5,7 +5,7 @@ import {dayOf} from './usage-ledger.js';
 export type UsageChannel='official'|'api'|'unknown';
 export type LocalUsageRow=UsageRow&{origin:'native';channel:UsageChannel;provider:string;nativeAccountId?:string;sampleId?:string;responseHash?:string};
 export type UsageCoverage={target:string;files:number;indexed:number;skipped:number;status:'ready'|'scanning'|'unavailable'};
-export type LocalUsageSnapshot={rows:LocalUsageRow[];coverage:UsageCoverage[];scanning:boolean;updatedAt?:string;warning?:string};
+export type LocalUsageSnapshot={rows:LocalUsageRow[];recent?:LocalUsageRow[];coverage:UsageCoverage[];scanning:boolean;updatedAt?:string;warning?:string};
 export const nativeIdentity=(provider:string,id:string)=>createHash('sha256').update(`${provider}:${id}`).digest('hex');
 const number=(v:unknown)=>typeof v==='number'&&Number.isFinite(v)&&v>=0?Math.min(Number.MAX_SAFE_INTEGER,Math.round(v)):0;
 const gatewayModel=(v:unknown)=>typeof v==='string'&&/^(?:token-flow[/: ·]|(?:custom-local:)?(?:api-[a-f0-9]{24}\/|(?:codex|workbuddy|qoder|zcode)\/))/i.test(v);
@@ -88,4 +88,11 @@ export class LocalUsageParser{
 export function mergeLocalUsageRows(input:LocalUsageRow[]):LocalUsageRow[]{
  const samples=new Map<string,LocalUsageRow>();for(const r of input){const id=r.sampleId??JSON.stringify(r);const old=samples.get(id);if(!old||r.inputTokens+r.outputTokens>=old.inputTokens+old.outputTokens)samples.set(id,r);}
  const groups=new Map<string,LocalUsageRow>();for(const r of samples.values()){const key=[r.day,r.target,r.model,r.provider,r.channel,r.nativeAccountId??''].join('|');const old=groups.get(key);if(!old){const {sampleId,responseHash,...copy}=r;groups.set(key,{...copy});continue;}for(const k of ['requests','failed','unmeasured','inputTokens','cachedTokens','cacheBaseTokens','outputTokens','durationMs','cacheWriteTokens','reasoningTokens'] as const)old[k]=(old[k]??0)+(r[k]??0);if(r.last>old.last)old.last=r.last;}return [...groups.values()];
+}
+
+/** Only distinct usage samples become activity records; daily aggregates are not requests. */
+export function recentLocalUsageRows(input:LocalUsageRow[],limit=1000):LocalUsageRow[]{
+ const samples=new Map<string,LocalUsageRow>();
+ for(const row of input){if(!row.sampleId)continue;const old=samples.get(row.sampleId);if(!old||row.inputTokens+row.outputTokens>=old.inputTokens+old.outputTokens)samples.set(row.sampleId,row);}
+ return [...samples.values()].sort((a,b)=>b.last.localeCompare(a.last)).slice(0,limit);
 }

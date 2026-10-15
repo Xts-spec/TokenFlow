@@ -40,7 +40,7 @@ Claude Code、Antigravity 也有支持的原生登录切换。按界面提示先
 
 **来源 Qoder IDE ≠ 目标 Qoder 独立应用。** 前者提供授权和模型，后者是使用这些模型的客户端。如果把其他来源接入 Qoder 独立应用，重启后在自定义模型菜单选择 `TokenFlow · 模型`；WorkBuddy 目标则在新任务输入框下方的模型菜单选择。
 
-Pi Agent 接入官方 Pi Coding Agent，使用官方像素图标及 `@earendil-works/pi-coding-agent`；导入后在 Pi 的 `/model` 菜单选择 TokenFlow。DeepSeek Harness 接入官方桌面客户端，导入后在应用内选择模型。
+Pi Agent 接入官方 Pi Coding Agent，使用官方像素图标及 `@earendil-works/pi-coding-agent`；导入后在 Pi 的 `/model` 菜单选择 TokenFlow。DeepSeek Harness 接入官方桌面客户端，导入后在应用内选择模型。各 Agent 导出的模型显示名称使用网关里的同一名称；DeepSeek Harness 与 Pi 使用模型的 `name` 字段。`/v1/models` 也返回一致的 `name` 和 `display_name`，实际请求 `id` 保持稳定，例如 `qoder/kmodel_latest` 显示为 `qoder/Kimi-K3`。已导入的旧配置需在新版中重新应用所选模型并重启客户端；只显示 ID 的第三方客户端仍可能展示请求 ID。
 
 每个 Agent 名称旁的下载图标用于安装或更新，确认有可用新版时显示红点。未安装时提示安装，完成后自动识别，无需手动检测。DeepSeek Harness 配置保存后可立即重启桌面应用；Pi 和 Claude Code 保存配置后仅显示结果提示，不自动弹出重启页面；需要重新加载时，可从名称旁手动打开终端或重启。Pi 已有交互会话可选择对应目录重启并进入续聊列表。重启前请保存工作并结束生成。联网检查失败或版本未知时不显示更新红点。
 
@@ -122,3 +122,13 @@ Codex 图片能力由上游模型目录传递到本机目录，不再将所有�
 账号授权页将用量入口放在已选平台的操作栏，默认显示图标、Token 数和缓存命中，点击查看拆分；不重复显示平台名称、授权提示或下拉箭头。
 
 WorkBuddy 的「添加账号」使用国内站，「添加海外账号」使用 `www.workbuddy.ai` 官方登录页。海外账号单独保存并标记「海外」，模型目录、额度、推理和令牌续期均使用所属站点，不合并国内与海外额度。完成海外登录前不能验证该账号的实际可用模型和余额。上游明确返回 11128（调用渠道未获批准）时停止该请求，不通过改写客户端身份、移除规则或反复重试绕过。
+
+
+WorkBuddy 模型来源使用官方 CodeBuddy Agent SDK。TokenFlow 覆盖默认编程 Agent 提示词，把调用方系统指令放到 SDK 的 systemPrompt 层；SDK 公开输入只支持用户消息，因此历史 assistant / tool 消息仍以包含角色、调用 ID 和结果的结构化文本传入，不宣称原生消息完全透传。关闭内置工具、磁盘配置和会话持久化；客户端工具仅登记为待执行提案，由 Codex / Claude Code 等调用方执行。SDK 正文增量实时转换为 Responses、Chat Completions 或 Anthropic Messages 事件；工具提案与最终用量在结果验证后返回，思考块不会冒充正文。
+
+Qoder 来源由项目内 CLIProxyAPI 的 Qoder 适配器直接请求 Qoder 服务，并不启动官方 qodercli Agent；CLI 渠道字段是上游请求格式。调用方负责 Agent 提示词、工具执行和长任务管理。不要把该通道与官方 Qoder Agent SDK 的本地 CLI 运行时混为一谈。
+
+
+Qoder / WorkBuddy 转换 Claude Code 请求时保留 `tool_choice.disable_parallel_tool_use`，映射为禁止并行工具调用。上游无视串行要求返回多个工具时，网关明确报错，不将该结果标为成功。Qoder 流读取支持有界的大块工具参数（单条 SSE 上限 16 MiB），取消会关闭上游读取；独立 usage 事件纳入最终 Token 统计。Qoder 的 0/0 Credits 资源包标记为未分配，不按剩余 100% 显示。Token 统计与厂商 Credits 各自使用实际返回值，额度未变化不等于免费。
+
+Qoder 请求将所选模型的官方 key 同步到 `X-Model-Key`、`model_config.key`、上下文模型配置和 `business.model_key`，不依赖缺少顶层模型标识时的上游默认行为。已验证漏传顶层 key 会出现有输出但 `billable:false` 的响应，不能据此判断免费政策或实际模型质量。网关运行日志单独保留上游 `billable` / `credits` 数值（包含 false 和 0），不记录账号认证或消息正文，不把 Credits 换算成 Token。额度页仍以官方额度查询结果为准。

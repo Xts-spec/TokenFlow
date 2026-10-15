@@ -51,7 +51,7 @@ async function walk(root,relative=''){
 }
 const results=[];
 for(const spec of process.argv[3]?[process.argv[3]]:['darwin-arm64','darwin-x64','win32-x64']){
-  const root=join(release,spec,spec.startsWith('darwin')?`mac${spec.endsWith('arm64')?'-arm64':''}/token-flow.app/Contents/Resources`:'win-unpacked/resources');
+  const root=join(release,spec,spec.startsWith('darwin')?`mac${spec.endsWith('arm64')?'-arm64':''}/${pkg.build.productName}.app/Contents/Resources`:'win-unpacked/resources');
   const archive=join(root,'app.asar');
   const entries=listPackage(archive);
   assert.ok(!entries.some(path=>/^\/(?:auth|secrets|\.env)(?:\/|$)/.test(path)),'Unexpected top-level credential data');

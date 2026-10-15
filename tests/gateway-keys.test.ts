@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createDesktopService } from '../packages/core/src/service.js';
 import { GatewayKeys, gatewayKeyInput } from '../packages/core/src/gateway-keys.js';
+import {modelLabel} from '../packages/core/src/model-label.js';
 const cleanup:Array<()=>Promise<unknown>>=[];
 afterEach(async()=>{for(const fn of cleanup.splice(0).reverse())await fn();});
 async function setup() {
@@ -18,6 +19,22 @@ async function setup() {
   const admin={host:'127.0.0.1:9527',authorization:'Bearer admin-token'};
   return {root,port,service,admin};
 }
+it('exports the same catalog names shown in the gateway while preserving routable IDs',async()=>{
+ const {service,port,admin}=await setup();
+ await fetch(`http://127.0.0.1:${port}/fixture`,{method:'POST',body:JSON.stringify({accounts:[{name:'qoder.json',provider:'qoder',status:'active',models:[{id:'kmodel_latest',display_name:'Kimi K3 (Qoder)'}]}]})});
+ await service.proxy.refreshAccounts();
+ const model='qoder/kmodel_latest';
+ const created=await service.app.inject({method:'POST',url:'/api/gateway-keys',headers:admin,payload:{name:'catalog-test',models:[model]}});
+ expect(created.statusCode,created.body).toBe(200);
+ const headers={host:admin.host,authorization:`Bearer ${created.json().apiKey}`};
+ const models=await service.app.inject({url:'/v1/models',headers});
+ const label=modelLabel(service.proxy.snapshot().models,model);
+ expect(label).toBe('qoder/Kimi-K3');
+ expect(models.json().data).toEqual([expect.objectContaining({id:model,name:label,display_name:label})]);
+ const response=await service.app.inject({method:'POST',url:'/v1/responses',headers,payload:{model,input:'hello'}});
+ expect(response.statusCode,response.body).toBe(200);expect(response.json().output[0].content[0].text).toBe('qoder');
+});
+
 it('registers actual namespaced aliases for duplicate provider models and restores them after restart',async()=>{
   const {service,port}=await setup();
   expect(service.proxy.snapshot().models.map(m=>m.id)).toEqual(['claude/second-model','claude/shared-model','codex/second-model','codex/shared-model']);

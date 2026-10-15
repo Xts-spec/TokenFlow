@@ -252,7 +252,7 @@ export function connectedConfig(target:Target,original:string|null,origin:string
     }
     const entry=object(doc['llm-pi-ai']??{id:'llm-pi-ai'}),config=object(entry.config??{}),providers=object(config.providers??{});
     if(Object.hasOwn(providers,'token-flow'))throw conflict('DeepSeek 已有 token-flow 供应商，请先恢复已有接入。');
-    return encodeConfig(target,{...doc,'agent-default-model':{...object(doc['agent-default-model']??{id:'agent-default-model'}),config:{...object(doc['agent-default-model']?.config??{}),provider:'token-flow',model}},'llm-pi-ai':{...entry,config:{...config,providers:{...providers,'token-flow':{baseURL:`${url.origin}/v1`,api:'openai-completions',headers:{Authorization:`Bearer ${key}`},models:chosen.map(id=>({id,displayName:label(id),input:['text'],contextWindow:131072,maxTokens:16384}))}}}}});
+    return encodeConfig(target,{...doc,'agent-default-model':{...object(doc['agent-default-model']??{id:'agent-default-model'}),config:{...object(doc['agent-default-model']?.config??{}),provider:'token-flow',model}},'llm-pi-ai':{...entry,config:{...config,providers:{...providers,'token-flow':{baseURL:`${url.origin}/v1`,api:'openai-completions',headers:{Authorization:`Bearer ${key}`},models:chosen.map(id=>({id,name:label(id),input:['text'],contextWindow:131072,maxTokens:16384}))}}}}});
   }
   if(target==='qoder'){
     const doc=original===null?{}:object(JSON.parse(original));

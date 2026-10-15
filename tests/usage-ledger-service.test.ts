@@ -63,3 +63,17 @@ it('only associates proven official native usage with an official billing accoun
  const accounts=vi.spyOn(service.proxy,'codexNativeAccounts').mockResolvedValue([{id:'official-source',accountId:'billing-account',email:'official@example.test',switchable:true,reason:''}]);
  try{const overview=(await service.app.inject({url:'/api/usage/overview?days=0',headers:admin})).json();expect(accounts).toHaveBeenCalledWith(true);expect(overview.nativeRows.map((r: {sourceId:string})=>r.sourceId)).toEqual(['official-source','','']);expect(overview.nativeRows.reduce((n:number,r:{inputTokens:number;outputTokens:number})=>n+r.inputTokens+r.outputTokens,0)).toBe(360);}finally{snapshot.mockRestore();accounts.mockRestore();}
 });
+
+it('lists and opens native activity through administrator-only endpoints without inventing timing',async()=>{
+ const {service,admin}=await open();cleanup.push(()=>service.app.close());
+ const {LocalUsageIndex}=await import('../packages/core/src/local-usage-index.js');const {LocalUsageParser}=await import('../packages/core/src/local-usage.js');
+ const parser=new LocalUsageParser('codex','fixture');parser.accept({type:'session_meta',payload:{model_provider:'openai',auth_mode:'chatgpt'}});parser.accept({type:'turn_context',payload:{model:'gpt-test'}});parser.accept({type:'token_usage_record',timestamp:new Date().toISOString(),payload:{response_id:'private-response',usage:{input_tokens:20,output_tokens:3}}});
+ const snapshot=vi.spyOn(LocalUsageIndex.prototype,'snapshot').mockReturnValue({rows:parser.rows(),recent:parser.rows(),coverage:[],scanning:false});
+ try{
+  expect((await service.app.inject({url:'/api/activity/traces',headers:{host:admin.host}})).statusCode).toBe(401);
+  const native=(await service.app.inject({url:'/api/activity/traces?origin=native',headers:admin})).json().records;expect(native).toHaveLength(1);expect(native[0]).toMatchObject({origin:'native',channel:'official',timingKnown:false});
+  expect((await service.app.inject({url:'/api/activity/traces?origin=gateway',headers:admin})).json().records).toEqual([]);
+  const detail=(await service.app.inject({url:`/api/activity/traces/${native[0].id}`,headers:admin})).json().record;expect(detail).toMatchObject({inputTokens:20,outputTokens:3,statusKnown:false,toolTraceKnown:false});
+  expect(JSON.stringify(detail)).not.toContain('private-response');expect((await service.app.inject({url:`/api/activity/traces/${native[0].id}`,headers:{host:admin.host}})).statusCode).toBe(401);
+ }finally{snapshot.mockRestore();}
+});

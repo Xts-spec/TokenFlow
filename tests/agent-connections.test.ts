@@ -347,25 +347,31 @@ it('makes Codex subagents inherit the selected parent model and restores their o
 it('exports catalog display names without changing Qoder routing IDs and restores original configs',async()=>{
  const {paths,connections}=await setup();
  const model='qoder/kmodel_latest';const modelLabels={[model]:'qoder/Kimi-K3'};
- for(const target of ['claude','codex','qoder','workbuddy'] as const){
-  const original=target==='codex'?'model = "native"\n':target==='workbuddy'?'[]\n':'{}\n';
-  await mkdir(join(paths[target],'..'),{recursive:true});await writeFile(paths[target],original);
+ for(const target of ['claude','codex','qoder','workbuddy','pi','deepseek'] as const){
+  const path=connections.paths[target];
+  const original=target==='codex'?'model = "native"\n':target==='workbuddy'||target==='deepseek'?'[]\n':'{}\n';
+  await mkdir(join(path,'..'),{recursive:true});await writeFile(path,original);
   const status=(await connections.status()).find(item=>item.id===target)!;
   const record=await connections.apply({target,revision:status.revision,origin:'http://127.0.0.1:9527',model,sourceId:'a'.repeat(24),keyId:randomUUID(),key:'fixture-key',selections:[{model,sourceId:'a'.repeat(24)}],modelLabels});
-  const text=await readFile(paths[target],'utf8');
+  const text=await readFile(path,'utf8');
   if(target==='codex'){
    const config=parse(text);expect(config.model).toBe(model);
    const catalog=JSON.parse(await readFile(String(config.model_catalog_json),'utf8'));
    expect(catalog.models[0]).toMatchObject({slug:model,display_name:'qoder/Kimi-K3'});
+  }else if(target==='deepseek'){
+   const entries=(await import('yaml')).parse(text);
+   expect(entries.find((entry:{id:string})=>entry.id==='llm-pi-ai').config.providers['token-flow'].models[0]).toMatchObject({id:model,name:'qoder/Kimi-K3'});
+   expect(entries.find((entry:{id:string})=>entry.id==='agent-default-model').config.model).toBe(model);
   }else{
    const config=JSON.parse(text);
    if(target==='claude'){
     expect(config.env.ANTHROPIC_MODEL).toBe(model);expect(config.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe(model);
     expect(config.modelPicker.options).toEqual([{model,label:'qoder/Kimi-K3'}]);
-   }else if(target==='qoder')expect(config.providers['token-flow'].models).toEqual([{model,displayName:'qoder/Kimi-K3'}]);
+   }else if(target==='pi')expect(config.providers['token-flow'].models[0]).toMatchObject({id:model,name:'qoder/Kimi-K3'});
+   else if(target==='qoder')expect(config.providers['token-flow'].models).toEqual([{model,displayName:'qoder/Kimi-K3'}]);
    else expect(config[0]).toMatchObject({id:model,name:'qoder/Kimi-K3'});
   }
-  await connections.restore(record.id);expect(await readFile(paths[target],'utf8')).toBe(original);
+  await connections.restore(record.id);expect(await readFile(path,'utf8')).toBe(original);
  }
 });
 

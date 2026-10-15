@@ -1,6 +1,6 @@
 {
   "name": "tokenflow",
-  "version": "10.13.26",
+  "version": "10.15.26",
   "private": true,
   "type": "module",
   "main": "dist/main.js",
@@ -76,7 +76,7 @@
     "vitest": "^3.2.7"
   },
   "build": {
-    "buildVersion": "10.13.26.1",
+    "buildVersion": "10.15.26.3",
     "appId": "local.browseragent.desktop",
     "productName": "TokenFlow",
     "files": [

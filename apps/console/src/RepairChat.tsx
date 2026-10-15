@@ -70,7 +70,20 @@ export function RepairChat({local,session,selectedAgent,open,onToggle,onNew}:{lo
  const canSend=ready&&!!selected&&!thinking&&!checking&&!proposalBusy&&!busy;
  const act=async(work:()=>Promise<void>)=>{setBusy(true);setError('');try{await work();}catch(e){setError(e instanceof Error?e.message:'操作失败');}finally{setBusy(false);}};
  const interfaceAgent=repairTarget;
- const send=(text:string,chain=contextualChain)=>act(async()=>{if(!state.selection&&selected){const next=await call<Snapshot>('/api/maintenance',selected,'PUT');setState(next);if(next.readiness?.status==='failed')throw new Error(next.readiness.message);}setState(await call<Snapshot>('/api/maintenance/run',{...(chain?{chain}:{}),interfaceAgent,prompt:text}));setPrompt('');});
+ const send=(text:string,chain=contextualChain)=>act(async()=>{
+  if(!state.selection&&selected){
+   let next=await call<Snapshot>('/api/maintenance',selected,'PUT');setState(next);
+   const deadline=Date.now()+90000;
+   while(next.readiness?.status==='checking'){
+    if(Date.now()>=deadline)throw new Error('维修模型检测尚未完成，请等待状态更新后再发送。');
+    await new Promise(resolve=>setTimeout(resolve,500));
+    next=await requestJSON<Snapshot>('/api/maintenance');setState(next);
+    if(next.selection?.sourceId!==selected.sourceId||next.selection?.model!==selected.model)throw new Error('维修模型已变更，请确认后重新发送。');
+   }
+   if(next.readiness?.status!=='ready')throw new Error(next.readiness?.message??'维修模型尚不可用，请重新选择。');
+  }
+  setState(await call<Snapshot>('/api/maintenance/run',{...(chain?{chain}:{}),interfaceAgent,prompt:text}));setPrompt('');
+ });
 
  // Opened from a broken Agent: start checking as soon as a model is ready. The floating button does not set a chain, so it waits for the user.
  useEffect(()=>{
@@ -92,9 +105,10 @@ export function RepairChat({local,session,selectedAgent,open,onToggle,onNew}:{lo
   {!open&&<button className={`tfRepairFab ${attention?'busy':''}`} aria-label="打开维修师傅" onClick={()=>onToggle(true)}><Icon name="wrench" size={18}/><span>维修师傅</span></button>}
   <section ref={panel} className="tfRepair" hidden={!open} aria-labelledby="repair-title" onKeyDown={event=>{if(event.key==='Escape'&&!picking)onToggle(false);}}>
    <header className="tfRepairHead">
-    <div><h2 id="repair-title">维修师傅</h2><select className="tfRepairTarget" aria-label="维修目标 Agent" value={repairTarget} disabled={busy||thinking||checking||proposalBusy} onChange={event=>{pending.current=null;setRepairTarget(event.target.value as Target);}}>{Object.entries(targetNames).map(([id,name])=><option key={id} value={id}>{name}</option>)}</select></div>
+    <div><h2 id="repair-title">维修师傅</h2></div>
     <button ref={modelButton} aria-haspopup="dialog" aria-expanded={picking} className={`tfModelChip ${selected?'':'warn'}`} disabled={busy||thinking||checking||proposalBusy} onClick={()=>setPicking(value=>!value)}>{selected?modelLabel(local.models,selected.model):'选择维修模型'}<Icon name="chevron" size={12} style={{transform:'rotate(90deg)'}}/></button>
     <button className="textButton" disabled={busy||!ready} title="清空对话，重新开始" onClick={onNew}>新对话</button>
+    <span className="tfRepairTargetControl"><Icon name="wrench" size={13}/><select className="tfRepairTarget" aria-label="维修目标 Agent" value={repairTarget} disabled={busy||thinking||checking||proposalBusy} onChange={event=>{pending.current=null;setRepairTarget(event.target.value as Target);}}>{Object.entries(targetNames).map(([id,name])=><option key={id} value={id}>{name}</option>)}</select></span>
     <button className="iconButton" aria-label="收起" onClick={()=>onToggle(false)}><Icon name="close" size={16}/></button>
    </header>
    {checking&&<p className="tfRepairNote">正在连接维修模型…</p>}

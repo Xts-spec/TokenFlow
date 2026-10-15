@@ -1,6 +1,9 @@
 package helps
 
 import (
+	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/tidwall/gjson"
@@ -28,10 +31,62 @@ func TestQoderHonorsDisabledThinking(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, path := range []string{"parameters.enable_thinking", "chat_context.extra.modelConfig.is_reasoning"} {
+			for _, path := range []string{"parameters.enable_thinking", "chat_context.extra.modelConfig.is_reasoning", "model_config.is_reasoning"} {
 				if got := gjson.GetBytes(body, path).Bool(); got != (effort != "none") {
 					t.Errorf("%s = %v for effort %q", path, got, effort)
 				}
+			}
+		})
+	}
+}
+
+func TestQoderLongConversationKeepsCallerInstructionsAndToolPairs(t *testing.T) {
+	instructions := "You are the caller agent. Preserve this policy exactly."
+	messages := []any{map[string]any{"role": "system", "content": instructions}}
+	for turn := 0; turn < 40; turn++ {
+		id := fmt.Sprintf("call_%d", turn)
+		messages = append(messages, map[string]any{"role": "user", "content": strings.Repeat("context ", 1000)}, map[string]any{"role": "assistant", "content": nil, "tool_calls": []any{map[string]any{"id": id, "type": "function", "function": map[string]any{"name": "lookup", "arguments": "{}"}}}}, map[string]any{"role": "tool", "tool_call_id": id, "content": fmt.Sprintf("RESULT_%d", turn)})
+	}
+	payload, _ := json.Marshal(map[string]any{"messages": messages, "max_tokens": 256, "parallel_tool_calls": false})
+	body, err := BuildQoderRequestBody(payload, "kmodel_latest", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gjson.GetBytes(body, "messages.#").Int() != 121 {
+		t.Fatal("long history truncated")
+	}
+	if gjson.GetBytes(body, "system").String() != instructions {
+		t.Fatal("caller instructions changed or coding preset added")
+	}
+	for turn := 0; turn < 40; turn++ {
+		assistant := 2 + turn*3
+		result := 3 + turn*3
+		id := fmt.Sprintf("call_%d", turn)
+		if gjson.GetBytes(body, fmt.Sprintf("messages.%d.tool_calls.0.id", assistant)).String() != id || gjson.GetBytes(body, fmt.Sprintf("messages.%d.tool_call_id", result)).String() != id {
+			t.Fatal("tool pair detached")
+		}
+	}
+	if gjson.GetBytes(body, "parameters.max_tokens").Int() != 256 || gjson.GetBytes(body, "parallel_tool_calls").Bool() {
+		t.Fatal("caller budget or tool controls changed")
+	}
+}
+
+func TestQoderSelectedModelReachesEveryNativeModelField(t *testing.T) {
+	for _, requested := range []string{"qoder/Kimi-K3", "qoder/Qwen3.8-Max", "qoder/Auto", "qoder/future_official_key"} {
+		t.Run(requested, func(t *testing.T) {
+			key, reasoning := NormalizeQoderModel(requested)
+			// A stale client model field must not override the resolved gateway model.
+			body, err := BuildQoderRequestBody([]byte(`{"model":"stale","messages":[{"role":"user","content":"OK"}],"reasoning_effort":"none"}`), key, reasoning)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, path := range []string{"model_config.key", "chat_context.extra.modelConfig.key", "business.model_key"} {
+				if got := gjson.GetBytes(body, path).String(); got != key {
+					t.Errorf("%s = %q, want %q", path, got, key)
+				}
+			}
+			if gjson.GetBytes(body, "model_config.source").String() != "system" || gjson.GetBytes(body, "model_config.is_reasoning").Bool() {
+				t.Fatal("invalid model source or thinking controls")
 			}
 		})
 	}

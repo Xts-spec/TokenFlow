@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm,realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm,realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
@@ -33,6 +33,11 @@ it('identifies WorkBuddy and Qoder accounts from safe stored metadata when sidec
  expect(manager.snapshot().accounts.find(a=>a.provider==='workbuddy')?.label).toBe('测试用户');
  expect(manager.snapshot().accounts.find(a=>a.provider==='qoder')?.label).toBe('账号 019eaf51…444e8b1b');
  expect(JSON.stringify(manager.snapshot().accounts)).not.toContain('private-token-not-for-display');
+ const qoder=manager.snapshot().accounts.find(a=>a.provider==='qoder')!;
+ await writeFile(join(root,'account-labels.json'),JSON.stringify({[qoder.id]:'personal@example.test'}));
+ await manager.refreshAccounts();
+ expect(manager.snapshot().accounts.find(a=>a.id===qoder.id)?.label).toBe('personal@example.test');
+ expect(JSON.parse(await readFile(join(root,'cliproxy/auth/qoder.json'),'utf8')).email).toBeUndefined();
 });
 async function setup(timeout = 5000) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'cliproxy-login-')));

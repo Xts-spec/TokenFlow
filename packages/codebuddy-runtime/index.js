@@ -3,6 +3,8 @@ import {resolve} from 'node:path';
 import {query,createSdkMcpServer,tool} from '@tencent-ai/agent-sdk';
 import {fromJSONSchema,z} from 'zod';
 
+const modelTransportPrompt = 'Continue the caller conversation supplied in the user input. Follow the caller system instructions below. You provide model responses and client tool proposals only. The client owns task execution and executes every proposed tool. Do not act as a separate coding agent, access local files, or claim a tool executed before its result appears in the supplied history. Historical tool calls are not new requests. Output the continuation, not an explanation of the transcript.';
+
 // Separate workspace dependency keeps the SDK's Zod 4 peer out of the app's Zod 3.
 const require=createRequire(import.meta.url);
 const cli=resolve(require.resolve('@tencent-ai/agent-sdk'),'../../cli/bin/codebuddy').replace(/\.asar([/\\])/g,'.asar.unpacked$1');
@@ -33,26 +35,39 @@ export async function runOfficialSDK(input){
  const env=Object.fromEntries(Object.keys(process.env).filter(k=>/^(CODEBUDDY|ANTHROPIC|OPENAI|WORKBUDDY)_/.test(k)).map(k=>[k,undefined]));
  Object.assign(env,{CODEBUDDY_AUTH_TOKEN:input.token,CODEBUDDY_INTERNET_ENVIRONMENT:input.region==='china'?'internal':'public',CODEBUDDY_CONFIG_DIR:input.configDir,...(process.versions.electron?{ELECTRON_RUN_AS_NODE:'1'}:{})});
  const abortController=new AbortController();const cancel=()=>abortController.abort();input.signal.addEventListener('abort',cancel,{once:true});if(input.signal.aborted)cancel();
- let text='',usage,result,actualModel=input.model;let q,child;
+ let text='',usage,result,actualModel=input.model;let q,child;let streamed=false;let streamModel;let partial='';const blockTypes=new Map();
  const prompt=input.images?.length?(async function*(){yield {type:'user',session_id:'',parent_tool_use_id:null,message:{role:'user',content:[{type:'text',text:input.prompt},...input.images]}};})():input.prompt;
  try{
-  q=query({prompt,options:{pathToCodebuddyCode:cli,executable:process.execPath,env,environment:input.region==='china'?'internal':'external',model:input.model,cwd:input.cwd,settingSources:[],tools:[],mcpServers:mcp?{token_flow:mcp}:{},strictMcpConfig:true,persistSession:false,maxTurns:1,abortController,stderr:()=>{},canUseTool:async(name,args)=>names.has(name)?{behavior:'allow',updatedInput:args}:{behavior:'deny',message:'Only caller-provided tools are permitted'}}});
+  q=query({prompt,options:{pathToCodebuddyCode:cli,executable:process.execPath,env,environment:input.region==='china'?'internal':'external',model:input.model,cwd:input.cwd,systemPrompt:[modelTransportPrompt,input.systemPrompt].filter(Boolean).join('\n\n'),includePartialMessages:true,settingSources:[],tools:[],mcpServers:mcp?{token_flow:mcp}:{},strictMcpConfig:true,persistSession:false,maxTurns:1,abortController,stderr:()=>{},canUseTool:async(name,args)=>names.has(name)?{behavior:'allow',updatedInput:args}:{behavior:'deny',message:'Only caller-provided tools are permitted'}}});
   for await(const message of q){
    // SDK 0.3.276 closes asynchronously. Retain only its owned child handle so
    // temporary session files are removed after the CLI has finished flushing.
    child??=q.transport?.process;
+   if(message.type==='stream_event'){
+    const event=message.event;
+    if(event.type==='message_start'){streamModel=event.message.model;partial='';blockTypes.clear();}
+    if(event.type==='content_block_start')blockTypes.set(event.index,event.content_block.type);
+    if(event.type==='content_block_delta'&&event.delta.type==='text_delta'&&blockTypes.get(event.index)==='text'){
+     if(input.model!=='auto'&&streamModel!==input.model)throw new Error('SDK streaming model mismatch');
+     const delta=event.delta.text;partial+=delta;streamed=true;input.onText?.(delta);
+    }
+   }
    if(message.type==='assistant'){
     actualModel=message.message.model;usage=message.message.usage??usage;
-    text+=message.message.content.filter(c=>c.type==='text').map(c=>c.text).join('');
+    const complete=message.message.content.filter(c=>c.type==='text').map(c=>c.text).join('');
+    if(!message.message.content.some(c=>c.type==='text'))continue;
+    if(partial&&complete!==partial)throw new Error(`SDK text stream mismatch: partial=${partial.length}, complete=${complete.length}, blocks=${message.message.content.map(c=>c.type).join(',')}`);
+    if(!partial&&complete){if(input.model!=='auto'&&actualModel!==input.model)throw new Error('SDK model mismatch');input.onText?.(complete);}
+    text+=complete;partial='';
    }
-   if(message.type==='result'){result=message;usage=message.usage??usage;if(!text&&message.result)text=message.result;}
+   if(message.type==='result'){result=message;usage=message.usage??usage;if(!text&&message.result){text=message.result;if(!streamed)input.onText?.(text);}}
   }
   if(input.signal.aborted)throw new Error('SDK request cancelled');
   // A deferred tool call intentionally reaches the one-turn limit.
   const failed=!result||result.is_error&&!(calls.length&&result.subtype==='error_max_turns');
   const errors=JSON.stringify(result?.errors??[]);
   const errorCode=/11128|unapproved channel/i.test(errors)?'source_policy_blocked':/401|unauthorized|invalid.*token/i.test(errors)?'authentication_error':/429|rate.limit/i.test(errors)?'rate_limit_error':undefined;
-  return {text:calls.length?'':text,calls,usage,model:actualModel,failed,errorCode};
+  return {text,calls,usage,model:actualModel,failed,errorCode};
  }finally{
   input.signal.removeEventListener('abort',cancel);child??=q?.transport?.process;
   // Iteration already closes the SDK transport. return() means interrupt in

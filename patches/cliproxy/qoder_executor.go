@@ -84,7 +84,7 @@ func (e *QoderExecutor) executeNativeStream(ctx context.Context, auth *cliproxya
 		return nil, statusErr{code: http.StatusUnauthorized, msg: "qoder: access token missing"}
 	}
 	if uid == "" {
-		uid = "019eaf51-474e-76c9-b09f-78bb444e8b1b"
+		return nil, statusErr{code: http.StatusUnauthorized, msg: "qoder: account identity missing; sign in again"}
 	}
 
 	rawBody, errBuild := helps.BuildQoderRequestBody(req.Payload, modelKey, isReasoning)

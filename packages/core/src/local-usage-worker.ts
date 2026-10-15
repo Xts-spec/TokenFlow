@@ -6,7 +6,7 @@ import {join,dirname} from 'node:path';
 import {createHash} from 'node:crypto';
 import {zstdDecompressSync} from 'node:zlib';
 import {z} from 'zod';
-import {LocalUsageParser,mergeLocalUsageRows,type LocalUsageRow,type UsageCoverage} from './local-usage.js';
+import {LocalUsageParser,mergeLocalUsageRows,recentLocalUsageRows,type LocalUsageRow,type UsageCoverage} from './local-usage.js';
 import {codexRouteEvidence,gatewayResponseEvidence,routeChannel,type RouteEvidence} from './local-usage-evidence.js';
 
 type Entry={stamp:string;target:string;rows:LocalUsageRow[]};
@@ -35,7 +35,7 @@ async function parseFile(target:string,file:{path:string;size:number}){
  else{const input=createReadStream(file.path);const lines=createInterface({input,crlfDelay:Infinity});try{for await(const line of lines)accept(line);}finally{lines.close();input.destroy();}}
  return parser.rows();
 }
-function publish(coverage:UsageCoverage[],scanning:boolean){parentPort?.postMessage({rows:mergeLocalUsageRows([...cache.values()].flatMap(e=>e.rows)),coverage,scanning,updatedAt:new Date().toISOString()});}
+function publish(coverage:UsageCoverage[],scanning:boolean){parentPort?.postMessage({rows:mergeLocalUsageRows([...cache.values()].flatMap(e=>e.rows)),recent:recentLocalUsageRows([...cache.values()].flatMap(e=>e.rows)),coverage,scanning,updatedAt:new Date().toISOString()});}
 async function scan(){
  if(busy)return;busy=true;const coverage:UsageCoverage[]=[];const seen=new Set<string>();
  try{
@@ -51,7 +51,7 @@ async function scan(){
   }
   for(const id of cache.keys())if(!seen.has(id))cache.delete(id);
   const tmp=`${path}.tmp`;await writeFile(tmp,JSON.stringify({version:8,files:Object.fromEntries(cache)}),{mode:0o600});await rename(tmp,path);publish(coverage,false);
- }catch{parentPort?.postMessage({rows:[...cache.values()].flatMap(e=>e.rows),coverage,scanning:false,warning:'部分本机用量暂时无法读取，已保留上次统计。'});}
+ }catch{parentPort?.postMessage({rows:mergeLocalUsageRows([...cache.values()].flatMap(e=>e.rows)),recent:recentLocalUsageRows([...cache.values()].flatMap(e=>e.rows)),coverage,scanning:false,warning:'部分本机用量暂时无法读取，已保留上次统计。'});}
  finally{busy=false;}
 }
 try{const stat=await lstat(path);if(stat.size<=64*1024*1024){const saved=JSON.parse(await readFile(path,'utf8'));if([7,8].includes(saved.version))for(const[id,e]of Object.entries(saved.files??{})){const v=e as Entry;if(saved.version===7&&v.target==='codex')continue;const parsed=z.array(cachedRow).safeParse(v.rows);if(parsed.success&&typeof v.stamp==='string'&&typeof v.target==='string'&&/^[a-f0-9]{64}$/.test(id))cache.set(id,{stamp:v.stamp,target:v.target,rows:parsed.data});}}}catch{/* First scan rebuilds missing metadata. */}

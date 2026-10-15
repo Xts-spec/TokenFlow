@@ -13,7 +13,7 @@ it('pins the credential region and rejects unknown domains or disabled credentia
 it('preserves old instructions, tool IDs/results and images without changing identity text',()=>{
  const original='You are Codex. Keep this instruction intact.';
  const parsed=parseCodeBuddyInput('responses',{model:'workbuddy/deepseek-v4.1-flash',instructions:original,input:[{role:'user',content:[{type:'input_image',image_url:'data:image/png;base64,YWJj'}]},{type:'function_call',call_id:'old',name:'read_probe',arguments:'{}'},{type:'function_call_output',call_id:'old',output:'previous result'}]});
- expect(parsed.prompt).toContain(original);expect(parsed.prompt).toContain('previous result');expect(parsed.prompt).toContain('"call_id":"old"');
+ expect(parsed.systemPrompt).toContain(original);expect(parsed.prompt).not.toContain(original);expect(parsed.prompt).toContain('previous result');expect(parsed.prompt).toContain('"call_id":"old"');
  expect(parsed.images).toEqual([{type:'image',source:{type:'base64',media_type:'image/png',data:'YWJj'}}]);expect(parsed.prompt).not.toContain('YWJj');
 });
 it.each(['responses','chat/completions','messages'])('preserves inclusive SDK input and cache breakdown once on %s',async path=>{
@@ -129,3 +129,33 @@ it('accepts Codex Desktop namespace tool catalogs that flatten past 256 tools',(
  expect(parsed.toolIdentities.get('mcp__codex_apps__service_0__action_0')).toEqual({name:'action_0',namespace:'mcp__codex_apps__service_0'});
 });
 
+
+it('separates Messages system instructions from role-tagged tool history',()=>{
+ const parsed=parseCodeBuddyInput('messages',{model:'workbuddy/test',system:[{type:'text',text:'CALLER_POLICY'}],messages:[{role:'user',content:'Read'},{role:'assistant',content:[{type:'tool_use',id:'call1',name:'read',input:{}}]},{role:'user',content:[{type:'tool_result',tool_use_id:'call1',content:'CLIENT_RESULT'}]}]});
+ expect(parsed.systemPrompt).toBe('CALLER_POLICY');expect(parsed.prompt).not.toContain('CALLER_POLICY');expect(parsed.prompt).toContain('call1');expect(parsed.prompt).toContain('CLIENT_RESULT');
+});
+it.each(['responses','chat/completions','messages'])('delivers live %s text before SDK completion without replaying it',async path=>{
+ const root=await mkdtemp(join(tmpdir(),'sdk-live-stream-'));let finish!:()=>void;
+ const gate=new Promise<void>(resolve=>{finish=resolve;});
+ const sdk=new WorkBuddySDKProvider(root,async()=>({type:'workbuddy',access_token:'fixture'}),async input=>{
+  input.onText?.('FIRST_CHUNK');await gate;
+  input.onText?.('SECOND_CHUNK');
+  return {model:input.model,text:'FIRST_CHUNKSECOND_CHUNK',calls:[],failed:false,usage:{input_tokens:9,output_tokens:2}};
+ });
+ try{
+  const response=await sdk.response('source',path,{model:'workbuddy/test',stream:true,...(path==='responses'?{input:'hi'}:{messages:[{role:'user',content:'hi'}]})},new AbortController().signal);
+  const reader=response.body!.getReader();const decode=new TextDecoder();let before='';
+  while(!before.includes('FIRST_CHUNK'))before+=decode.decode((await reader.read()).value);
+  expect(before).not.toContain('SECOND_CHUNK');expect(before).not.toContain('response.completed');finish();
+  let rest='';for(;;){const next=await reader.read();if(next.done)break;rest+=decode.decode(next.value);}
+  expect(rest).toContain('SECOND_CHUNK');
+  const events=(before+rest).split('\n').filter(line=>line.startsWith('data: {')).map(line=>JSON.parse(line.slice(6)));
+  const text=events.map(e=>path==='responses'&&e.type==='response.output_text.delta'?e.delta:path==='messages'&&e.type==='content_block_delta'&&e.delta.type==='text_delta'?e.delta.text:path==='chat/completions'?e.choices?.[0]?.delta?.content??'':'').join('');
+  expect(text).toBe('FIRST_CHUNKSECOND_CHUNK');
+ }finally{finish();await sdk.close();await rm(root,{recursive:true,force:true});}
+});
+
+it('honors Claude sequential-tool requests without requiring an OpenAI extension',()=>{
+ const parsed=parseCodeBuddyInput('messages',{model:'workbuddy/test',messages:[{role:'user',content:'read'}],tools:[{name:'read',input_schema:{type:'object'}}],tool_choice:{type:'auto',disable_parallel_tool_use:true}});
+ expect(parsed.parallel_tool_calls).toBe(false);
+});

@@ -1,3 +1,4 @@
+import type {ActivityTrace} from '../../../packages/core/src/activity-traces';
 import {TracePanel} from './TracePanel';
 import { useEffect, useState } from 'react';
 import type { LocalAgentSnapshot } from '../../../packages/core/src/cliproxy';
@@ -14,7 +15,9 @@ const failureActions:Record<string,string>={connect:'接入网关',restore:'切�
 const agentNames:Record<string,string>={codex:'Codex',claude:'Claude Code',workbuddy:'WorkBuddy',qoder:'Qoder',deepseek:'DeepSeek Harness',pi:'Pi Agent',antigravity:'Antigravity'};
 
 export function ActivityPane({local,overview,usage}:{local:LocalAgentSnapshot;overview:GatewayOverview;usage:UsageData}){
- const {activity,error}=overview;
+ const {error}=overview;
+ const [origin,setOrigin]=useState<'all'|'native'|'gateway'>('all'),[recent,setRecent]=useState<ActivityTrace[]>([]),[recentError,setRecentError]=useState('');
+ useEffect(()=>{let live=true;const load=async()=>{try{const result=await requestJSON<{records:ActivityTrace[]}>(`/api/activity/traces?days=0&limit=30&origin=${origin}`);if(live){setRecent(result.records);setRecentError('');}}catch{if(live)setRecentError('暂时无法读取最近调用');}};void load();const timer=setInterval(()=>void load(),5000);return()=>{live=false;clearInterval(timer);};},[origin]);
  const [targets,setTargets]=useState<AgentTarget[]>();
  const [failures,setFailures]=useState<SwitchFailure[]>();
  useEffect(()=>{let live=true;const load=()=>requestJSON<{targets:AgentTarget[];switchFailures?:SwitchFailure[]}>('/api/a2a').then(value=>{if(live){setTargets(value.targets);setFailures(value.switchFailures??[]);}}).catch(()=>{});void load();const timer=setInterval(()=>void load(),4000);return()=>{live=false;clearInterval(timer);};},[]);
@@ -22,16 +25,16 @@ export function ActivityPane({local,overview,usage}:{local:LocalAgentSnapshot;ov
  return <div className="tfPage">
   <header className="tfPageHead"><h1>活动</h1></header>
   {error&&<p className="tfError" role="alert">{error}</p>}
-  <TracePanel range={usage.range}/>
+  <TracePanel range={usage.range} includeNative origin={origin} onOriginChange={setOrigin}/>
   <section className="tfPanel" aria-label="最近请求">
    <header className="tfPanelHead"><div><h2>最近请求</h2></div></header>
-   {activity?.recent.length?<ul className="tfLog">{activity.recent.map(item=><li key={item.id}>
+   {recent.length?<ul className="tfLog">{recent.map(item=><li key={item.id}>
     <span>{new Date(item.startedAt).toLocaleTimeString()}</span>
-    <span>{item.agent}</span>
+    <span>{item.origin==='native'?'本机直连':'经 TokenFlow'} · {item.agent}</span>
     <code>{qualifiedModelLabel(local,item.model)}</code>
     <span title="输入 / 输出（括号内为缓存读取）">{item.inputTokens==null?'—':formatTokens(item.inputTokens)} / {item.outputTokens==null?'—':formatTokens(item.outputTokens)}{item.cachedTokens?` (${formatTokens(item.cachedTokens)})`:''}</span>
-    <b className={item.status>=400?'bad':'good'}>{item.status}</b>
-   </li>)}</ul>:<p className="tfHint">{activity?'还没有请求。':'正在读取…'}</p>}
+    <b className={item.status>=400?'bad':'good'}>{item.statusKnown===false?'未记录状态':item.status}</b>
+   </li>)}</ul>:<p className="tfHint">{recentError||'还没有此来源的请求。'}</p>}
   </section>
   <section className="tfPanel" aria-label="切换记录">
    <header className="tfPanelHead"><div><h2>切换记录</h2></div></header>
