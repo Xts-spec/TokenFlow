@@ -328,6 +328,7 @@ export class CLIProxyManager {
         }
       }
       const aliases: typeof this.aliases = providerScope?structuredClone(Object.fromEntries(Object.entries(this.aliases).filter(([id])=>id!==providerScope))):{};
+      const discoveredAccounts = new Set<string>();
       const catalog = new Map<string, LocalModel>(providerScope?this.models.filter(model=>model.provider!==providerScope).map(model=>[model.id,model]):[]);
 
       // 1. 从每个已启用账号的凭据文件目录建立模型发现
@@ -335,6 +336,7 @@ export class CLIProxyManager {
         const provider = account.provider as LoginProviderId;
         try {
           const res = z.object({models: z.array(modelSchema)}).parse(await this.request(`/auth-files/models?name=${encodeURIComponent(names.get(account.id)!)}&refresh=${providerScope?'true':'cached'}`));
+          discoveredAccounts.add(account.id);
           account.models = [...new Set(res.models.map(m=>m.id.startsWith(`${provider}/`)?m.id:`${provider}/${m.id}`))];
           for (const model of res.models) {
             if (!model.id) continue;
@@ -367,6 +369,10 @@ export class CLIProxyManager {
           }
           if (provider && (!providerScope||provider===providerScope) && isLoginProvider(provider) && accounts.some(a => !a.disabled && a.provider === provider)) {
             const id = `${provider}/${baseId}`;
+            // A provider-wide registry may lag account refresh. Never resurrect a
+            // removed route once every active account supplied its own catalog.
+            const sourceAccounts = accounts.filter(a=>!a.disabled&&a.provider===provider);
+            if(sourceAccounts.every(a=>discoveredAccounts.has(a.id))&&!sourceAccounts.some(a=>a.models?.includes(id)))continue;
             if (!catalog.has(id)) {
               catalog.set(id, {id, provider, ...(model.display_name?.trim()?{displayName:model.display_name.trim()}: {}),...modelImageCapabilities(model,provider)});
               (aliases[provider] ??= []).push({name: baseId, alias: id, fork: true});

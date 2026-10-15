@@ -12,7 +12,7 @@ export function workbuddySDKCredential(raw:unknown){
  if(!token||value.disabled)throw new Error('WorkBuddy credential unavailable');
  const domain=(value.domain??'copilot.tencent.com').replace(/^https:\/\//,'').replace(/\/$/,'');
  if(!['copilot.tencent.com','www.codebuddy.cn','www.workbuddy.ai','www.codebuddy.ai'].includes(domain))throw new Error('Unknown WorkBuddy region');
- return {token,region:domain.endsWith('.ai')?'international' as const:'china' as const};
+ return {token,region:domain.endsWith('.ai')?'international' as const:'china' as const,...(domain==='www.workbuddy.ai'?{endpoint:'https://www.workbuddy.ai' as const}:{})};
 }
 
 export function parseCodeBuddyInput(path:string,body:unknown){

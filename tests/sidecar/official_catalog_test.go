@@ -3,6 +3,7 @@ package cliproxy
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -217,5 +218,76 @@ func TestOfficialCatalogParsers(t *testing.T) {
 				t.Fatalf("got ok=%v count=%d", ok, len(models))
 			}
 		})
+	}
+}
+
+func TestOfficialCatalogAntigravityProjectAndDeprecatedModels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		if body["project"] != "fixture-project" {
+			t.Error("catalog must use the same account project as inference")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"models":{"current":{"displayName":"Current"},"old":{"displayName":"Old"},"command-flash":{"displayName":"Flash"},"internal":{"isInternal":true}},"deprecatedModelIds":{"old":{"newModelId":"current"}},"agentModelSorts":[{"groups":[{"modelIds":["current"]}]}],"commandModelIds":["command-flash"]}`))
+	}))
+	defer server.Close()
+	s := &Service{cfg: &config.Config{}}
+	a := &coreauth.Auth{ID: t.Name(), Provider: "antigravity", Metadata: map[string]any{"access_token": "fixture", "base_url": server.URL, "project_id": "fixture-project"}}
+	models, ok := s.fetchOfficialAccountModels(context.Background(), a, nil)
+	if !ok || len(models) != 2 {
+		t.Fatalf("expected current and public command model only, got %v (%v)", models, ok)
+	}
+	for _, m := range models {
+		if m.ID == "old" {
+			t.Fatal("deprecated model advertised")
+		}
+	}
+}
+
+func TestOfficialCatalogAntigravityFailureDoesNotInventAvailableModels(t *testing.T) {
+	fail := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail {
+			w.WriteHeader(503)
+			return
+		}
+		w.Write([]byte(`{"models":{"current":{"displayName":"Current"}}}`))
+	}))
+	defer server.Close()
+	s := &Service{cfg: &config.Config{}}
+	a := &coreauth.Auth{ID: t.Name(), Provider: "antigravity", Metadata: map[string]any{"access_token": "fixture", "base_url": server.URL}}
+	fallback := []*ModelInfo{{ID: "gemini-pro-agent"}}
+	if got := s.officialAccountModels(context.Background(), a, fallback); len(got) != 0 {
+		t.Fatal("failed live discovery exposed unverified static models")
+	}
+	fail = false
+	s.officialCatalog[a.ID].checked = time.Time{}
+	if got := s.officialAccountModels(context.Background(), a, fallback); len(got) != 1 || got[0].ID != "current" {
+		t.Fatal("discovery did not recover")
+	}
+	fail = true
+	s.officialCatalog[a.ID].checked = time.Time{}
+	if got := s.officialAccountModels(context.Background(), a, fallback); len(got) != 1 || got[0].ID != "current" {
+		t.Fatal("transient failure discarded last verified catalog")
+	}
+}
+
+type officialCatalogTransportFunc func(*http.Request) (*http.Response, error)
+
+func (f officialCatalogTransportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+func TestOfficialCatalogAntigravityUsesInferenceTier(t *testing.T) {
+	previous := http.DefaultTransport
+	defer func() { http.DefaultTransport = previous }()
+	http.DefaultTransport = officialCatalogTransportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host != "daily-cloudcode-pa.googleapis.com" {
+			t.Fatalf("catalog/inference tier mismatch: %s", r.URL.Host)
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"models":{}}`))}, nil
+	})
+	s := &Service{cfg: &config.Config{}}
+	_, ok := s.fetchOfficialAccountModels(context.Background(), &coreauth.Auth{Provider: "antigravity", Metadata: map[string]any{"access_token": "fixture"}}, nil)
+	if !ok {
+		t.Fatal("expected successful discovery on inference tier")
 	}
 }

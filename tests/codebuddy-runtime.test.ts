@@ -233,3 +233,9 @@ it.each([true,false])('uses nonempty model progress, not keepalives, for the idl
  try{await vi.advanceTimersByTimeAsync(80001);expect((await outcome).failed).toBe(false);expect(sdk.query).toHaveBeenCalledTimes(realProgress?1:2);}
  finally{controller.abort();await outcome.catch(()=>{});vi.useRealTimers();}
 });
+
+it('passes the account endpoint to CLI initialization instead of relying on the international default',async()=>{
+ sdk.query.mockImplementation(()=>(async function*(){yield {type:'result',subtype:'success',is_error:false,result:'ok'};})());
+ await runOfficialSDK({token:'fixture',region:'international',endpoint:'https://www.workbuddy.ai',model:'test',prompt:'Reply ok',tools:[],signal:new AbortController().signal,cwd:'/tmp',configDir:'/tmp'});
+ expect(sdk.query.mock.calls[0]![0].options).toMatchObject({environment:'external',endpoint:'https://www.workbuddy.ai'});
+});

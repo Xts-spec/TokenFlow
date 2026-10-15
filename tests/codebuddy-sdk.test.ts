@@ -6,7 +6,7 @@ import {providerUsage} from '../packages/core/src/gateway-observation.js';
 
 it('pins the credential region and rejects unknown domains or disabled credentials',()=>{
  expect(workbuddySDKCredential({type:'workbuddy',access_token:'local',domain:'www.codebuddy.cn'})).toEqual({token:'local',region:'china'});
- expect(workbuddySDKCredential({type:'workbuddy',access_token:'overseas',domain:'https://www.workbuddy.ai'})).toEqual({token:'overseas',region:'international'});
+ expect(workbuddySDKCredential({type:'workbuddy',access_token:'overseas',domain:'https://www.workbuddy.ai'})).toEqual({token:'overseas',region:'international',endpoint:'https://www.workbuddy.ai'});
  expect(()=>workbuddySDKCredential({type:'workbuddy',access_token:'secret',domain:'attacker.test'})).toThrow();
  expect(()=>workbuddySDKCredential({type:'workbuddy',access_token:'secret',disabled:true})).toThrow();
 });
@@ -19,7 +19,7 @@ it('preserves old instructions, tool IDs/results and images without changing ide
 it.each(['responses','chat/completions','messages'])('preserves inclusive SDK input and cache breakdown once on %s',async path=>{
  const root=await mkdtemp(join(tmpdir(),'sdk-test-'));
  const sdk=new WorkBuddySDKProvider(root,async(id,model)=>{expect(id).toBe('chosen-account');expect(model).toBe('workbuddy/deepseek-v4.1-flash');return {type:'workbuddy',access_token:'private',domain:'www.workbuddy.ai'};},async input=>{
-  expect(input.region).toBe('international');expect(input.token).toBe('private');expect(input.tools[0].name).toBe('read_probe');
+  expect(input.endpoint).toBe('https://www.workbuddy.ai');expect(input.region).toBe('international');expect(input.token).toBe('private');expect(input.tools[0].name).toBe('read_probe');
   return {model:input.model,text:'',calls:[{name:'read_probe',arguments:'{"file":"probe"}'}],failed:false,usage:{input_tokens:1000,cache_read_input_tokens:600,cache_creation_input_tokens:300,output_tokens:20}};
  });
  try{

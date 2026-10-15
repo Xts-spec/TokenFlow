@@ -68,9 +68,9 @@ func (s *Service) refreshOfficialAccountCatalog(ctx context.Context, id string, 
 
 func (s *Service) officialAccountModels(ctx context.Context, a *coreauth.Auth, fallback []*ModelInfo) []*ModelInfo {
 	if s == nil || a == nil || metadataText(a, "access_token") == "" {
-		return fallback
+		return initialOfficialCatalog(a, fallback)
 	}
-	fingerprint := sha256.Sum256([]byte(a.Provider + "\x00" + metadataText(a, "access_token") + "\x00" + metadataText(a, "base_url") + "\x00" + metadataText(a, "enterprise_id") + "\x00" + metadataText(a, "enterpriseId") + "\x00" + metadataText(a, "uid") + "\x00" + a.ProxyURL + "\x00" + codexCatalogVersion(a)))
+	fingerprint := sha256.Sum256([]byte(a.Provider + "\x00" + metadataText(a, "access_token") + "\x00" + metadataText(a, "base_url") + "\x00" + metadataText(a, "enterprise_id") + "\x00" + metadataText(a, "enterpriseId") + "\x00" + metadataText(a, "uid") + "\x00" + a.ProxyURL + "\x00" + metadataText(a, "project_id") + "\x00" + metadataText(a, "domain") + "\x00" + codexCatalogVersion(a)))
 	// Serialize refreshes so config reloads and polling do not duplicate requests.
 	// No application credentials or model permissions are persisted by discovery.
 	s.officialCatalogMu.Lock()
@@ -95,6 +95,15 @@ func (s *Service) officialAccountModels(ctx context.Context, a *coreauth.Auth, f
 	}
 	if entry.succeeded {
 		return cloneOfficialModels(entry.models)
+	}
+	return initialOfficialCatalog(a, fallback)
+}
+
+// An unverified static Antigravity table is not an account catalog. Retry discovery
+// instead of advertising old IDs; retain the last successful list on transient errors.
+func initialOfficialCatalog(a *coreauth.Auth, fallback []*ModelInfo) []*ModelInfo {
+	if a != nil && a.Provider == "antigravity" {
+		return nil
 	}
 	return fallback
 }
@@ -121,7 +130,9 @@ func (s *Service) fetchOfficialAccountModels(ctx context.Context, a *coreauth.Au
 	case "workbuddy":
 		if base == "" {
 			base = "https://copilot.tencent.com"
- if domain:=metadataText(a,"domain");domain=="www.workbuddy.ai"||domain=="https://www.workbuddy.ai" {base="https://www.workbuddy.ai"}
+			if domain := metadataText(a, "domain"); domain == "www.workbuddy.ai" || domain == "https://www.workbuddy.ai" {
+				base = "https://www.workbuddy.ai"
+			}
 		}
 		enterprise := metadataText(a, "enterprise_id")
 		if enterprise == "" {
@@ -134,8 +145,10 @@ func (s *Service) fetchOfficialAccountModels(ctx context.Context, a *coreauth.Au
 		headers["X-User-Id"] = metadataText(a, "uid")
 		headers["X-Product"] = "SaaS"
 		headers["Origin"] = "https://www.codebuddy.cn"
- if base=="https://www.workbuddy.ai" {headers["Origin"]=base}
-		headers["Referer"] = headers["Origin"]+"/"
+		if base == "https://www.workbuddy.ai" {
+			headers["Origin"] = base
+		}
+		headers["Referer"] = headers["Origin"] + "/"
 		headers["User-Agent"] = "CLI/2.63.2 CodeBuddy/2.63.2"
 		headers["X-Requested-With"] = "XMLHttpRequest"
 	case "qoder":
@@ -151,11 +164,13 @@ func (s *Service) fetchOfficialAccountModels(ctx context.Context, a *coreauth.Au
 		headers["Accept"] = "application/json"
 	case "antigravity":
 		if base == "" {
-			base = antigravityModelBaseURLProd
+			// Match resolveAntigravityRequestBaseURL: catalogs and inference must use the same tier.
+			base = antigravityModelBaseURLDaily
 		}
 		path = antigravityModelsPath
 		method = "POST"
-		body = "{}"
+		payload, _ := json.Marshal(map[string]string{"project": metadataText(a, "project_id")})
+		body = string(payload)
 		headers["User-Agent"] = misc.AntigravityUserAgent()
 	case "codex":
 		if base == "" {
@@ -381,6 +396,7 @@ func parseOfficialCatalog(provider string, raw []byte, fallback []*ModelInfo) ([
 	if !recognized {
 		return nil, false
 	}
+	deprecated, _ := data["deprecatedModelIds"].(map[string]any)
 	allowed := map[string]bool{}
 	if provider == "workbuddy" {
 		if agents, ok := data["agents"].([]any); ok {
@@ -417,6 +433,11 @@ func parseOfficialCatalog(provider string, raw []byte, fallback []*ModelInfo) ([
 		if id == "" || len(id) > 280 || strings.ContainsAny(id, "\r\n\x00") {
 			invalid = true
 			continue
+		}
+		if provider == "antigravity" {
+			if _, retired := deprecated[id]; retired {
+				continue
+			}
 		}
 		if seen[id] {
 			continue

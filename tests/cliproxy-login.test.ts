@@ -345,3 +345,13 @@ it('restricts overseas WorkBuddy login to the official overseas site',()=>{
  expect(()=>validateAuthorizationURL('https://copilot.tencent.com/login','workbuddy-overseas')).toThrow();
  expect(()=>validateAuthorizationURL('https://www.workbuddy.ai.evil.test/login','workbuddy-overseas')).toThrow();
 });
+
+it('does not reintroduce stale gateway routes absent from every discovered account catalog',async()=>{
+ const {manager,root}=await setup();await mkdir(join(root,'cliproxy'),{recursive:true});
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'ag.json',provider:'antigravity',status:'active',models:['current']} ]));
+ await manager.start();
+ const original=(manager as any).request.bind(manager);
+ vi.spyOn(manager as any,'request').mockImplementation(async (...args:any[])=>{const value=await original(...args);return args[0]==='/models'?{...value,data:[...value.data,{id:'antigravity/gemini-pro-agent',type:'antigravity',owned_by:'antigravity'}]}:value;});
+ await manager.refreshAccounts('antigravity');
+ expect(manager.snapshot().models.map(m=>m.id)).toEqual(['antigravity/current']);
+});
