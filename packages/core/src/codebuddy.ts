@@ -133,7 +133,8 @@ export class WorkBuddySDKProvider {
   if(!input.model.startsWith('workbuddy/'))throw new Error('WorkBuddy model scope mismatch');
   const controller=new AbortController();const abort=()=>controller.abort();signal.addEventListener('abort',abort,{once:true});if(signal.aborted||this.closed)abort();this.active.add(controller);
   let finish!:()=>void;const pending=new Promise<void>(done=>{finish=done;});this.pending.add(pending);
-  const deadline=setTimeout(()=>controller.abort(),240000);
+  let timedOut=false;
+  const deadline=setTimeout(()=>{timedOut=true;controller.abort();},240000);
   let directory:string|undefined;
   let stage:'credential'|'setup'|'sdk'|'output'='credential';
   try{
@@ -160,10 +161,12 @@ export class WorkBuddySDKProvider {
    const usage=result.usage?{input_tokens:result.usage.input_tokens,output_tokens:result.usage.output_tokens,cached_tokens:result.usage.cache_read_input_tokens??0,cache_write_tokens:result.usage.cache_creation_input_tokens??0}:undefined;
    const response=cursorResponse(path,input.model,result.text,usage,onText?false:input.stream,calls,'workbuddy');
    response.headers.set('X-Token-Flow-Transport','codebuddy-agent-sdk');return response;
-  }catch{
+  }catch(error){
    const messages={credential:'无法读取所选 WorkBuddy 账号，请检查该账号的授权状态。',setup:'WorkBuddy 本地请求准备失败，请检查本机目录权限和可用空间。',sdk:'WorkBuddy 官方 SDK 调用未完成，可能发生在 SDK 启动或上游请求阶段。',output:'WorkBuddy 返回的模型或工具调用不符合本次请求，未替换模型或执行额外工具。'};
    // Stable stages distinguish local setup from SDK/output failures without
    // exposing tokens, filesystem paths, or arbitrary upstream exception text.
+   if(!controller.signal.aborted&&stage==='sdk'&&error instanceof Error&&error.name==='SDKIdleError')return Response.json({error:{type:'timeout_error',code:'workbuddy_timeout',message:'WorkBuddy 模型响应长时间无进展，本次请求已停止，请稍后重试。'}},{status:504});
+   if(timedOut)return Response.json({error:{type:'timeout_error',code:'workbuddy_timeout',message:'WorkBuddy 请求超过 240 秒等待时限，请稍后重试。'}},{status:504});
    return Response.json({error:{type:controller.signal.aborted?'request_cancelled':'workbuddy_sdk_error',code:controller.signal.aborted?'request_cancelled':`workbuddy_${stage}_failed`,message:controller.signal.aborted?'请求已取消。':messages[stage]}},{status:controller.signal.aborted?499:502});
   }
   finally{clearTimeout(deadline);signal.removeEventListener('abort',abort);this.active.delete(controller);try{if(directory)await rm(directory,{recursive:true,force:true,maxRetries:5,retryDelay:100});}finally{this.pending.delete(pending);finish();}}

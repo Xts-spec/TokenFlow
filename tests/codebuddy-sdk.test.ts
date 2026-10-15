@@ -1,4 +1,4 @@
-import {it,expect} from 'vitest';
+import {it,expect,vi} from 'vitest';
 import {mkdtemp,rm,readdir} from 'node:fs/promises';
 import {tmpdir} from 'node:os';import {join} from 'node:path';
 import {WorkBuddySDKProvider,workbuddySDKCredential,parseCodeBuddyInput} from '../packages/core/src/codebuddy.js';
@@ -158,4 +158,21 @@ it.each(['responses','chat/completions','messages'])('delivers live %s text befo
 it('honors Claude sequential-tool requests without requiring an OpenAI extension',()=>{
  const parsed=parseCodeBuddyInput('messages',{model:'workbuddy/test',messages:[{role:'user',content:'read'}],tools:[{name:'read',input_schema:{type:'object'}}],tool_choice:{type:'auto',disable_parallel_tool_use:true}});
  expect(parsed.parallel_tool_calls).toBe(false);
+});
+
+it('reports the SDK deadline as timeout rather than user cancellation',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'sdk-deadline-'));let started!:()=>void;const ready=new Promise<void>(resolve=>{started=resolve;});
+ const sdk=new WorkBuddySDKProvider(root,async()=>({type:'workbuddy',access_token:'private'}),async input=>{
+  started();await new Promise<void>((_,reject)=>input.signal.addEventListener('abort',()=>reject(new Error('aborted')),{once:true}));
+  return {model:input.model,text:'',calls:[],failed:false};
+ });
+ vi.useFakeTimers();
+ try{const pending=sdk.response('chosen','messages',{model:'workbuddy/test',messages:[{role:'user',content:'hello'}]},new AbortController().signal);await ready;await vi.advanceTimersByTimeAsync(240001);vi.useRealTimers();const response=await pending;expect(response.status).toBe(504);expect((await response.json()).error.code).toBe('workbuddy_timeout');}
+ finally{vi.useRealTimers();await sdk.close();await rm(root,{recursive:true,force:true});}
+});
+it('returns a timeout when the SDK exhausts safe idle recovery without leaking the exception',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'sdk-idle-'));
+ const sdk=new WorkBuddySDKProvider(root,async()=>({type:'workbuddy',access_token:'private'}),async()=>{throw Object.assign(new Error('private details'),{name:'SDKIdleError'});});
+ try{const response=await sdk.response('chosen','messages',{model:'workbuddy/test',messages:[{role:'user',content:'hello'}]},new AbortController().signal);expect(response.status).toBe(504);const body=await response.json();expect(body.error.code).toBe('workbuddy_timeout');expect(JSON.stringify(body)).not.toContain('private');}
+ finally{await sdk.close();await rm(root,{recursive:true,force:true});}
 });

@@ -76,7 +76,7 @@
     "vitest": "^3.2.7"
   },
   "build": {
-    "buildVersion": "10.15.26.3",
+    "buildVersion": "10.15.26.6",
     "appId": "local.browseragent.desktop",
     "productName": "TokenFlow",
     "files": [
