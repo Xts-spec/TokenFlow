@@ -66,11 +66,11 @@ export const workbuddyQuota: QuotaProvider = {
     });
 
     if (!hasValidData && !windows.length) {
-      // 官方无 packages 数组或为空时，返回账号可用状态
+      // 官方接口返回空包或字段缺失时，额度状态为未知——不能据此推断账号无限制。
       return {
-        plan: '标准账号',
+        plan: '账号已连接',
         windows: [],
-        note: '已连接腾讯云 CodeBuddy 账号，当前无活跃计费资源包限制。',
+        note: '额度暂未提供：接口未返回资源包数据，不表示免费或无限额，请以腾讯官方页面为准。',
       };
     }
 

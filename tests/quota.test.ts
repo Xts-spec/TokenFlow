@@ -103,11 +103,18 @@ describe('quota layer', () => {
     ]);
     expect(report.note).toContain('1,837');
 
-    // Fallback when packages empty
+    // Fallback when packages empty: 额度状态未知，不能误报为无限制
     const empty = responder({'https://copilot.tencent.com/billing/meter/get-user-resource-summary': json({Packages: []})});
     const emptyReport = await quotaProviders.workbuddy.fetch(empty.call, {provider: 'workbuddy'});
     expect(emptyReport.windows).toHaveLength(0);
-    expect(emptyReport.note).toContain('无活跃计费资源包限制');
+    expect(emptyReport.note).toContain('额度暂未提供');
+    expect(emptyReport.note).not.toContain('无活跃');
+
+    // 同样适用于 data 为空对象的情况（FIX-003）
+    const blank = responder({'https://copilot.tencent.com/billing/meter/get-user-resource-summary': json({code: 0, msg: 'OK', data: {}})});
+    const blankReport = await quotaProviders.workbuddy.fetch(blank.call, {provider: 'workbuddy'});
+    expect(blankReport.windows).toHaveLength(0);
+    expect(blankReport.note).toContain('额度暂未提供');
   });
   it('parses Qoder quota usage items and calculates percentages', async () => {
     const {call, calls} = responder({
