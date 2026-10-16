@@ -8,11 +8,17 @@ TokenFlow 是本地桌面模型网关：集中管理 GPT/Codex 等平台的多�
 
 既可以切换 Agent 自己的官方登录，也可以通过本地网关反代所选来源。你继续在熟悉的客户端工作，TokenFlow 管理模型选择、配置备份、独立 Key、协议转换和用量记录。
 
-**[访问官网](https://token-flow.haruinia.chatgpt.site/)** · **[观看中文使用演示](docs/media/quickstart.mp4)** · **[查看使用指南](docs/usage.md)**
+**[访问官网](https://token-flow.haruinia.chatgpt.site/)** · **[观看中文使用演示](doc/media/quickstart.mp4)** · **[查看使用指南](doc/guides/usage.md)**
 
 视频演示多账号授权与切换、重启后加载配置、WorkBuddy / Qoder 额度查看与反代接入、独立 Key 请求和用量核对。账号、额度及上游响应使用隔离模拟数据；模拟客户端加载配置并调用真实本机网关，不代表真实厂商或客户端的完整验证。
 
-## 三个常用场景
+## 项目文档
+
+所有项目说明集中在 [doc/ 文档目录](doc/README.md)：[架构](doc/architecture.md)、[当前待办](doc/TODO.md)、[用量来源与本地验证](doc/testing/usage-attribution.md)、[Windows 功能验收](doc/待修复的问题win兼容.md)。历史报告与原始证据分别归档，不作为当前功能承诺。
+
+<a id="三个常用场景"></a>
+
+## 常用场景
 
 ### GPT / Codex 多账号登录
 
@@ -56,23 +62,15 @@ macOS / Windows 自动识别各自的登录目录。WorkBuddy 支持国内域名
 
 模型响应交回目标 Agent 执行工具，文件、Shell、MCP、审批与沙箱仍由目标客户端控制。文本验证、模型目录、额度查询和实际客户端调用是不同证据；工具、图片、Auto Mode 等能力需分别验证。独立诊断和升级适配器仍有后端实现，当前简化界面未提供完整入口，不作为直接可点击功能介绍。
 
-2026-10-15 修复进度：Qoder 响应头前 EOF 的有界重试、WorkBuddy SDK 关闭回调与静默取消均已验证；长对话工具压测分别通过 48/48 次请求。Qoder 重新接入会备份后覆盖已有 TokenFlow 供应商字段，保留其他设置。macOS 重启按实际应用身份和路径识别，已实测 Qoder 0.3.4 / 0.4.8、WorkBuddy 5.8.2。追加 24 并发、100 轮历史和 4 轮工具压测，复现并修复 SDK 轮数误报、工具已完成后的多余推理等待及取消后的进程复活。修复后真实来源 84 次完成、7 次额度不足、1 次首轮思考超时；后续已用海外 Flash 再现首轮停滞，修复 SDK 空闲门槛与网关时限不匹配造成的恢复缺口：60 秒无模型进展、尚未输出时最多同来源重试一次，保持 240 秒总预算。修复后两轮共 192/192 真实请求通过，故障注入也成功恢复；不保证所有上游错误消失。
-
-2026-10-15 WorkBuddy 修复：修正 SDK 轮数误报、完整工具提案后的多余推理等待、关闭回调异常及取消后的进程复活。首轮仅思考后停滞时，60 秒无模型进展且尚无文本或工具输出，最多同账号同模型重试一次，保持 240 秒总预算。海外 Flash 在 24 并发、100 轮历史、4 轮工具的两轮压测中共 192/192 请求通过，真实 SDK 故障注入恢复通过；不保证所有上游错误消失。
-
-后续验证修正海外 WorkBuddy 账号入口：显式传递账号所属的 www.workbuddy.ai，避免默认路由到 www.codebuddy.ai 的连接失败；24 并发、100 轮历史、4 轮工具复测 96/96 通过。反重力目录与推理改用相同端点和项目，排除明确废弃模型，阻止旧路由重新混入；目录每约 30 秒自动刷新，平台刷新可强制更新。目录存在不代表账号额度充足。 本次继续定位反重力 500 为响应头前 EOF，加入同请求最多一次重连；24 并发、100 轮历史、4 轮工具的 96 次真实请求通过，另 96 次逐请求注入 EOF 也全部恢复。反重力进一步按官方对话选择名单筛选，两份账号均从 17 个全量型号收敛为 6 个可选型号；Gemini 3.8 Flash High 追加 16/16 故障恢复通过。所有授权来源取消静态旧模型兜底，查询失败仅保留最近 15 分钟内确认的目录并显示状态；Cursor 自动更新、WorkBuddy 空允许列表与 xAI OAuth 目录端点均已修正。验收及来源限制见 [修复报告](docs/antigravity-500-repair-2026-10-15.md)。
-
-2026-10-16 目录跟进：海外 WorkBuddy 改读官方 `/v3/config`，并修正 SDK 首次加载配置时的来源，目录并发 36/36 与长对话工具 12/12 通过。Trae 使用官方动态目录和原生协议，Seed 模型 12/12 通过；DeepSeek 截断已通过正式对话接口、动态签名和关闭上游增量生成修复，16 并发多轮工具 80/80 通过；真机另修复 SSE 重复封装与工具策略，最终安装版长历史混合流式 80/80、Responses 工具往返 4/4 通过；TRAE 额度已读取并在界面刷新，见验证报告。ZCode Coding Plan 按官方实时配置与账号目录取交集。按用户要求移除旧“豆包＝MarsCode／Trae 插件”映射，保留 Trae 独立来源和旧授权文件。详见 [本次验证与范围](docs/model-catalog-followup-2026-10-16.md)。
-
-2026-10-16 TRAE 修复已安装并完成 Codex CLI 真机验收：DeepSeek 文本截断、真实金额额度和账号展示见 [TRAE 修复进度](docs/trae-repair-2026-10-16.md)。已接通官方搜索、整页打开、页内查找及引用，保留 Codex 默认搜索配置，支持长对话、文件/命令工具和退出续接；16 并发 64/64 通过，详见 [整页与查找修复及跨平台复核](docs/trae-web-pages-repair-2026-10-16.md)。
+维护结论与原始验证范围见 [历史报告目录](doc/README.md#历史报告与证据)，当前未完成事项统一记录在 [TODO](doc/TODO.md)。
 
 ## 从源码运行
 
 需要 Node.js **22.19+**、npm、Git 和编译 sidecar 的 Go **1.26+**。
 
 ```bash
-git clone https://github.com/haruinia/token-flow.git
-cd token-flow
+git clone https://github.com/haruinia/TokenFlow.git
+cd TokenFlow
 npm ci
 node scripts/fetch-upstream.mjs
 npm run sidecar:build
@@ -108,4 +106,4 @@ Windows 自动重启会核对可执行文件路径、Electron 应用标识和进
 
 源码结构：`apps/console` 界面，`apps/desktop` 桌面应用，`packages/core` 网关 / 授权 / 接入，`patches/cliproxy` 来源补丁，`tests` 验证。
 
-[MIT 许可](LICENSE) · [第三方复用](THIRD_PARTY.md) · [问题反馈](https://github.com/haruinia/token-flow/issues)
+[MIT 许可](LICENSE) · [第三方复用](THIRD_PARTY.md) · [问题反馈](https://github.com/haruinia/TokenFlow/issues)

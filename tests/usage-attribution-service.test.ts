@@ -6,6 +6,44 @@ import {createServer} from 'node:net';
 import {parse} from 'smol-toml';
 import {createDesktopService} from '../packages/core/src/service.js';
 
+it('keeps Antigravity Gemini and Claude usage separated by source account, including failures and service restart',async()=>{
+ const root=await mkdtemp(join(await realpath(tmpdir()),'tf-antigravity-usage-')),allocator=createServer();
+ await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const proxyPort=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
+ const models=['antigravity/gemini-fixture','antigravity/claude-fixture'];
+ const paths=Object.fromEntries(['codex','claude','qoder','workbuddy','pi','deepseek'].map(target=>[target,join(root,target,target==='codex'?'config.toml':'settings.json')]));
+ await mkdir(join(root,'cliproxy'),{recursive:true});
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify(['a','b'].map(name=>({name:`${name}.json`,email:`${name}@example.test`,provider:'antigravity',status:'active',models:['gemini-fixture','claude-fixture']}))));
+ const options={root,proxyPort,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),agentPaths:paths,agentProcesses:async()=>[],nativeProcesses:async()=>[],claudeCredentialStore:null,antigravityPath:join(root,'ag.db'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}}};
+ let service=await createDesktopService(options);const admin={host:'127.0.0.1:9527',authorization:'Bearer admin'};
+ try{
+  await service.proxy.start();const accounts=service.proxy.snapshot().accounts.filter(a=>a.provider==='antigravity');expect(accounts).toHaveLength(2);
+  const keys=[];
+  for(const source of accounts){
+   const created=await service.app.inject({method:'POST',url:'/api/gateway-keys',headers:admin,payload:{name:'Usage fixture',sourceId:source.id,models,agents:['claude']}});
+   expect(created.statusCode,created.body).toBe(200);keys.push(created.json());
+   for(const [index,model] of models.entries()){
+    const result=await service.app.inject({method:'POST',url:'/v1/messages',headers:{host:admin.host,authorization:`Bearer ${created.json().apiKey}`},payload:{model,max_tokens:10,stream:index===1,messages:[{role:'user',content:'Fixture'}]}});
+    expect(result.statusCode,result.body).toBe(200);
+   }
+  }
+  const overview=async()=>(await service.app.inject({url:'/api/usage/overview?days=0',headers:admin})).json();
+  let snapshot=await overview();expect(snapshot.rows).toHaveLength(4);
+  // Exported Keys prove the source, but do not prove which client used them.
+  for(const source of accounts)for(const model of models)expect(snapshot.rows.find((r:any)=>r.sourceId===source.id&&r.model===model)).toMatchObject({target:'key',provider:'antigravity',origin:'gateway',channel:'official',requests:1,failed:0,inputTokens:7,outputTokens:3});
+  await service.proxy.setAccountEnabled(accounts[0].id,false);
+  const failed=await service.app.inject({method:'POST',url:'/v1/messages',headers:{host:admin.host,authorization:`Bearer ${keys[0].apiKey}`},payload:{model:models[0],max_tokens:10,messages:[{role:'user',content:'Fixture'}]}});expect(failed.statusCode).toBe(503);
+  snapshot=await overview();expect(snapshot.rows.find((r:any)=>r.sourceId===accounts[0].id&&r.model===models[0])).toMatchObject({requests:2,failed:1,inputTokens:7,outputTokens:3});
+  expect(snapshot.rows.filter((r:any)=>r.sourceId===accounts[1].id).reduce((n:number,r:any)=>n+r.requests,0)).toBe(2);
+  const target=(await service.app.inject({url:'/api/a2a',headers:admin})).json().targets.find((t:any)=>t.id==='claude');
+  const connected=await service.app.inject({method:'POST',url:'/api/a2a/connect',headers:admin,payload:{target:'claude',revision:target.revision,sourceId:accounts[1].id,model:models[1]}});expect(connected.statusCode,connected.body).toBe(200);
+  const client=JSON.parse(await readFile(paths.claude,'utf8'));
+  const managed=await service.app.inject({method:'POST',url:'/v1/messages',headers:{host:admin.host,authorization:`Bearer ${client.env.ANTHROPIC_AUTH_TOKEN}`},payload:{model:models[1],max_tokens:10,messages:[{role:'user',content:'Fixture'}]}});expect(managed.statusCode,managed.body).toBe(200);
+  snapshot=await overview();expect(snapshot.rows).toHaveLength(5);expect(snapshot.rows.find((r:any)=>r.target==='claude')).toMatchObject({sourceId:accounts[1].id,model:models[1],provider:'antigravity',origin:'gateway',channel:'official',requests:1,inputTokens:7,outputTokens:3});
+  await service.app.close();service=await createDesktopService(options);await service.proxy.start();
+  const restored=await overview();expect(restored.rows).toEqual(snapshot.rows);
+ }finally{await service.app.close();await rm(root,{recursive:true,force:true});}
+});
+
 it('receives protected local account evidence and joins switched users into overview and activity without guessing historical accounts',async()=>{
  const root=await mkdtemp(join(await realpath(tmpdir()),'tf-attribution-service-'));const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const proxyPort=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
  const paths={codex:join(root,'codex/config.toml'),claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/models.json'),pi:join(root,'pi/models.json'),deepseek:join(root,'deepseek/settings.json')};

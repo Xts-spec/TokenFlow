@@ -2,6 +2,8 @@
 
 记录日期：2026-10-16。最近已发布基线：v10.15.26.12，提交 `b5c30fd`；Windows 标题栏修复基线为 `5fe1177`。本轮窗口修复尚需 Windows 实机验收。
 
+文档入口见 [项目文档](README.md)；当前待办统一在 [TODO](TODO.md) 维护。Claude 和反重力的渠道／来源统计分别对应 USAGE-001、USAGE-002、USAGE-003，本页保留 Windows 执行步骤，不另行维护重复状态。
+
 ## 仓库与交付约定（按用户最新确认）
 
 本次继续使用 **https://github.com/haruinia/TokenFlow.git**。当前开发机的远程别名为 `TokenFlow`，`main` 跟踪 `TokenFlow/main`。用户已确认保留这个仓库，请在这里做 Windows 功能测试、修复并提交结果。
@@ -285,6 +287,7 @@ node scripts/check-file-cleanup-native.mjs
 | U08 | 缓存／依赖／安装包候选、受保护文件、同名副本、文件扫描后变化 | 分类与元数据证据一致；不只按名字断言重复；失效扫描和变化条目不直接删除 |
 | U09 | 在测试目录执行回收站／永久删除、取消与恢复测试 | 按明确确认的范围处理；受保护项有影响说明；Windows 回收站语义正确；不能影响真实对话和账号数据 |
 | U10 | 设置、复制、外链、侧栏宽度、拖动排序、通知、弹窗、长名称 | 状态持久化、复制反馈正确、官方链接只开浏览器；键盘和滚动不跳位；页面不溢出 |
+| U11 | Claude Code 分别使用官方登录、直接 API、TokenFlow 反重力来源；反重力两个账号提供同名 Gemini／Claude 模型 | 核对 target／provider／sourceId／channel／origin；同名模型不串来源，停用账号不改路由；导出 Key 不冒称客户端身份，重启／重扫不重复累计；反重力客户端原生直连采集目前未实现，不能把无采集记成零用量。详见 [验证口径](testing/usage-attribution.md) |
 
 ### 5.8 最终 Windows 包交付（P0）
 

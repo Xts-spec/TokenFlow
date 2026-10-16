@@ -77,11 +77,11 @@ codex-upgrade.lock
 **/backups/codex-upgrade-*/
 
 # Publish one product video; keep generated demo screenshots and variants local.
-docs/media/*
-!docs/media/quickstart.mp4
+doc/media/*
+!doc/media/quickstart.mp4
 
-# Project documentation (internal)
-docs/
+# Raw local validation exports; curated Markdown and existing tracked evidence are versioned.
+doc/archive/evidence/
 
 # Browser extensions (internal)
 extensions/
