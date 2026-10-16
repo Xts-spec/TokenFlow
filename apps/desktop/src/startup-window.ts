@@ -17,6 +17,8 @@ export async function createStartupWindow(icon:string){
  </style><div class="titlebar" aria-hidden="true"></div><main aria-busy="true"><div class="startupContent"><header class="brand">${logo?`<img src="${logo}" alt="">`:''}<span>TokenFlow</span></header><section class="loading" id="loading"><div class="ring" aria-hidden="true"></div><h1>正在准备工作台</h1><p id="status" role="status" aria-live="polite">正在启动…</p><p class="hint" id="hint"></p></section><section class="consent" id="consent" role="dialog" aria-modal="true" aria-labelledby="access-title" aria-describedby="access-detail access-hint" hidden><h2 id="access-title">读取本地登录？</h2><p class="detail" id="access-detail">复用 Claude Code、Qoder 等客户端的登录。</p><p class="hint" id="access-hint">${permissionHint}</p><footer class="actions"><button id="skip" type="button">暂不读取</button><button id="allow" class="primary" type="button">允许读取</button></footer></section></div></main></html>`;
  await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
  window.show();
+ window.focus();
+ if(process.platform==='win32'){window.setAlwaysOnTop(true);window.setAlwaysOnTop(false);}
  const update=async(status:string,hint='')=>{
   if(window.isDestroyed())return;
   await window.webContents.executeJavaScript(`document.getElementById('status').textContent=${JSON.stringify(status)};document.getElementById('hint').textContent=${JSON.stringify(hint)};new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`).catch(()=>{});
@@ -38,5 +40,6 @@ export async function createStartupWindow(icon:string){
   })`).then(value=>value===true).catch(()=>false)]);}
   finally{window.removeListener('closed',onClosed);confirmation=undefined;}
  })();
- return {update,confirmCredentialAccess,bounds:()=>window.isDestroyed()?undefined:window.getBounds(),isMaximized:()=>!window.isDestroyed()&&window.isMaximized(),close(){finished=true;if(!window.isDestroyed())window.destroy();}};
+ const focus=()=>{if(!window.isDestroyed()){if(window.isMinimized())window.restore();window.show();window.focus();if(process.platform==='win32'){window.setAlwaysOnTop(true);window.setAlwaysOnTop(false);}}};
+ return {update,confirmCredentialAccess,focus,bounds:()=>window.isDestroyed()?undefined:window.getBounds(),isMaximized:()=>!window.isDestroyed()&&window.isMaximized(),close(){finished=true;if(!window.isDestroyed())window.destroy();}};
 }

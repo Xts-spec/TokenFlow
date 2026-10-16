@@ -116,6 +116,7 @@ async function start() {
     await window.loadURL(address);
     window.show();
     window.focus();
+    if(process.platform==='win32'){window.setAlwaysOnTop(true);window.setAlwaysOnTop(false);}
   };
   const trayIcon=nativeImage.createFromPath(process.platform==='darwin'?join(here,'console','tray-icon.png'):icon).resize(process.platform==='darwin'?{width:18,height:18}:{width:32,height:32});
   if(process.platform==='darwin')trayIcon.setTemplateImage(true);
@@ -130,7 +131,8 @@ async function start() {
   tray.on('right-click',()=>tray?.popUpContextMenu(trayMenu));
   tray.on('click',()=>{void show();});
   app.on('will-quit',()=>tray?.destroy());
-  app.on('second-instance',()=>{void show();});app.on('activate',()=>{void show();});
+  app.on('second-instance',()=>{if(window){void show();}else{startup?.focus();}});
+  app.on('activate',()=>{if(window){void show();}else{startup?.focus();}});
   // Keep the gateway and menu bar alive even if the workspace is destroyed.
   app.on('window-all-closed',()=>{});
   app.on('before-quit',event=>{if(closing)return;event.preventDefault();closing=true;void service.app.close().finally(()=>network.close()).finally(()=>app.quit());});
