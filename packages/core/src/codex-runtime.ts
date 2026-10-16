@@ -12,7 +12,7 @@ export async function migrationBinary(binary?:string){
  const win=process.platform==='win32';
  const candidates=binary?[binary]:[
   ...['/Applications',join(homedir(),'Applications')].flatMap(base=>['ChatGPT','Codex'].map(app=>join(base,`${app}.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`))),
-  // npm creates codex.cmd on Windows; it is started through its JavaScript entry point below, never through a shell.
+  // npm creates codex.cmd on Windows; resolve its native executable below.
   ...[...(process.env.PATH??'').split(win?';':':'),...(win&&process.env.APPDATA?[join(process.env.APPDATA,'npm')]:[])].filter(Boolean).flatMap(dir=>win?[join(dir,'codex.exe'),join(dir,'codex.cmd')]:[join(dir,'codex')]),
  ];
  let executable:string|undefined;for(const path of candidates){try{await access(path,constants.X_OK);executable=path;break;}catch{}}
@@ -21,12 +21,17 @@ export async function migrationBinary(binary?:string){
  if(!executable)throw fail('未找到可用于迁移的 Codex 程序，请先安装官方 Codex。');
  return executable;
 }
-/** Windows npm shims are batch files; run the package's Node entry directly so no shell parses arguments. */
-export async function runtimeLaunch(executable:string,platform=process.platform):Promise<{file:string;args:string[];env:{[key:string]:string}}>{
+/** Own the native child directly. Killing a Windows Node launcher can leave its
+ * Codex child running, locking conversation state after migration completes. */
+export async function runtimeLaunch(executable:string,platform=process.platform,arch=process.arch):Promise<{file:string;args:string[];env:{[key:string]:string}}>{
  if(platform==='win32'&&/\.cmd$/i.test(executable)){
-  const script=join(dirname(executable),'node_modules','@openai','codex','bin','codex.js');
-  try{await access(script,constants.R_OK);}catch{throw fail('找到的 codex.cmd 不是官方 npm 安装，无法用于迁移，请安装官方 Codex。');}
-  return {file:process.execPath,args:[script],env:{ELECTRON_RUN_AS_NODE:'1'}};
+  const modules=join(dirname(executable),'node_modules'),root=join(modules,'@openai','codex');
+  const triple=arch==='arm64'?'aarch64-pc-windows-msvc':arch==='x64'?'x86_64-pc-windows-msvc':undefined;
+  if(triple)for(const vendor of [join(root,'node_modules','@openai',`codex-win32-${arch}`,'vendor'),join(modules,'@openai',`codex-win32-${arch}`,'vendor'),join(root,'vendor')])for(const leaf of ['bin','codex']){
+   const native=join(vendor,triple,leaf,'codex.exe');
+   try{await access(native,constants.R_OK);return {file:native,args:[],env:{}};}catch{/* Try the next official npm layout. */}
+  }
+  throw fail('找到 codex.cmd，但缺少可用的官方 Codex 原生程序，无法用于迁移，请重新安装官方 Codex。');
  }
  return {file:executable,args:[],env:{}};
 }

@@ -49,8 +49,14 @@ export function agentPaths(home=homedir()):AgentPaths {
 export async function agentProcesses(target:Target|'antigravity'):Promise<number[]> {
   try {
     if(process.platform==='win32') {
+      // Migration must see the native CLI PID before desktop-only identity checks.
+      // This is read-only; lifecycle stop/open validates an app separately.
+      if(target==='codex'){
+        const {stdout}=await exec('tasklist',['/FO','CSV','/NH'],{timeout:5000,maxBuffer:2*1024*1024});
+        return stdout.split('\n').flatMap(line=>{const m=line.match(/^"(?:codex|ChatGPT|CodexCLI)(?:\.exe)?","(\d+)"/i);return m?[Number(m[1])]:[];});
+      }
       const {stdout}=await exec('tasklist',['/FO','CSV','/NH'],{timeout:5000,maxBuffer:2*1024*1024});
-      const names=target==='codex'?'(?:codex|ChatGPT|CodexCLI)':target==='deepseek'?'(?:DeepSeek Harness|dsh)':`${target}${target==='antigravity'?'(?: IDE)?':''}`;
+      const names=target==='deepseek'?'(?:DeepSeek Harness|dsh)':`${target}${target==='antigravity'?'(?: IDE)?':''}`;
       const found=stdout.split('\n').flatMap(line=>{const m=line.match(/^"([^"]+)","(\d+)"/);return m&&new RegExp(`^${names}(?:\\.exe)?$`,'i').test(m[1])?[Number(m[2])]:[];});
       if(found.length||!['pi','deepseek','claude'].includes(target))return found;
       const script="Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress";
