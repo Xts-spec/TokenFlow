@@ -3,7 +3,7 @@ import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createPackage} from '@electron/asar';
-import {electronPackageName,electronDesktopIdentity,qoderIdeWindowsIdentity,WindowsAgentLifecycle,type WindowsProcess,type WindowsTarget} from '../packages/core/src/windows-agent-lifecycle.js';
+import {electronPackageName,electronDesktopIdentity,qoderIdeWindowsIdentity,codexCliWindowsIdentity,WindowsAgentLifecycle,type WindowsProcess,type WindowsTarget} from '../packages/core/src/windows-agent-lifecycle.js';
 
 const identities={'claude-desktop':'@ant/desktop',qoder:'qoder','qoder-ide':'qoder-ide',codex:'openai-codex-electron',workbuddy:'@genie/workbuddy-desktop','workbuddy-ai':'@genie/workbuddy-desktop:international',deepseek:'@deepseek-ai/dsh-desktop'};
 const paths={'qoder-ide':'D:\\Apps\\Qoder IDE\\Qoder.exe','claude-desktop':'D:\\Apps\\Claude\\Claude.exe',qoder:'D:\\中文 程序\\Qoder\\Qoder.exe',codex:'D:\\Apps\\Codex\\Codex.exe',workbuddy:'D:\\Apps\\WorkBuddy\\WorkBuddy.exe','workbuddy-ai':'D:\\Apps\\WorkBuddy AI\\WorkBuddyAI.exe',deepseek:'D:\\Apps\\DeepSeek\\DeepSeek Harness.exe'};
@@ -157,4 +157,16 @@ it('validates the unpacked Windows Qoder IDE product instead of accepting the ex
 
 it('does not close an IDE using a custom user-data directory',async()=>{
  const f=fixture('qoder-ide');f.state.rows=[proc('qoder-ide',{customProfile:true})];await expect(f.lifecycle.stop('qoder-ide')).rejects.toThrow('自定义配置');expect(f.scripts().some(s=>s.includes('# tokenflow:close'))).toBe(false);
+});
+it('identifies official OpenAI Codex CLI binaries and ignores them during desktop close',async()=>{
+ expect(codexCliWindowsIdentity('C:\\Users\\user\\AppData\\Local\\OpenAI\\Codex\\bin\\hash123\\codex.exe')).toBe('openai-codex-cli');
+ expect(codexCliWindowsIdentity('C:\\Program Files\\WindowsApps\\OpenAI.Codex_1.0_x64__abc\\app\\resources\\codex.exe')).toBe('openai-codex-cli');
+ expect(codexCliWindowsIdentity('C:\\Unrelated\\codex.exe')).toBeUndefined();
+ const f=fixture('codex');
+ f.state.rows.push(proc('codex',{pid:888,parent:100,path:'C:\\Users\\user\\AppData\\Local\\OpenAI\\Codex\\bin\\hash123\\codex.exe'}));
+ f.identity.mockImplementation(async path=>path.toLowerCase()===paths.codex.toLowerCase()?'openai-codex-electron':codexCliWindowsIdentity(path));
+ await f.lifecycle.restart('codex');
+ const close=f.scripts().find(s=>s.includes('# tokenflow:close'))!;
+ const payload=JSON.parse(Buffer.from(close.match(/FromBase64String\('([^']+)'\)/)![1],'base64').toString());
+ expect(payload.map((p:WindowsProcess)=>p.pid)).toEqual([100]);
 });

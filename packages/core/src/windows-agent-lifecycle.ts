@@ -57,10 +57,15 @@ export async function qoderIdeWindowsIdentity(directory:string){
  if(pkg.name!=='Qoder'||product.win32AppUserModelId!=='AlibabaCloud.Qoder'||product.applicationName!=='qoder'||product.dataFolderName!=='.qoder')return;
  return 'qoder-ide';
 }
+export function codexCliWindowsIdentity(path:string):string|undefined{
+ const normalized=win32.normalize(path);
+ if(/[\\/](?:OpenAI[\\/]Codex[\\/]|WindowsApps[\\/]OpenAI\.Codex_[^\\/]+[\\/]|node_modules[\\/]@openai[\\/])/i.test(normalized))return 'openai-codex-cli';
+}
 export async function windowsAppIdentity(path:string):Promise<string|undefined>{
  if(!win32.isAbsolute(path)||!path.toLowerCase().endsWith('.exe'))return;
  try{const identity=await electronDesktopIdentity(win32.join(win32.dirname(path),'resources','app.asar'));if(identity)return identity;}catch{}
  if(win32.basename(path).toLowerCase()==='qoder.exe')try{return await qoderIdeWindowsIdentity(win32.join(win32.dirname(path),'resources','app'));}catch{}
+ if(win32.basename(path).toLowerCase()==='codex.exe')try{return codexCliWindowsIdentity(path);}catch{}
 }
 
 /** Unknown processes block automation. A known different app (for example Qoder IDE) is ignored. */
