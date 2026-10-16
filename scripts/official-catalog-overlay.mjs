@@ -2,7 +2,7 @@ import {readFileSync,writeFileSync} from 'node:fs';
 import {join,resolve,basename} from 'node:path';
 
 export function officialCatalogOverlay(replacements,dir){
- const patch=(path,change)=>{const source=resolve('upstream/CLIProxyAPI',path);const target=join(dir,'catalog-'+basename(path));const original=readFileSync(replacements[source]??source,'utf8');writeFileSync(target,change(original));replacements[source]=target;};
+ const patch=(path,change)=>{const source=resolve('upstream/CLIProxyAPI',path);const target=join(dir,'catalog-'+basename(path));const original=readFileSync(replacements[source]??source,'utf8').replace(/\r\n/g, '\n');writeFileSync(target,change(original));replacements[source]=target;};
  const replace=(text,from,to)=>{if(text.split(from).length!==2)throw Error('Official model hook changed: '+from.slice(0,90));return text.replace(from,to);};
  replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/token_flow_trae_native.go')]=resolve('patches/cliproxy/trae_native.go');
  replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/token_flow_trae_web_search.go')]=resolve('patches/cliproxy/trae_web_search.go');

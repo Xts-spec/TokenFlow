@@ -4,7 +4,7 @@ export function workbuddyRegionOverlay(replacements,dir){
  replacements[resolve('upstream/CLIProxyAPI/internal/auth/workbuddy/workbuddy_region_test.go')]=resolve('tests/sidecar/workbuddy_region_test.go');
  replacements[resolve('upstream/CLIProxyAPI/internal/auth/workbuddy/workbuddy_local_paths.go')]=resolve('patches/cliproxy/workbuddy_local_paths.go');
  replacements[resolve('upstream/CLIProxyAPI/internal/auth/workbuddy/workbuddy_local_paths_test.go')]=resolve('tests/sidecar/workbuddy_local_paths_test.go');
- const patch=(path,fn)=>{const source=resolve('upstream/CLIProxyAPI',path),target=join(dir,'region-'+basename(path));writeFileSync(target,fn(readFileSync(replacements[source]??source,'utf8')));replacements[source]=target;};
+ const patch=(path,fn)=>{const source=resolve('upstream/CLIProxyAPI',path),target=join(dir,'region-'+basename(path));writeFileSync(target,fn(readFileSync(replacements[source]??source,'utf8').replace(/\r\n/g, '\n')));replacements[source]=target;};
  const replace=(s,a,b)=>{if(!s.includes(a))throw Error('WorkBuddy region anchor changed: '+a);return s.replace(a,b);};
  patch('internal/auth/workbuddy/workbuddy.go',s=>{
   const start=s.indexOf('\tvar candidates []string',s.indexOf('func ImportLocalAuth()'));

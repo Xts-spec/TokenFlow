@@ -11,11 +11,11 @@ for(const [name,url,revision] of sources){
  if(actual.stdout.trim()!==revision)throw new Error(`${name}: expected ${revision}; preserve existing checkout and inspect manually.`);
  if(name==='CLIProxyAPI'){
   const patch=fileURLToPath(new URL('../patches/cliproxy/upstream.patch',import.meta.url));
-  const applied=spawnSync('git',['apply','--reverse','--check',patch],{cwd:path,stdio:'pipe'});
+  const applied=spawnSync('git',['apply','--ignore-whitespace','--reverse','--check',patch],{cwd:path,stdio:'pipe'});
   if(applied.status!==0){
-   const check=spawnSync('git',['apply','--check',patch],{cwd:path,encoding:'utf8'});
+   const check=spawnSync('git',['apply','--ignore-whitespace','--check',patch],{cwd:path,encoding:'utf8'});
    if(check.status!==0)throw new Error(`${name}: local changes conflict with the provider patch; existing checkout preserved.\n${check.stderr}`);
-   run(['apply',patch],path);
+   run(['apply','--ignore-whitespace',patch],path);
   }
  }
  console.log(`${name} ${revision}`);

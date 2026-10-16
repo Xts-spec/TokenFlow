@@ -5,7 +5,7 @@ export function providerLoginOverlay(replacements, patchDir) {
   const patch = (path, transform) => {
     const source = resolve('upstream/CLIProxyAPI', path);
     const target = join(patchDir, basename(path));
-    writeFileSync(target, transform(readFileSync(source, 'utf8')));
+    writeFileSync(target, transform(readFileSync(replacements[source] ?? source, 'utf8').replace(/\r\n/g, '\n')));
     replacements[source] = target;
   };
   const replace = (text, from, to) => {
