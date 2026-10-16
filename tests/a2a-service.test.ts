@@ -11,6 +11,7 @@ import { createServer } from 'node:net';
 import {PiTerminalLifecycle} from '../packages/core/src/pi-terminal-lifecycle.js';
 import {ClaudeTerminalLifecycle} from '../packages/core/src/claude-terminal-lifecycle.js';
 import { QoderLifecycle } from '../packages/core/src/agent-lifecycle.js';
+import { WindowsAgentLifecycle } from '../packages/core/src/windows-agent-lifecycle.js';
 import { createDesktopService } from '../packages/core/src/service.js';
 it('connects and restores a local Agent through admin APIs without exposing keys or original config',async()=>{
  const root=await mkdtemp(join(await realpath(tmpdir()),'a2a-service-'));
@@ -25,7 +26,7 @@ it('connects and restores a local Agent through admin APIs without exposing keys
   expect((await service.app.inject({method:'POST',url:'/api/a2a/program',headers:{host:headers.host},payload:{target:'pi',action:'install'}})).statusCode).toBe(401);
   expect((await service.app.inject({method:'POST',url:'/api/a2a/program',headers:{...headers,origin:'https://untrusted.test'},payload:{target:'pi',action:'install'}})).statusCode).toBe(403);
   expect((await service.app.inject({method:'POST',url:'/api/a2a/program',headers,payload:{target:'invalid',action:'install'}})).statusCode).toBe(400);
-  const restart=vi.spyOn(QoderLifecycle.prototype,'restart').mockResolvedValue({message:'Qoder 已重新打开'});
+  const restart=vi.spyOn(QoderLifecycle.prototype,'restart').mockResolvedValue({message:'Qoder 已重新打开'});const winStop=vi.spyOn(WindowsAgentLifecycle.prototype,'stop').mockResolvedValue();const winOpen=vi.spyOn(WindowsAgentLifecycle.prototype,'open').mockResolvedValue();
   try{
    expect((await service.app.inject({method:'POST',url:'/api/a2a/restart',headers:{host:headers.host},payload:{target:'qoder'}})).statusCode).toBe(401);
    expect((await service.app.inject({method:'POST',url:'/api/a2a/restart',headers:{...headers,origin:'https://untrusted.test'},payload:{target:'qoder'}})).statusCode).toBe(403);
@@ -36,14 +37,14 @@ it('connects and restores a local Agent through admin APIs without exposing keys
    for(const target of ['codex','workbuddy','claude','deepseek']){
     const payload={target,...(target==='claude'?{client:'vscode'}:{})};
     expect((await service.app.inject({method:'POST',url:'/api/a2a/restart',headers,payload})).statusCode).toBe(200);
-    expect(restart).toHaveBeenLastCalledWith(target);
+    if(process.platform==='win32'&&target==='codex'){expect(winOpen).toHaveBeenLastCalledWith('codex');}else{expect(restart).toHaveBeenLastCalledWith(target);}
    }
    const claudeRestart=vi.spyOn(ClaudeTerminalLifecycle.prototype,'restart').mockResolvedValue({message:'Claude Code 已打开'});
    try{expect((await service.app.inject({method:'POST',url:'/api/a2a/restart',headers,payload:{target:'claude',client:'terminal'}})).statusCode).toBe(200);expect(claudeRestart).toHaveBeenCalledWith(undefined);}finally{claudeRestart.mockRestore();}
    const piRestart=vi.spyOn(PiTerminalLifecycle.prototype,'restart').mockResolvedValue({message:'Pi 已重新打开'});try{expect((await service.app.inject({method:'POST',url:'/api/a2a/restart',headers,payload:{target:'pi'}})).statusCode).toBe(200);}finally{piRestart.mockRestore();}
    expect((await service.app.inject({url:'/api/a2a/program-updates',headers:{host:headers.host}})).statusCode).toBe(401);
    expect((await service.app.inject({url:'/api/a2a/terminal-sessions',headers:{host:headers.host}})).statusCode).toBe(401);
-  }finally{restart.mockRestore();}
+  }finally{restart.mockRestore();winStop.mockRestore();winOpen.mockRestore();}
   await mkdir(join(root,'codex'));const credentials=JSON.stringify({tokens:{access_token:'fixture-access',refresh_token:'fixture-refresh',id_token:'x.e30.x',account_id:'fixture-account'}});await writeFile(join(root,'codex','auth.json'),credentials);
   await service.discoverLocal();expect(service.proxy.snapshot().accounts).toHaveLength(2);
   await service.proxy.importCredential('codex',{account_id:'fixture-account',access_token:'stale-copy'},true);expect(await readFile(join(root,'cliproxy','fixture-accounts.json'),'utf8')).not.toContain('stale-copy');
