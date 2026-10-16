@@ -1,0 +1,20 @@
+{
+  "date": "2026-10-16",
+  "version": "10.15.26.6",
+  "normalRestart": true,
+  "desktopWindowVerified": true,
+  "httpStatus": 200,
+  "codesignVerified": true,
+  "sidecarSha256": {
+    "build": "201e54a418f4ad1a6550b475f14ece389056017048753665a76e98d5bfccd147",
+    "installed": "201e54a418f4ad1a6550b475f14ece389056017048753665a76e98d5bfccd147",
+    "release": "201e54a418f4ad1a6550b475f14ece389056017048753665a76e98d5bfccd147",
+    "zip": "201e54a418f4ad1a6550b475f14ece389056017048753665a76e98d5bfccd147"
+  },
+  "zipSha256": "1e3720c5a7b050ed32edb2968e934b8d6bbbfe0f220e1e01a8b998a4c00e0005",
+  "crossPlatform": {
+    "darwin-arm64": "built; installed Mac app started; Codex and 16-concurrent real calls passed",
+    "win32-x64": "built PE32+ x86-64; no native GUI acceptance",
+    "linux-x64": "built ELF x86-64 static; no native GUI acceptance"
+  }
+}

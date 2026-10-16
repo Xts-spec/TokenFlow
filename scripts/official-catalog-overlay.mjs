@@ -6,6 +6,7 @@ export function officialCatalogOverlay(replacements,dir){
  const replace=(text,from,to)=>{if(text.split(from).length!==2)throw Error('Official model hook changed: '+from.slice(0,90));return text.replace(from,to);};
  replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/token_flow_trae_native.go')]=resolve('patches/cliproxy/trae_native.go');
  replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/token_flow_trae_web_search.go')]=resolve('patches/cliproxy/trae_web_search.go');
+ replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/token_flow_trae_web_pages.go')]=resolve('patches/cliproxy/trae_web_pages.go');
  patch('internal/runtime/executor/trae_executor.go',t=>{
   const native='auth != nil && auth.Metadata["access_token"] != nil && (auth.Metadata["base_url"] == nil || auth.Metadata["base_url"] == "") && auth.Attributes["base_url"] == ""';
   const converted='opts.SourceFormat != "" && opts.SourceFormat != sdktranslator.FormatOpenAI';

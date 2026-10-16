@@ -1,10 +1,11 @@
+import {readTraeAcceptanceConfig} from './trae-acceptance-config.mjs';
 // Real search + function-tool continuation through the installed Responses endpoint.
-import {readFile,writeFile} from 'node:fs/promises';
-import {join} from 'node:path';
-import {homedir} from 'node:os';
-import {parse} from 'yaml';
+import {writeFile} from 'node:fs/promises';
+
+
+
 if(process.env.TOKEN_FLOW_TRAE_INSTALLED_LIVE!=='1')throw Error('Set TOKEN_FLOW_TRAE_INSTALLED_LIVE=1 for real account calls.');
-const cfg=parse(await readFile(join(homedir(),'Library/Application Support/desktop-browser-agent/cliproxy/config.yaml'),'utf8'));
+const cfg=await readTraeAcceptanceConfig();
 let ready=false;for(let attempt=0;attempt<30;attempt++){try{const r=await fetch(`http://127.0.0.1:${cfg.port}/v1/models`,{headers:{Authorization:'Bearer '+cfg['api-keys'][0]},signal:AbortSignal.timeout(5000)});const j=await r.json();if(j.data?.some(m=>m.id==='trae/deepseek-v4.1-flash')){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,1000));}if(!ready)throw Error('Installed TRAE model discovery did not become ready.');
 const workers=Number(process.env.TRAE_INSTALLED_WORKERS??8);if(!Number.isInteger(workers)||workers<1||workers>16)throw Error('TRAE_INSTALLED_WORKERS must be 1–16');
 const rows=[];

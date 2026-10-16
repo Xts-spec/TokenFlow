@@ -1,0 +1,45 @@
+{
+  "date": "2026-10-16",
+  "sdk": "https://lf-static.traecdn.us/obj/trae-ai-tx/trae_website/static/js/main.6286bcee1d.js",
+  "officialEndpoint": "POST https://trae-api-us.mchost.guru/api/ide/v1/web_fetch",
+  "verifiedFields": [
+    "url",
+    "disable_crawl",
+    "disable_cache",
+    "offset",
+    "limit",
+    "fetch_id",
+    "query"
+  ],
+  "documents": [
+    {
+      "url": "https://www.iana.org/help/example-domains",
+      "fullTokenCount": 200,
+      "evidence": [
+        "production applications",
+        "RFC 6761",
+        "Last revised footer"
+      ]
+    },
+    {
+      "url": "https://learn.chatgpt.com/docs/cli",
+      "evidence": [
+        "permissions"
+      ]
+    }
+  ],
+  "replayedPaginationFault": {
+    "firstLimit": 40,
+    "firstReturnedTokens": 12,
+    "totalTokens": 200,
+    "continuingWithSlicedFetchId": "empty content despite total 200",
+    "urlOnlyOffset12Limit100": "next content returned at page_token_offset 12; 64 tokens",
+    "repair": "Use returned token boundary + URL; check document identity, completeness and progress; never claim partial document complete"
+  },
+  "snippetModeProbe": "Both guessed boolean and integer values returned HTTP 400; no guessed enum shipped",
+  "cachedPolicy": "disable_crawl true remains true on errors; no automatic escalation",
+  "omitted": [
+    "account credentials",
+    "raw third-party document bodies"
+  ]
+}

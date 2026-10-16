@@ -42,6 +42,7 @@ replacements[responseSource]=responsePatched;
 // Test files in a developer's checkout may already exist. Use the same destination
 // names so the overlay replaces them rather than registering duplicate tests.
 if(test){
+ replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/token_flow_trae_web_pages_test.go')]=resolve('tests/sidecar/trae_web_pages_test.go');
  replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/token_flow_trae_web_search_test.go')]=resolve('tests/sidecar/trae_web_search_test.go');
  replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/token_flow_trae_live_test.go')]=resolve('tests/sidecar/trae_native_live_test.go');
  replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/token_flow_trae_native_test.go')]=resolve('tests/sidecar/trae_native_test.go');

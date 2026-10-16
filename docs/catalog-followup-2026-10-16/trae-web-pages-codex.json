@@ -1,0 +1,81 @@
+{
+  "client": "codex-cli 0.154.0",
+  "model": "trae/deepseek-v4.1-flash",
+  "endpoint": "installed-sidecar-responses",
+  "longContextCharacters": 66890,
+  "isolatedConfiguration": true,
+  "webSearchConfiguration": "Codex default (no override)",
+  "pageMode": true,
+  "rounds": [
+    {
+      "round": 1,
+      "resumed": false,
+      "exitCode": 0,
+      "toolsCompleted": 3,
+      "clientSearches": 2,
+      "searches": [
+        {
+          "status": "completed",
+          "action": "open_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "sources": []
+        },
+        {
+          "status": "completed",
+          "action": "find_in_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "pattern": "production",
+          "sources": []
+        }
+      ],
+      "durationMs": 53188,
+      "passed": true,
+      "final": "TRAE_CODEX_ROUND1_OK"
+    },
+    {
+      "round": 2,
+      "resumed": true,
+      "exitCode": 0,
+      "toolsCompleted": 3,
+      "clientSearches": 2,
+      "searches": [
+        {
+          "status": "completed",
+          "action": "open_page",
+          "url": "https://learn.chatgpt.com/docs/cli",
+          "sources": []
+        },
+        {
+          "status": "completed",
+          "action": "find_in_page",
+          "url": "https://learn.chatgpt.com/docs/cli",
+          "pattern": "permissions",
+          "sources": []
+        }
+      ],
+      "durationMs": 39695,
+      "passed": true,
+      "final": "TRAE_CODEX_ROUND2_OK"
+    },
+    {
+      "round": 3,
+      "resumed": true,
+      "exitCode": 0,
+      "toolsCompleted": 3,
+      "clientSearches": 1,
+      "searches": [
+        {
+          "status": "completed",
+          "action": "find_in_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "pattern": "documentation",
+          "sources": []
+        }
+      ],
+      "durationMs": 35848,
+      "passed": true,
+      "final": "TRAE_CODEX_ROUND3_OK"
+    }
+  ],
+  "passed": true
+}

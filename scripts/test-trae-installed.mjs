@@ -1,6 +1,7 @@
-import {readFile,writeFile} from 'node:fs/promises';import {homedir} from 'node:os';import {join} from 'node:path';import {parse} from 'yaml';
+import {readTraeAcceptanceConfig} from './trae-acceptance-config.mjs';
+import {writeFile} from 'node:fs/promises';
 if(process.env.TOKEN_FLOW_TRAE_INSTALLED_LIVE!=='1')throw new Error('Set TOKEN_FLOW_TRAE_INSTALLED_LIVE=1 to run real account calls.');
-const cfg=parse(await readFile(join(homedir(),'Library/Application Support/desktop-browser-agent/cliproxy/config.yaml'),'utf8'));
+const cfg=await readTraeAcceptanceConfig();
 const count=Number(process.env.TRAE_INSTALLED_WORKERS??16),rows=[];const endpoint=process.env.TRAE_INSTALLED_ENDPOINT??`http://127.0.0.1:${cfg.port}`;
 if(!Number.isInteger(count)||count<1||count>32)throw Error('TRAE_INSTALLED_WORKERS must be 1–32');
 await Promise.all(Array.from({length:count},async(_,worker)=>{const messages=[];for(let i=0;i<100;i++)messages.push({role:'user',content:`Historical task ${i} is complete. ${"Synthetic context for regression testing; all prior results have been saved. ".repeat(8)}`},{role:'assistant',content:`Recorded result ${i}.`});for(let round=0;round<5;round++){

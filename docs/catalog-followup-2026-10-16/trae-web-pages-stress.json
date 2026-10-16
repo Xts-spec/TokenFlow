@@ -1,0 +1,872 @@
+{
+  "workers": 16,
+  "requests": 64,
+  "passed": true,
+  "rows": [
+    {
+      "worker": 12,
+      "round": 0,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [
+        {
+          "type": "open_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 15623
+    },
+    {
+      "worker": 2,
+      "round": 0,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [
+        {
+          "type": "open_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 16467
+    },
+    {
+      "worker": 7,
+      "round": 0,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [
+        {
+          "type": "open_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 16849
+    },
+    {
+      "worker": 8,
+      "round": 0,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [
+        {
+          "type": "open_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 17079
+    },
+    {
+      "worker": 3,
+      "round": 0,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [
+        {
+          "type": "open_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 17085
+    },
+    {
+      "worker": 13,
+      "round": 0,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [
+        {
+          "type": "open_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 17208
+    },
+    {
+      "worker": 11,
+      "round": 0,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [
+        {
+          "type": "open_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 17291
+    },
+    {
+      "worker": 4,
+      "round": 0,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [
+        {
+          "type": "open_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "status": "completed"
+        },
+        {
+          "type": "find_in_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "pattern": "not designed to support",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 17390
+    },
+    {
+      "worker": 1,
+      "round": 0,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [
+        {
+          "type": "open_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 17398
+    },
+    {
+      "worker": 14,
+      "round": 0,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [
+        {
+          "type": "open_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 17410
+    },
+    {
+      "worker": 9,
+      "round": 0,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [
+        {
+          "type": "open_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 17595
+    },
+    {
+      "worker": 10,
+      "round": 0,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [
+        {
+          "type": "open_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "status": "completed"
+        },
+        {
+          "type": "find_in_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "pattern": "not designed to support",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 17705
+    },
+    {
+      "worker": 6,
+      "round": 0,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [
+        {
+          "type": "open_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 17810
+    },
+    {
+      "worker": 0,
+      "round": 0,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [
+        {
+          "type": "open_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 18509
+    },
+    {
+      "worker": 15,
+      "round": 0,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [
+        {
+          "type": "open_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 18494
+    },
+    {
+      "worker": 5,
+      "round": 0,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [
+        {
+          "type": "open_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 19102
+    },
+    {
+      "worker": 12,
+      "round": 1,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [
+        {
+          "type": "find_in_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "pattern": "RFC 6761",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 11487
+    },
+    {
+      "worker": 7,
+      "round": 1,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [
+        {
+          "type": "find_in_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "pattern": "RFC 6761",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 10656
+    },
+    {
+      "worker": 2,
+      "round": 1,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [
+        {
+          "type": "find_in_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "pattern": "RFC 6761",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 11685
+    },
+    {
+      "worker": 8,
+      "round": 1,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [
+        {
+          "type": "find_in_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "pattern": "RFC 6761",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 12329
+    },
+    {
+      "worker": 11,
+      "round": 1,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [
+        {
+          "type": "find_in_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "pattern": "RFC 6761",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 13846
+    },
+    {
+      "worker": 4,
+      "round": 1,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [
+        {
+          "type": "find_in_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "pattern": "RFC 6761",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 14949
+    },
+    {
+      "worker": 13,
+      "round": 1,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [
+        {
+          "type": "find_in_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "pattern": "RFC 6761",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 15414
+    },
+    {
+      "worker": 3,
+      "round": 1,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [
+        {
+          "type": "find_in_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "pattern": "RFC 6761",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 15930
+    },
+    {
+      "worker": 1,
+      "round": 1,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [
+        {
+          "type": "find_in_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "pattern": "RFC 6761",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 15633
+    },
+    {
+      "worker": 14,
+      "round": 1,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [
+        {
+          "type": "find_in_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "pattern": "RFC 6761",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 15964
+    },
+    {
+      "worker": 6,
+      "round": 1,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [
+        {
+          "type": "find_in_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "pattern": "RFC 6761",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 15730
+    },
+    {
+      "worker": 15,
+      "round": 1,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [
+        {
+          "type": "find_in_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "pattern": "RFC 6761",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 15065
+    },
+    {
+      "worker": 0,
+      "round": 1,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [
+        {
+          "type": "find_in_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "pattern": "RFC 6761",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 15148
+    },
+    {
+      "worker": 9,
+      "round": 1,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [
+        {
+          "type": "find_in_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "pattern": "RFC 6761",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 16478
+    },
+    {
+      "worker": 12,
+      "round": 2,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 7484
+    },
+    {
+      "worker": 10,
+      "round": 1,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [
+        {
+          "type": "find_in_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "pattern": "RFC 6761",
+          "status": "completed"
+        },
+        {
+          "type": "open_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 17129
+    },
+    {
+      "worker": 5,
+      "round": 1,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [
+        {
+          "type": "find_in_page",
+          "url": "https://www.iana.org/help/example-domains",
+          "pattern": "RFC 6761",
+          "status": "completed"
+        }
+      ],
+      "passed": true,
+      "ms": 16214
+    },
+    {
+      "worker": 7,
+      "round": 2,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 8272
+    },
+    {
+      "worker": 2,
+      "round": 2,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 8816
+    },
+    {
+      "worker": 8,
+      "round": 2,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 7901
+    },
+    {
+      "worker": 11,
+      "round": 2,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 6286
+    },
+    {
+      "worker": 1,
+      "round": 2,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 4757
+    },
+    {
+      "worker": 13,
+      "round": 2,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 5377
+    },
+    {
+      "worker": 3,
+      "round": 2,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 5328
+    },
+    {
+      "worker": 4,
+      "round": 2,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 6489
+    },
+    {
+      "worker": 15,
+      "round": 2,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 5583
+    },
+    {
+      "worker": 6,
+      "round": 2,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 5779
+    },
+    {
+      "worker": 14,
+      "round": 2,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 6095
+    },
+    {
+      "worker": 0,
+      "round": 2,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 6232
+    },
+    {
+      "worker": 10,
+      "round": 2,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 6118
+    },
+    {
+      "worker": 12,
+      "round": 3,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 6511
+    },
+    {
+      "worker": 5,
+      "round": 2,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 6154
+    },
+    {
+      "worker": 9,
+      "round": 2,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 7625
+    },
+    {
+      "worker": 7,
+      "round": 3,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 6583
+    },
+    {
+      "worker": 8,
+      "round": 3,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 5802
+    },
+    {
+      "worker": 1,
+      "round": 3,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 6620
+    },
+    {
+      "worker": 3,
+      "round": 3,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 6374
+    },
+    {
+      "worker": 2,
+      "round": 3,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 8324
+    },
+    {
+      "worker": 14,
+      "round": 3,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 5892
+    },
+    {
+      "worker": 13,
+      "round": 3,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 7508
+    },
+    {
+      "worker": 6,
+      "round": 3,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 6280
+    },
+    {
+      "worker": 4,
+      "round": 3,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 6899
+    },
+    {
+      "worker": 10,
+      "round": 3,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 4924
+    },
+    {
+      "worker": 0,
+      "round": 3,
+      "stream": true,
+      "cached": true,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 6397
+    },
+    {
+      "worker": 15,
+      "round": 3,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 7314
+    },
+    {
+      "worker": 9,
+      "round": 3,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 5731
+    },
+    {
+      "worker": 5,
+      "round": 3,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 6427
+    },
+    {
+      "worker": 11,
+      "round": 3,
+      "stream": false,
+      "cached": false,
+      "http": 200,
+      "actions": [],
+      "passed": true,
+      "ms": 11226
+    }
+  ]
+}
