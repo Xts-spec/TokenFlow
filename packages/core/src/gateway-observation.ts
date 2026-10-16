@@ -5,8 +5,10 @@ export function providerUsage(raw:unknown){
  const u=(raw&&typeof raw==='object'?raw:{}) as Record<string,any>;
  const read=n(u.cache_read_input_tokens)??n(u.input_tokens_details?.cached_tokens)??n(u.prompt_tokens_details?.cached_tokens)??n(u.prompt_cache_hit_tokens);
  const write=n(u.cache_creation_input_tokens)??n(u.input_tokens_details?.cache_write_tokens)??n(u.prompt_tokens_details?.cache_write_tokens);
- let input=n(u.input_tokens??u.prompt_tokens);
- if(input!==null&&('cache_read_input_tokens' in u||'cache_creation_input_tokens' in u))input+=n(u.cache_read_input_tokens)??0,input+=n(u.cache_creation_input_tokens)??0;
+ const separateInput=n(u.input_tokens);let input=separateInput??n(u.prompt_tokens);
+ // Chat Completions prompt_tokens already includes caches, even when a
+ // compatible provider also returns Anthropic-style cache aliases.
+ if(separateInput!==null&&('cache_read_input_tokens' in u||'cache_creation_input_tokens' in u))input=separateInput+(n(u.cache_read_input_tokens)??0)+(n(u.cache_creation_input_tokens)??0);
  if(input===null&&n(u.prompt_cache_miss_tokens)!==null&&read!==null)input=n(u.prompt_cache_miss_tokens)!+read+(write??0);
  return {inputTokens:input,cachedTokens:read,cacheWriteTokens:write,outputTokens:n(u.output_tokens??u.completion_tokens),reasoningTokens:n(u.output_tokens_details?.reasoning_tokens)??n(u.completion_tokens_details?.reasoning_tokens)};
 }

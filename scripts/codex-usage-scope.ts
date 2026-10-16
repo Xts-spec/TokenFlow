@@ -11,6 +11,7 @@ export function codexScopeMatrix(input:LocalUsageRow[],day:string,latest?:{accou
   const rows=samples.filter(r=>Date.parse(r.last)>=from&&Date.parse(r.last)<to);
   const current=rows.filter(r=>latest&&r.nativeAccountId===latest.account&&(!r.nativeEmailHash||r.nativeEmailHash===latest.email));
   const currentIds=new Set(current.map(r=>r.sampleId));
-  return {offsetHours,fromUtc:new Date(from).toISOString(),toUtcExclusive:new Date(to).toISOString(),periodComplete:to<=capturedAt,totalTokens:sum(rows),latestObservedAccountTokens:sum(current),otherAccountTokens:sum(rows.filter(r=>r.nativeAccountId&&!currentIds.has(r.sampleId))),unassignedTokens:sum(rows.filter(r=>!r.nativeAccountId))};
+  const latestObservedAccountEvidence=Object.fromEntries(['otel','login-snapshot','record'].map(kind=>{const matched=current.filter(r=>(r.nativeAccountEvidence??'record')===kind);return [kind,{requests:matched.reduce((n,r)=>n+r.requests,0),tokens:sum(matched)}];}));
+  return {offsetHours,fromUtc:new Date(from).toISOString(),toUtcExclusive:new Date(to).toISOString(),periodComplete:to<=capturedAt,totalTokens:sum(rows),latestObservedAccountTokens:sum(current),latestObservedAccountEvidence,otherAccountTokens:sum(rows.filter(r=>r.nativeAccountId&&!currentIds.has(r.sampleId))),unassignedTokens:sum(rows.filter(r=>!r.nativeAccountId))};
  });
 }

@@ -383,6 +383,15 @@ node scripts/check-file-cleanup-native.mjs
 - v12 索引升级后，即使原日志未变化也重扫 Codex，其他客户端缓存保留。同响应副本／累计通知不双算，缓存不额外加一次；归属修复不应改变真实 Token 总额。账号切换、子线程独立路由、网关排重分别验收。
 - 官方个人主页与 TokenFlow 对账记录同账号、日界线、版本和采集时点。macOS 的 3.5 亿对约 6.43 亿差额尚未闭环，不是 Windows 已通过的基线；没有账号证据的 Token 保持已统计、归属未确认。见 [Codex 排查记录](testing/native-direct-usage.md#codex-个人主页与本机日志差异排查2026-10-17)。
 
+#### 多客户端计数与缓存兼容（U18，Windows 未实测，P1）
+
+- [ ] 复跑 `tests/gateway-activity.test.ts`：Chat Completions 响应同时有 prompt_tokens 和 Anthropic 缓存别名时，输入不再重复加缓存；JSON／SSE 均应为输入 100、输出 10、总量 110。保留原 Anthropic 分项输入与 Responses 包含式输入的断言。
+- [ ] 在 Windows 安装包中核对逐请求详情、来源、总览一致；先记录真实响应字段和计数，再与客户端／官方同账号同日明细比较，不按额度百分比倒推 Token。
+- [ ] 分别核对 Claude、Qoder、WorkBuddy、反重力和 Cursor 的直连／网关路径；“官方类型”与“已匹配账号”分开验收。无记录、无授权、尚未支持时不得显示成确定的零消耗。
+- [ ] Codex 对账按逐请求证据、登录观察推断、其他账号、未知账号分组；诊断脚本新增证据分项只用于排查，不修改生产数字。macOS 精确证据本身仍高于个人主页，不能把差额简单归因于未知账号。
+
+macOS 已完成的范围与保留缺口见 [跨客户端核对](testing/native-direct-usage.md#跨客户端计数复核与-codex-同账号差额2026-10-17)。关联 USAGE-001／002／004／005，不能把 Mac 源码回归当作 Windows 实机通过。
+
 ### 5.8 最终 Windows 包交付（P0）
 
 用量对账补充 U17（Windows 未实测）：在开发测试环境使用实际已安装官方 CLI 运行 `scripts/codex-official-usage-check.ts` 的只读检查，记录账号是否匹配、日桶原始数值与采集时刻；不登录新账号、不创建模型请求、不输出凭据。对照本机审计的同账号／其他账号／未确认分区和半开日期窗口，标出尚未结束的时区日窗；空日桶与 0 不混淆。macOS 已观察到个人主页 3.5 亿与官方 CLI 263,551,960 不同，不能拿任何一方作为 Windows 的固定预期，也不能为了匹配而改本机 Token。新版主页接口若返回权限错误就记录阻塞，不绕过权限。

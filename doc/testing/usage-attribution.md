@@ -101,3 +101,12 @@ OpenAI 的 [用量字段说明](https://developers.openai.com/api/docs/guides/ag
 ```sh
 npx vitest run tests/local-usage.test.ts tests/local-usage-index.test.ts tests/gateway-activity.test.ts tests/usage-model.test.ts tests/usage-attribution.test.ts tests/codex-official-usage-check.test.ts
 ```
+
+## 其他平台的字段口径复核（2026-10-17）
+
+- [Claude 缓存文档](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#tracking-cache-performance)：`input_tokens` 不包含缓存读取／写入，三项相加才是完整输入。本机 Claude／Qoder 的 Anthropic 形状日志采用该拆分，但这不证明其官方账号归属。
+- [DeepSeek 缓存文档](https://api-docs.deepseek.com/guides/kv_cache/)：hit 和 miss 是请求输入的两部分。已有 `prompt_tokens` 时不能再加 hit；Harness 内部规范化后的字段另按客户端格式解析。
+- [Cursor SDK 文档](https://cursor.com/docs/sdk/typescript#token-usage)：SDK 总量为 input＋output＋cacheRead＋cacheWrite；reasoning 已包含在 output，不再次相加。运行时报告与计费明细不保证相同；当前实现优先匹配精确会话账单，不能拿账号总额差分。
+- [Qoder 用量文档](https://docs.qoder.com/cli/sdk/cost-usage)：逐请求 Credits 与会话累计是不同范围，不能相加；额度桶和上下文占用也不等于 Token 消耗。本轮没有用 Credits 改写本机 Token。
+
+实际样本、缺口、同账号 Codex 4.664 亿的证据拆分，以及网关混合字段重复缓存的修复见 [跨客户端复核](native-direct-usage.md#跨客户端计数复核与-codex-同账号差额2026-10-17)。这些公开定义说明字段包含关系，不代替各厂商个人主页的收录范围与日界线说明。

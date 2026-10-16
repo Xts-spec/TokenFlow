@@ -15,3 +15,10 @@ it('does not double copied responses, mix member emails or count future samples'
  expect(local).toMatchObject({totalTokens:240,latestObservedAccountTokens:120,otherAccountTokens:120,unassignedTokens:0});
  expect(()=>codexScopeMatrix([],'2026-02-31')).toThrow('Invalid calendar day');
 });
+
+it('separates exact account evidence from login observations without changing the total',()=>{
+ const exact={...row('exact','2026-10-16T01:00:00Z','A','mail'),nativeAccountEvidence:'otel' as const};
+ const observed={...row('observed','2026-10-16T02:00:00Z','A','mail'),nativeAccountEvidence:'login-snapshot' as const};
+ const local=codexScopeMatrix([exact,{...exact,nativeAccountEvidence:'login-snapshot'},observed,row('direct','2026-10-16T03:00:00Z','A','mail'),row('unknown','2026-10-16T04:00:00Z')],'2026-10-16',{account:'A',email:'mail'},Date.parse('2026-10-17T00:00:00Z')).find(m=>m.offsetHours===8)!;
+ expect(local).toMatchObject({totalTokens:480,latestObservedAccountTokens:360,unassignedTokens:120,latestObservedAccountEvidence:{otel:{requests:1,tokens:120},'login-snapshot':{requests:1,tokens:120},record:{requests:1,tokens:120}}});
+});

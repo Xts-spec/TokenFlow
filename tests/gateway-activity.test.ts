@@ -30,6 +30,13 @@ it('counts Anthropic cached input alongside normal input without counting OpenAI
  expect(await inspect('{"usage":{"input_tokens":30,"input_tokens_details":{"cached_tokens":20},"output_tokens":3}}',false)).toMatchObject({inputTokens:30,outputTokens:3});
 });
 
+it('keeps Chat Completions prompt totals inclusive when a provider also returns Anthropic cache aliases',async()=>{
+ const usage={prompt_tokens:100,completion_tokens:10,total_tokens:110,prompt_tokens_details:{cached_tokens:60},cache_read_input_tokens:60,cache_creation_input_tokens:5};
+ expect(await inspect(JSON.stringify({usage}),false)).toMatchObject({inputTokens:100,cachedTokens:60,cacheWriteTokens:5,outputTokens:10});
+ expect(await inspect(JSON.stringify({usage:{...usage,input_tokens:null}}),false)).toMatchObject({inputTokens:100,outputTokens:10});
+ expect(await inspect(`data: ${JSON.stringify({choices:[],usage})}\n\ndata: [DONE]\n\n`,true)).toMatchObject({inputTokens:100,cachedTokens:60,cacheWriteTokens:5,outputTokens:10,failed:false});
+});
+
 it('does not treat a clean EOF with initial Messages usage as final settlement',async()=>{
  const broken='data: {"type":"message_start","message":{"usage":{"input_tokens":7,"output_tokens":0}}}\n\ndata: {"type":"content_block_delta","delta":{"text":"generated but unmetered"}}\n\n';
  expect(await inspect(broken,true)).toEqual({inputTokens:7,cachedTokens:null,outputTokens:0,failed:true});
