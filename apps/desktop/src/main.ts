@@ -39,6 +39,8 @@ async function start() {
   if(process.platform==='win32')Menu.setApplicationMenu(null);
   const icon=join(here,'console','app-icon.png');
   const startup=await createStartupWindow(icon);
+  // Explain both saved and client credentials before any operation can trigger an OS prompt.
+  const allowClientCredentials=await startup.confirmCredentialAccess();
   await startup.update('正在准备网络连接…');
   // Resolve external traffic using a separate OS-proxy session. The workspace
   // only loads loopback URLs and must remain reachable with any system proxy.
@@ -72,7 +74,6 @@ async function start() {
   }
   const token=randomBytes(32).toString('hex');
   const base=app.isPackaged?process.resourcesPath:resolve(here,'..');
-  const allowClientCredentials=await startup.confirmCredentialAccess();
   const claudeKeychainStore=process.platform==='darwin'?claudeKeychain(dirname(agentPaths().claude)):undefined;
   const claudeCredentialStore=claudeKeychainStore?{read:guardCredentialAccess(allowClientCredentials,()=>claudeKeychainStore.read()),write:guardCredentialAccess(allowClientCredentials,(value:string|null)=>claudeKeychainStore.write(value))}:undefined;
   await startup.update('正在启动本地服务…');
