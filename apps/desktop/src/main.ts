@@ -12,7 +12,7 @@ import { createDesktopService } from '../../../packages/core/src/service.js';
 import { desktopCleanupFiles } from './file-cleanup.js';
 import {createNetworkProxy} from '../../../packages/core/src/network-proxy.js';
 import {createStartupWindow} from './startup-window.js';
-import {guardCredentialAccess} from './credential-access.js';
+import {guardCredentialAccess,rememberedCredentialAccess,rememberCredentialAccess} from './credential-access.js';
 import {claudeKeychain} from '../../../packages/core/src/claude-accounts.js';
 import {agentPaths} from '../../../packages/core/src/agent-connections.js';
 import {workspaceWindowOptions,windowsTitleBar} from './window-options.js';
@@ -38,9 +38,12 @@ async function start() {
   await app.whenReady();
   if(process.platform==='win32')Menu.setApplicationMenu(null);
   const icon=join(here,'console','app-icon.png');
-  const startup=await createStartupWindow(icon);
-  // Explain both saved and client credentials before any operation can trigger an OS prompt.
-  const allowCredentials=await startup.confirmCredentialAccess();
+  const root=process.env.AGENT_DATA_ROOT?resolve(process.env.AGENT_DATA_ROOT):app.getPath('userData');
+  const remembered=await rememberedCredentialAccess(root);
+  const startup=await createStartupWindow(icon,remembered?'loading':'choice');
+  // Ask only until the user has allowed a successful secure-store load. Never infer consent from credential files.
+  const allowCredentials=remembered||await startup.confirmCredentialAccess();
+  const resetCredentialChoice=()=>{void rememberCredentialAccess(root,false).catch(()=>dialog.showErrorBox('无法保存启动偏好','请稍后重试。已有凭据不受影响。'));};
   await startup.update('正在准备网络连接…');
   // Resolve external traffic using a separate OS-proxy session. The workspace
   // only loads loopback URLs and must remain reachable with any system proxy.
@@ -59,11 +62,10 @@ async function start() {
   // The keychain-compatible internal name may stay token-flow. Visible menus
   // should still use the product name, including when encryption is unavailable.
   if(process.platform==='darwin')Menu.setApplicationMenu(Menu.buildFromTemplate([
-    {label:'TokenFlow',submenu:[{role:'about',label:'关于 TokenFlow'},{type:'separator'},{role:'services',label:'服务'},{type:'separator'},{role:'hide',label:'隐藏 TokenFlow'},{role:'hideOthers',label:'隐藏其他应用'},{role:'unhide',label:'显示全部'},{type:'separator'},{role:'quit',label:'退出 TokenFlow'}]},
+    {label:'TokenFlow',submenu:[{role:'about',label:'关于 TokenFlow'},{label:'下次启动重新选择登录读取',click:resetCredentialChoice},{type:'separator'},{role:'services',label:'服务'},{type:'separator'},{role:'hide',label:'隐藏 TokenFlow'},{role:'hideOthers',label:'隐藏其他应用'},{role:'unhide',label:'显示全部'},{type:'separator'},{role:'quit',label:'退出 TokenFlow'}]},
     {role:'fileMenu',label:'文件'},{role:'editMenu',label:'编辑'},{role:'viewMenu',label:'视图'},{role:'windowMenu',label:'窗口'},
   ]));
   if(process.platform==='darwin')app.dock?.setIcon(nativeImage.createFromPath(icon));
-  const root=process.env.AGENT_DATA_ROOT?resolve(process.env.AGENT_DATA_ROOT):app.getPath('userData');
   await mkdir(join(root,'secrets'),{recursive:true,mode:0o700});
   const secrets=createSecrets(root,safeStorage,process.platform,allowCredentials);
   let localKey=await secrets.get('cliproxy');
@@ -72,6 +74,8 @@ async function start() {
     if(secrets.canEncrypt())await secrets.set('cliproxy',localKey);
     else secrets.temporaryGateway();
   }
+  // Remember only a successful load/write; a locked or unreadable vault must not silently become permanent consent.
+  if(allowCredentials)await rememberCredentialAccess(root,!secrets.warnings().length).catch(()=>{});
   const token=randomBytes(32).toString('hex');
   const base=app.isPackaged?process.resourcesPath:resolve(here,'..');
   const claudeKeychainStore=process.platform==='darwin'?claudeKeychain(dirname(agentPaths().claude)):undefined;
@@ -125,6 +129,7 @@ async function start() {
   const trayMenu=Menu.buildFromTemplate([
     {label:'打开工作台',click:()=>{void show();}},
     {label:'维修师傅',click:()=>{void show().then(()=>window?.webContents.send('repair:open'));}},
+    {label:'下次启动重新选择登录读取',click:resetCredentialChoice},
     {type:'separator'},
     {label:'退出 TokenFlow',click:()=>app.quit()},
   ]);

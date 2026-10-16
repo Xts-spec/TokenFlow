@@ -3,6 +3,7 @@ import {mkdtemp,mkdir,readFile,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import type {ServiceOptions} from '../packages/core/src/service.js';
+import {rememberedCredentialAccess,rememberCredentialAccess} from '../apps/desktop/src/credential-access.js';
 
 const fixture=vi.hoisted(()=>({
  root:'',events:[] as string[],available:true,decide:(_allowed:boolean)=>{},decision:Promise.resolve(false),
@@ -34,7 +35,7 @@ vi.mock('electron',()=>({
  shell:{},ipcMain:{handle:vi.fn()},clipboard:{},Tray:class{setToolTip=vi.fn();on=vi.fn();},
 }));
 vi.mock('../apps/desktop/src/profile.js',()=>({resolveProfile:()=>fixture.root}));
-vi.mock('../apps/desktop/src/startup-window.js',()=>({createStartupWindow:async()=>({
+vi.mock('../apps/desktop/src/startup-window.js',()=>({createStartupWindow:async(_icon:string,mode:string)=>{fixture.events.push(`startup-mode:${mode}`);return {
  update:async(status:string)=>{
   fixture.events.push(`status:${status}`);
   if(status==='正在读取已保存的凭据…'||status==='正在准备本地工作台…')await fixture.painting;
@@ -43,7 +44,7 @@ vi.mock('../apps/desktop/src/startup-window.js',()=>({createStartupWindow:async(
  confirmCredentialAccess:()=>{fixture.events.push('confirm');return fixture.decision;},
  bounds:()=>({width:1320,height:900}),isMaximized:()=>false,
  close:()=>{fixture.events.push('startup-close');},
-})}));
+};}}));
 vi.mock('../packages/core/src/network-proxy.js',()=>({createNetworkProxy:async()=>({url:'http://127.0.0.1:1',installFetch:()=>{},snapshot:()=>({}),close:async()=>{}})}));
 vi.mock('../packages/core/src/service.js',()=>({createDesktopService:service}));
 vi.mock('../apps/desktop/src/file-cleanup.js',()=>({desktopCleanupFiles:()=>({})}));
@@ -64,6 +65,7 @@ for(const available of [true,false])it.each([true,false])(`completes startup aft
  fixture.available=available;
  await import('../apps/desktop/src/main.js');
  await expect.poll(()=>fixture.events.includes('confirm')).toBe(true);
+ expect(fixture.events).toContain('startup-mode:choice');
  expect(fixture.events.filter(event=>event.startsWith('storage-'))).toEqual([]);
  expect(service).not.toHaveBeenCalled();expect(clientRead).not.toHaveBeenCalled();
  const credentialStatus=allowed?'正在读取已保存的凭据…':'正在准备本地工作台…';
@@ -104,6 +106,7 @@ for(const available of [true,false])it.each([true,false])(`completes startup aft
   expect(fixture.events.filter(event=>event.startsWith('storage-'))).toEqual([]);
  }
  expect(storage.decryptString).toHaveBeenCalledTimes(allowed&&available?1:0);
+ expect(await rememberedCredentialAccess(fixture.root)).toBe(allowed&&available);
  // Skipping must never touch the OS vault, including TokenFlow's own encrypted credentials.
  expect(await readFile(join(fixture.root,'secrets/cliproxy.bin'),'utf8')).toBe('fixture-local-key');
  expect(options.credentialWarnings!().some(w=>w.includes('已跳过所有安全存储'))).toBe(!allowed);
@@ -111,5 +114,33 @@ for(const available of [true,false])it.each([true,false])(`completes startup aft
  await expect.poll(()=>fixture.events.includes('startup-close')).toBe(true);
  before('workspace-loaded','workspace-show');before('workspace-show','workspace-focus');before('workspace-focus','startup-close');
  expect(fixture.events.filter(event=>event==='workspace-create')).toHaveLength(1);
+ expect(errors).not.toHaveBeenCalled();
+});
+
+it.each([true,false])('uses remembered consent without asking again and clears it if the vault is unavailable (%s)',async available=>{
+ fixture.available=available;await rememberCredentialAccess(fixture.root,true);
+ await import('../apps/desktop/src/main.js');
+ await expect.poll(()=>fixture.events.includes('status:正在读取已保存的凭据…')).toBe(true);
+ expect(fixture.events).toContain('startup-mode:loading');expect(fixture.events).not.toContain('confirm');
+ expect(storage.isEncryptionAvailable).not.toHaveBeenCalled();
+ fixture.paint();
+ await expect.poll(()=>fixture.events.includes('workspace-loading')).toBe(true);
+ expect(await rememberedCredentialAccess(fixture.root)).toBe(available);
+ expect(storage.decryptString).toHaveBeenCalledTimes(available?1:0);
+ fixture.openWorkspace();await expect.poll(()=>fixture.events.includes('startup-close')).toBe(true);
+ expect(errors).not.toHaveBeenCalled();
+});
+
+it('reuses the successful first launch choice and the same stored key on the second launch',async()=>{
+ fixture.available=true;
+ await import('../apps/desktop/src/main.js');await expect.poll(()=>fixture.events.includes('confirm')).toBe(true);
+ fixture.decide(true);fixture.paint();fixture.openWorkspace();
+ await expect.poll(()=>fixture.events.includes('startup-close')).toBe(true);
+ expect(await rememberedCredentialAccess(fixture.root)).toBe(true);
+ vi.resetModules();vi.clearAllMocks();fixture.events=[];
+ await import('../apps/desktop/src/main.js');
+ await expect.poll(()=>fixture.events.includes('startup-close')).toBe(true);
+ expect(fixture.events).not.toContain('confirm');expect(fixture.events).toContain('startup-mode:loading');
+ expect(service.mock.calls[0][0].localKey).toBe('fixture-local-key');
  expect(errors).not.toHaveBeenCalled();
 });

@@ -9,8 +9,9 @@ const {tmpdir}=require('node:os'),{join}=require('node:path'),assert=require('no
  const bundle=join(root,'startup-window.cjs');
  require('esbuild').buildSync({entryPoints:['apps/desktop/src/startup-window.ts'],bundle:true,platform:'node',format:'cjs',external:['electron'],outfile:bundle});
  await app.whenReady();
- for(const [width,height] of [[1320,900],[900,640]])for(const allow of [false,true]){
-  const startup=await require(bundle).createStartupWindow(join(process.cwd(),'apps/console/public/app-icon.png'));
+ for(const [width,height] of [[1320,900],[900,640]])for(const flow of ['skip','allow','remembered']){
+  const remembered=flow==='remembered',allow=flow!=='skip';
+  const startup=await require(bundle).createStartupWindow(join(process.cwd(),'apps/console/public/app-icon.png'),remembered?'loading':'choice');
   const win=BrowserWindow.getAllWindows()[0],ev=code=>win.webContents.executeJavaScript(code);
   win.setBounds({width,height});
   const frames=()=>ev('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
@@ -31,7 +32,8 @@ const {tmpdir}=require('node:os'),{join}=require('node:path'),assert=require('no
    const sample=()=>{window.startupFrames.push(window.startupSnapshot());if(window.collectStartup)requestAnimationFrame(sample);};sample();
   })()`);
   const snapshot=()=>ev('window.startupSnapshot()');
-  const initial=await snapshot();assert.equal(initial.brand.length,3);assert.equal(initial.rings,0);
+  const initial=await snapshot();assert.equal(initial.brand.length,3);assert.equal(initial.rings,remembered?1:0);
+  if(!remembered){
   const decision=startup.confirmCredentialAccess();
   assert.equal(startup.confirmCredentialAccess(),decision,'repeated confirmation must share the same pending choice');
   await ev("window.startupPhase='choice'");await frames();
@@ -41,14 +43,15 @@ const {tmpdir}=require('node:os'),{join}=require('node:path'),assert=require('no
   assert.equal(await ev('getComputedStyle(document.getElementById("skip")).textDecorationLine'),'none');
   assert.match(await ev('document.getElementById("access-hint").textContent'),/跳过本次所有安全存储访问/);
   const choice=await snapshot();assert.equal(choice.choice,true);assert.equal(choice.loading,false);assert.equal(choice.buttons,2);assert.equal(choice.descriptions,2);
-  await writeFile(`.tmp/startup-${width}-${allow?'allow':'skip'}-choice.png`,(await win.webContents.capturePage()).toPNG());
+  await writeFile(`.tmp/startup-${width}-${flow}-choice.png`,(await win.webContents.capturePage()).toPNG());
   for(const id of ['skip','allow']){
    win.webContents.sendInputEvent({type:'keyDown',keyCode:'Tab'});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Tab'});
    await frames();assert.equal(await ev('document.activeElement.id'),id);
   }
   assert.equal(await ev('getComputedStyle(document.getElementById("skip")).textDecorationLine'),'none');
-  await ev(`window.startupPhase='selected';document.getElementById('${allow?'allow':'skip'}').click()`);
+  await ev(`window.startupPhase='selected';document.getElementById('${flow}').click()`);
   assert.equal(await decision,allow);await frames();
+  }
   const selected=await snapshot();assert.equal(selected.choice,false);assert.equal(selected.loading,true);
   assert.equal(selected.buttons,0);assert.equal(selected.descriptions,0);assert.equal(selected.rings,1);assert.equal(selected.statuses,1);
   for(const [status,hint] of [['正在准备网络连接…',''],allow?['正在读取已保存的凭据…','系统可能请求钥匙串权限，用于解密已保存的凭据。']:['正在准备本地工作台…',''],['正在启动本地服务…',''],['正在打开工作台…','']]){
@@ -56,7 +59,7 @@ const {tmpdir}=require('node:os'),{join}=require('node:path'),assert=require('no
    assert.equal(await ev('document.getElementById("status").textContent'),status);
    assert.equal(await ev('document.getElementById("hint").textContent'),hint,'stale permission hints must be cleared');
   }
-  await writeFile(`.tmp/startup-${width}-${allow?'allow':'skip'}-loading.png`,(await win.webContents.capturePage()).toPNG());
+  await writeFile(`.tmp/startup-${width}-${flow}-loading.png`,(await win.webContents.capturePage()).toPNG());
   const escaped=startup.confirmCredentialAccess();await frames();
   win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
   assert.equal(await escaped,false);await frames();
@@ -73,7 +76,7 @@ const {tmpdir}=require('node:os'),{join}=require('node:path'),assert=require('no
    if(sample.choice)assert.equal(sample.busy,'false');if(sample.loading)assert.equal(sample.busy,'true');
   }
   assert.deepEqual(startup.bounds(),win.getBounds());startup.close();assert.ok(win.isDestroyed());
-  console.log('PASS',width,height,allow?'allow':'skip',samples.length,'frames: icon/name anchored, choice/loading exclusive, no overflow; Tab, Escape and all loading stages verified.');
+  console.log('PASS',width,height,flow,samples.length,'frames: icon/name anchored, choice/loading exclusive, no overflow; Tab, Escape and all loading stages verified.');
  }
  await rm(root,{recursive:true,force:true,maxRetries:3,retryDelay:100}).catch(()=>{});app.exit(0);
 })().catch(e=>{console.error(e);app.exit(1)});
