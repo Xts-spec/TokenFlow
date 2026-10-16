@@ -1,0 +1,26 @@
+{
+  "verifiedAt": "2026-10-16T13:31:55.961630+08:00",
+  "installedApp": "/Applications/TokenFlow.app",
+  "buildVersion": "10.15.26.6",
+  "codesignVerification": true,
+  "zipAndInstalledMatch": true,
+  "hashes": {
+    "app.asar": "36b614705a3c08a596fc218a12a5447b8ddaa6da7f1b97ee3f3e4e8e6a9493ef",
+    "sidecars/darwin-arm64/cliproxyapi": "f132986db1053b233876dd56eb677ae08256b84212fcf697fac43436bd5a7eba"
+  },
+  "stress": {
+    "workers": 16,
+    "requests": 48,
+    "passed": 48
+  },
+  "builtSidecarMatchesInstalled": true,
+  "codex": {
+    "client": "codex-cli 0.154.0",
+    "rounds": 3,
+    "tools": 10,
+    "searches": 2,
+    "defaultWebSearchConfiguration": true,
+    "passed": true
+  },
+  "httpService": 200
+}

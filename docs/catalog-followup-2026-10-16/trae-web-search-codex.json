@@ -1,0 +1,98 @@
+{
+  "client": "codex-cli 0.154.0",
+  "model": "trae/deepseek-v4.1-flash",
+  "endpoint": "installed-sidecar-responses",
+  "longContextCharacters": 66890,
+  "isolatedConfiguration": true,
+  "webSearchConfiguration": "Codex default (no override)",
+  "rounds": [
+    {
+      "round": 1,
+      "resumed": false,
+      "exitCode": 0,
+      "toolsCompleted": 3,
+      "clientSearches": 1,
+      "searches": [
+        {
+          "status": "completed",
+          "query": "OpenAI Codex",
+          "sources": [
+            {
+              "type": "url",
+              "url": "https://openai.com/zh-Hant-HK/codex/"
+            },
+            {
+              "type": "url",
+              "url": "https://aiwiki.ai/wiki/openai_codex"
+            },
+            {
+              "type": "url",
+              "url": "https://www.npmjs.com/package/@openai/codex?activeTab=dependents"
+            },
+            {
+              "type": "url",
+              "url": "https://www.datacamp.com/tutorial/openai-codex"
+            },
+            {
+              "type": "url",
+              "url": "https://the-decoder.com/openai-expands-codex-and-its-api-at-devday-with-security-scans-a-decisions-api-and-ultrafast/?cmpscreencustom=1"
+            }
+          ]
+        }
+      ],
+      "durationMs": 35432,
+      "passed": true,
+      "final": "TRAE_CODEX_ROUND1_OK"
+    },
+    {
+      "round": 2,
+      "resumed": true,
+      "exitCode": 0,
+      "toolsCompleted": 3,
+      "clientSearches": 1,
+      "searches": [
+        {
+          "status": "completed",
+          "query": "TRAE IDE documentation",
+          "sources": [
+            {
+              "type": "url",
+              "url": "https://docs.trae.ai/ide/set-up-trae"
+            },
+            {
+              "type": "url",
+              "url": "https://docs.trae.ai/ide/what-is-trae?_lang=zh"
+            },
+            {
+              "type": "url",
+              "url": "https://ykzm.cn/ja/tutorials/"
+            },
+            {
+              "type": "url",
+              "url": "https://docs.apiyi.com/en/scenarios/programming/trae"
+            },
+            {
+              "type": "url",
+              "url": "https://docs.trae.ai/ide/ide-settings-overview"
+            }
+          ]
+        }
+      ],
+      "durationMs": 33596,
+      "passed": true,
+      "final": "TRAE_CODEX_ROUND2_OK"
+    },
+    {
+      "round": 3,
+      "resumed": true,
+      "exitCode": 0,
+      "toolsCompleted": 4,
+      "clientSearches": 0,
+      "searches": [],
+      "durationMs": 24719,
+      "passed": true,
+      "final": "TRAE_CODEX_ROUND3_OK"
+    }
+  ],
+  "passed": true
+}

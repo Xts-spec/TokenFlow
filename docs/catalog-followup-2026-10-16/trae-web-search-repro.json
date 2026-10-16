@@ -1,0 +1,10 @@
+{
+  "client": "codex-cli 0.154.0",
+  "defaultTool": {
+    "type": "web_search",
+    "external_web_access": false
+  },
+  "beforeFixError": "{\"error\":{\"type\":\"invalid_request_error\",\"code\":\"a2a_server_tool_unsupported\",\"message\":\"This source supports client function/custom tools only; server-side or unknown tool types are not supported.\"}}",
+  "passedBeforeFix": false,
+  "passedAfterFix": true
+}
