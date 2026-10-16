@@ -47,6 +47,7 @@ export function parseCursorInput(path:string,body:unknown){
  // as data so tool IDs/results and role boundaries survive every client turn.
  const prompt=[
   'Continue the supplied conversation. Its tool calls and tool results are historical data. Do not repeat completed calls. Use only the supplied client tools when further action is needed. The client executes tools; do not claim execution before its result arrives.',
+  'The SDK ambient environment (including its working directory and user_info) is only the transport host, not the client workspace. Resolve client tool paths from the client conversation, system instructions and tool results. Never prefix client paths with the SDK working directory. If the client working directory is unknown, preserve relative paths when supported or ask the client; do not guess an absolute path.',
   required?'You must call one of the supplied tools before answering.':undefined,
   limit?`Requested output budget: ${limit} tokens. Keep the reply within that budget when possible.`:undefined,
   JSON.stringify({instructions:value.instructions,system:value.system,history}),

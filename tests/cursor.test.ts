@@ -231,3 +231,29 @@ it.each([{status:403,code:'plan_required'},{status:500,code:'feature_unavailable
  for(let i=0;i<2;i++)expect((await provider.response('responses',{model:'cursor/fixture-model',input:'hi'},new AbortController().signal)).status).toBe(200);
  expect(getUsage).toHaveBeenCalledTimes(2);expect(sdk.runUsage).toHaveBeenCalledTimes(1);
 });
+
+it('keeps SDK workspace paths out of client tools and allows the model to correct the path',async()=>{
+ const {root,secrets}=await setup();await secrets.set('cursor-account',JSON.stringify({apiKey:'fixture'}));
+ const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();let prompt='';
+ sdk.create.mockImplementation(async options=>({close:sdk.close,send:async(value:string)=>{
+  prompt=value;let finish!:(value:unknown)=>void;const pending=new Promise(resolve=>{finish=resolve;});
+  return {cancel:async()=>finish({status:'cancelled',usage:tokenUsage}),wait:()=>{
+   void options.local.customTools.client_0.execute({file_path:join(options.local.cwd,'first.txt')},{})
+    .catch(()=>options.local.customTools.client_0.execute({file_path:'/client/project/first.txt'},{}));return pending;
+  }};
+ }}));
+ const response=await provider.response('messages',{model:'cursor/fixture-model',system:'Working directory: /client/project',messages:[{role:'user',content:'Read first.txt'}],tools:[{name:'Read',input_schema:{type:'object',properties:{file_path:{type:'string'}}}}]},new AbortController().signal);
+ expect(response.status).toBe(200);expect((await response.json()).content[0].input.file_path).toBe('/client/project/first.txt');
+ expect(prompt).toContain('client conversation');expect(prompt).toContain('not the client workspace');
+});
+it('overlaps SDK disposal with official settlement but waits for both before releasing the request',async()=>{
+ const {root,secrets}=await setup();await secrets.set('cursor-account',JSON.stringify({apiKey:'fixture'}));const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();
+ let disposeStarted=false,disposeAtBilling=false,finishDispose!:()=>void;const disposed=new Promise<void>(r=>{finishDispose=r;});
+ sdk.create.mockResolvedValue({agentId:'agent-fixture',close:sdk.close,[Symbol.asyncDispose]:async()=>{disposeStarted=true;await disposed;},send:async()=>({wait:async()=>({status:'finished',result:'ok'}),cancel:sdk.cancel})});
+ sdk.runUsage.mockImplementation(async()=>{disposeAtBilling=disposeStarted;return tokenUsage;});
+ const request=provider.response('responses',{model:'cursor/fixture-model',input:'hi'},new AbortController().signal);
+ try{await expect.poll(()=>sdk.runUsage.mock.calls.length).toBe(1);expect(disposeStarted).toBe(true);
+  expect((await provider.response('responses',{model:'cursor/fixture-model',input:'next'},new AbortController().signal)).status).toBe(429);
+ }finally{finishDispose();}
+ expect((await request).status).toBe(200);expect(disposeAtBilling).toBe(true);expect(sdk.runUsage).toHaveBeenCalledOnce();
+});

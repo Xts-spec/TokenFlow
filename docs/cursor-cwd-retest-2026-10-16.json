@@ -1,0 +1,149 @@
+{
+  "date": "2026-10-16T08:51:48.920Z",
+  "account": "zhuang.kerwin@gmail.com",
+  "model": "cursor/grok-4.6",
+  "client": "Claude Code 2.1.301",
+  "protocol": "Messages",
+  "phases": [
+    {
+      "request": 1,
+      "rejectedTransportPaths": 0,
+      "createMs": 11893,
+      "sendMs": 19945,
+      "runMs": 11547,
+      "getUsageMs": 1660,
+      "Symbol(Symbol.asyncDispose)Ms": 1018
+    },
+    {
+      "request": 2,
+      "rejectedTransportPaths": 0,
+      "createMs": 12599,
+      "sendMs": 43,
+      "runMs": 11052,
+      "Symbol(Symbol.asyncDispose)Ms": 3805
+    },
+    {
+      "request": 3,
+      "rejectedTransportPaths": 0,
+      "createMs": 9584,
+      "sendMs": 43,
+      "runMs": 10221,
+      "Symbol(Symbol.asyncDispose)Ms": 525
+    },
+    {
+      "request": 4,
+      "rejectedTransportPaths": 0,
+      "createMs": 9652,
+      "sendMs": 49,
+      "runMs": 10143,
+      "Symbol(Symbol.asyncDispose)Ms": 516
+    }
+  ],
+  "requests": [
+    {
+      "path": "/v1/messages?beta=true",
+      "status": 200,
+      "ms": 47666
+    },
+    {
+      "path": "/v1/messages?beta=true",
+      "status": 200,
+      "ms": 27506
+    },
+    {
+      "path": "/v1/messages?beta=true",
+      "status": 200,
+      "ms": 21525
+    },
+    {
+      "path": "/v1/messages?beta=true",
+      "status": 200,
+      "ms": 20368
+    }
+  ],
+  "toolCalls": [
+    {
+      "name": "Read",
+      "input": {
+        "file_path": "first.txt"
+      }
+    },
+    {
+      "name": "Read",
+      "input": {
+        "file_path": "second.txt"
+      }
+    }
+  ],
+  "toolErrors": 0,
+  "turnMs": [
+    76028,
+    41928
+  ],
+  "userTurns": 2,
+  "exitCode": 0,
+  "passed": true,
+  "finalAnswer": "JADE-17\n\n1\tf4dad267b005\n\n1\t325d5a134f54",
+  "usage": {
+    "tokenLimit": 100000,
+    "usedTokens": 47904,
+    "unmeteredRequests": 0,
+    "pendingRequests": 0
+  },
+  "ledger": [
+    {
+      "day": "2026-10-16",
+      "target": "key",
+      "sourceId": "f1cfbae281fe14eac1bc4daf",
+      "model": "cursor/grok-4.6",
+      "requests": 4,
+      "failed": 0,
+      "unmeasured": 0,
+      "inputTokens": 46778,
+      "cachedTokens": 17408,
+      "cacheBaseTokens": 46778,
+      "outputTokens": 1126,
+      "durationMs": 117058,
+      "last": "2026-10-16T08:53:42.333Z",
+      "cacheWriteTokens": 0,
+      "toolCalls": 2,
+      "toolResults": 2,
+      "generationMs": 1,
+      "timedOutputTokens": 206
+    }
+  ],
+  "validation": {
+    "passed": true,
+    "receiptChecks": true,
+    "pathsCorrect": true,
+    "relativePaths": "Both paths are relative and resolve in the actual Claude CLI working directory. Initial harness required absolute paths unnecessarily; validation corrected from captured evidence without another paid run.",
+    "noTransportPathAttempts": true
+  },
+  "clientWarning": "[claude-code:unrecognized_model] {\"model\":\"cursor/grok-4.6\",\"query_source\":\"sdk\"}\n",
+  "baseline": {
+    "report": "cursor-dual-protocol-validation-2026-10-16.json",
+    "claudeRequests": 5,
+    "claudeToolCalls": 3,
+    "claudeUsedTokens": 72439,
+    "turnMs": [
+      71404,
+      51974
+    ],
+    "comparisonCaveat": "Single samples, SDK/network warmness differs; not a controlled latency benchmark."
+  },
+  "changes": [
+    "Explicitly distinguish the SDK ambient workspace from client conversation context; retain relative paths when supported.",
+    "Reject tool arguments referencing the transport run directory inside the SDK; do not pass them to the client.",
+    "Overlap disposal with exact-agent official usage lookup; await both before releasing the request slot."
+  ],
+  "checks": {
+    "unitTests": 39,
+    "typecheck": "passed",
+    "diffCheck": "passed"
+  },
+  "deployment": "Source fix tested in an isolated production gateway; installed application not rebuilt in this task.",
+  "sourceHashes": {
+    "packages/core/src/cursor.ts": "9d42f0768575d3d353a251984056466ed7d1ca5a79cafd59cefd082dc395b7c5",
+    "packages/core/src/cursor-protocol.ts": "4e8b20bf114d424b5108f1b8cfb889fb07df909df7b198fbc04215de6139f225"
+  }
+}

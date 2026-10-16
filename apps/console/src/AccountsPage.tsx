@@ -91,7 +91,7 @@ export function AccountsPage({local,usage,disabled,actions,notify}:{local:LocalA
  return <div className="tfPage tfAccountsPage">
   <div className="tfProviderTabs" role="tablist" aria-label="授权平台" onKeyDown={navigateTabs}>
    {providers.map(item=><button key={item.id} id={`provider-tab-${item.id}`} role="tab" aria-selected={provider?.id===item.id} aria-controls={`provider-panel-${item.id}`} tabIndex={provider?.id===item.id?0:-1} onClick={()=>chooseProvider(item.id)}>
-    <ProviderIcon provider={item.id}/><span>{item.label}</span>
+    <ProviderIcon provider={item.id} size={28}/><span>{item.label}</span>
    </button>)}
   </div>
   <LoginProgress local={local} disabled={disabled||switching} actions={actions}/>

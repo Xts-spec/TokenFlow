@@ -1,0 +1,269 @@
+{
+  "date": "2026-10-16T08:37:30.276Z",
+  "account": "zhuang.kerwin@gmail.com",
+  "model": "cursor/grok-4.6",
+  "scope": "isolated production gateway, existing credential, real CLIs",
+  "requests": [
+    {
+      "path": "/v1/analytics/codex/turn-costs",
+      "status": 404,
+      "ms": 1
+    },
+    {
+      "path": "/v1/responses",
+      "model": "cursor/grok-4.6",
+      "status": 200,
+      "ms": 31012
+    },
+    {
+      "path": "/v1/responses",
+      "model": "cursor/grok-4.6",
+      "status": 200,
+      "ms": 18062
+    },
+    {
+      "path": "/v1/analytics/codex/turn-costs",
+      "status": 404,
+      "ms": 1
+    },
+    {
+      "path": "/v1/responses",
+      "model": "cursor/grok-4.6",
+      "status": 200,
+      "ms": 16918
+    },
+    {
+      "path": "/v1/messages?beta=true",
+      "model": "cursor/grok-4.6",
+      "status": 200,
+      "ms": 20223
+    },
+    {
+      "path": "/v1/messages?beta=true",
+      "model": "cursor/grok-4.6",
+      "status": 200,
+      "ms": 24785
+    },
+    {
+      "path": "/v1/messages?beta=true",
+      "model": "cursor/grok-4.6",
+      "status": 200,
+      "ms": 25181
+    },
+    {
+      "path": "/v1/messages?beta=true",
+      "model": "cursor/grok-4.6",
+      "status": 200,
+      "ms": 27854
+    },
+    {
+      "path": "/v1/messages?beta=true",
+      "model": "cursor/grok-4.6",
+      "status": 200,
+      "ms": 24086
+    }
+  ],
+  "clients": [
+    {
+      "client": "Codex",
+      "protocol": "Responses",
+      "threadId": "01a143dc-3b92-7f83-9903-072bc1a3d1ba",
+      "userTurns": 2,
+      "passed": true,
+      "turnMs": [
+        61084,
+        61335
+      ],
+      "events": [
+        [
+          {
+            "type": "thread.started",
+            "thread_id": "01a143dc-3b92-7f83-9903-072bc1a3d1ba"
+          },
+          {
+            "type": "item.completed",
+            "item": {
+              "id": "item_0",
+              "type": "error",
+              "message": "Model metadata for `cursor/grok-4.6` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."
+            }
+          },
+          {
+            "type": "turn.started"
+          },
+          {
+            "type": "item.started",
+            "item": {
+              "id": "item_1",
+              "type": "command_execution",
+              "command": "/bin/zsh -lc 'cat first.txt'",
+              "aggregated_output": "",
+              "exit_code": null,
+              "status": "in_progress"
+            }
+          },
+          {
+            "type": "item.completed",
+            "item": {
+              "id": "item_1",
+              "type": "command_execution",
+              "command": "/bin/zsh -lc 'cat first.txt'",
+              "aggregated_output": "0588e7d1db1f37",
+              "exit_code": 0,
+              "status": "completed"
+            }
+          },
+          {
+            "type": "item.completed",
+            "item": {
+              "id": "item_2",
+              "type": "agent_message",
+              "text": "JADE-17\n\n0588e7d1db1f37"
+            }
+          },
+          {
+            "type": "turn.completed",
+            "usage": {
+              "input_tokens": 40732,
+              "cached_input_tokens": 15488,
+              "cache_write_input_tokens": 0,
+              "output_tokens": 300,
+              "reasoning_output_tokens": 0
+            }
+          }
+        ],
+        [
+          {
+            "type": "thread.started",
+            "thread_id": "01a143dc-3b92-7f83-9903-072bc1a3d1ba"
+          },
+          {
+            "type": "item.completed",
+            "item": {
+              "id": "item_0",
+              "type": "error",
+              "message": "Model metadata for `cursor/grok-4.6` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."
+            }
+          },
+          {
+            "type": "turn.started"
+          },
+          {
+            "type": "item.started",
+            "item": {
+              "id": "item_1",
+              "type": "command_execution",
+              "command": "/bin/zsh -lc 'cat second.txt'",
+              "aggregated_output": "",
+              "exit_code": null,
+              "status": "in_progress"
+            }
+          },
+          {
+            "type": "item.completed",
+            "item": {
+              "id": "item_1",
+              "type": "command_execution",
+              "command": "/bin/zsh -lc 'cat second.txt'",
+              "aggregated_output": "e726cd5f9f31f8",
+              "exit_code": 0,
+              "status": "completed"
+            }
+          },
+          {
+            "type": "item.completed",
+            "item": {
+              "id": "item_2",
+              "type": "agent_message",
+              "text": "JADE-17\n\n0588e7d1db1f37\n\ne726cd5f9f31f8"
+            }
+          },
+          {
+            "type": "turn.completed",
+            "usage": {
+              "input_tokens": 83283,
+              "cached_input_tokens": 32000,
+              "cache_write_input_tokens": 0,
+              "output_tokens": 776,
+              "reasoning_output_tokens": 0
+            }
+          }
+        ]
+      ]
+    },
+    {
+      "client": "Claude Code",
+      "protocol": "Messages",
+      "userTurns": 2,
+      "passed": true,
+      "turnMs": [
+        71404,
+        51974
+      ],
+      "toolCalls": [
+        {
+          "name": "Read",
+          "input": {
+            "file_path": "/Users/why/whyself/miniprogram/TokenFlow/.tmp/cursor-dual-protocol-1016/cursor-runs/request-djnqK5/first.txt"
+          }
+        },
+        {
+          "name": "Read",
+          "input": {
+            "file_path": "/Users/why/whyself/miniprogram/TokenFlow/.tmp/cursor-dual-protocol-1016/fixture/first.txt"
+          }
+        },
+        {
+          "name": "Read",
+          "input": {
+            "file_path": "/Users/why/whyself/miniprogram/TokenFlow/.tmp/cursor-dual-protocol-1016/fixture/second.txt"
+          }
+        }
+      ],
+      "result": "JADE-17  \n1\t0588e7d1db1f37  \n1\te726cd5f9f31f8"
+    }
+  ],
+  "usage": {
+    "tokenLimit": 180000,
+    "usedTokens": 156498,
+    "unmeteredRequests": 0,
+    "pendingRequests": 0
+  },
+  "clientVersions": {
+    "Codex": "0.154.0",
+    "ClaudeCode": "2.1.301"
+  },
+  "gatewayLedger": {
+    "day": "2026-10-16",
+    "target": "key",
+    "sourceId": "f1cfbae281fe14eac1bc4daf",
+    "model": "cursor/grok-4.6",
+    "requests": 9,
+    "failed": 0,
+    "unmeasured": 0,
+    "inputTokens": 154306,
+    "cachedTokens": 59520,
+    "cacheBaseTokens": 154306,
+    "outputTokens": 2192,
+    "durationMs": 214175,
+    "last": "2026-10-16T08:41:29.606Z",
+    "cacheWriteTokens": 0,
+    "toolCalls": 5,
+    "toolResults": 5,
+    "generationMs": 3,
+    "timedOutputTokens": 900
+  },
+  "validation": {
+    "codex": "Two real CLI user turns using exec/resume; two successful shell reads; second answer retains prior marker and receipt.",
+    "claude": "Two user turns in one real CLI process; three Read calls including a recovered incorrect-path read; second answer retains prior marker and receipt.",
+    "attribution": "Only the existing zhuang.kerwin@gmail.com credential was loaded; the finite test key pins sourceId f1cfbae281fe14eac1bc4daf and cursor/grok-4.6.",
+    "configuration": "Temporary test gateway and per-process CLI routing. Existing global Codex default was not switched; Claude model menu includes this account/model, but its prior default was preserved."
+  },
+  "limitations": [
+    "Claude initially used SDK temporary cwd for first.txt; Read failed and model recovered by using client fixture cwd. SDK/client cwd ambiguity remains.",
+    "Codex emitted fallback model-metadata warning; model generation and tools succeeded.",
+    "Codex auxiliary analytics turn-costs endpoint returned 404; this is not a model request.",
+    "Fastify onResponse missed one completed Responses stream; the gateway ledger and Codex usage confirm four Responses and five Messages model requests.",
+    "No image, server-side search, strict structured-output, or concurrency validation in this run."
+  ]
+}

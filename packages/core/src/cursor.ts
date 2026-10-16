@@ -107,6 +107,12 @@ class CursorAccount {
   this.generating=true;let temp:string|undefined;let agent:Awaited<ReturnType<(typeof import('@cursor/sdk'))['Agent']['create']>>|undefined;
   const cancel=()=>{void this.active?.cancel().catch(()=>{});};signal.addEventListener('abort',cancel,{once:true});
   const releases:Array<()=>void>=[];
+  let cleanupTask:Promise<void>|undefined;
+  const cleanup=()=>cleanupTask??=(async()=>{
+   if(agent){if(agent[Symbol.asyncDispose])await agent[Symbol.asyncDispose]().catch(()=>{});else await agent.close();}
+   if(temp)await rm(temp,{recursive:true,force:true});
+  })().catch(()=>{});
+
   try{
    const {Agent,JsonlLocalAgentStore}=await this.sdk();await mkdir(join(this.root,'cursor-runs'),{recursive:true,mode:0o700});temp=await mkdtemp(join(this.root,'cursor-runs','request-'));
    const model=this.models.find(m=>`cursor/${m.id}`===input.model)!;
@@ -116,7 +122,10 @@ class CursorAccount {
    const calls:CursorToolCall[]=[];let handoff!:()=>void;const toolRequested=new Promise<'tool'>(resolve=>{handoff=()=>resolve('tool');});
    const customTools:Record<string,SDKCustomTool>=Object.fromEntries(input.tools.map((tool,index)=>[`client_${index}`,{
     description:`Client tool: ${tool.namespace?`${tool.namespace}.`:""}${tool.name}. ${tool.description??''}`,inputSchema:tool.parameters,
-    execute:(args:Record<string,import('@cursor/sdk').SDKJsonValue>)=>{
+    execute:async(args:Record<string,import('@cursor/sdk').SDKJsonValue>)=>{
+     // The SDK publishes its own cwd as ambient context. It must never escape
+     // into tools executed on a different client host (including older turns).
+     if(containsTransportPath(args,join(this.root,'cursor-runs')))throw new Error('This path belongs to the SDK transport host, not the client workspace. Use the working directory from the client conversation; preserve relative paths if supported, otherwise ask for the client path.');
      if(tool.custom&&typeof args.input!=='string')throw new Error('Custom tool requires text input');
      calls.push({id:`call_${randomUUID().replaceAll('-','')}`,name:tool.name,namespace:tool.namespace,arguments:JSON.stringify(args),custom:tool.custom});handoff();
      // Hold the callback until cancellation stops the SDK loop. The caller, not
@@ -144,14 +153,18 @@ class CursorAccount {
     try{const billed=await bounded(agent.getUsage(),5000);this.sdkBillingUnavailable=undefined;if(billed.runs.length)tokens=billed.usage;}
     catch(error){const unavailable=z.object({status:z.literal(403),code:z.literal('feature_unavailable')}).safeParse(error);if(unavailable.success)this.sdkBillingUnavailable={key:credential.apiKey,until:Date.now()+5*60000};}
    }
-   if(!tokens&&agent.agentId){try{tokens=await this.usageClient(credential).runUsage(agent.agentId,startedAt,signal);}catch{/* Preserve the budget guard if official settlement is unavailable. */}}
+   const agentId=agent.agentId;
+   // The run has stopped and SDK billing has completed. Disposal no longer
+   // needs to delay the independent official ledger request.
+   void cleanup();
+   if(!tokens&&agentId){try{tokens=await this.usageClient(credential).runUsage(agentId,startedAt,signal);}catch{/* Preserve the budget guard if official settlement is unavailable. */}}
    if(signal.aborted||this.closed||this.credential!==credential)return errorResponse('请求已取消',499);
    const usage=tokens?{input_tokens:tokens.inputTokens+tokens.cacheReadTokens+tokens.cacheWriteTokens,output_tokens:tokens.outputTokens,cached_tokens:tokens.cacheReadTokens,cache_write_tokens:tokens.cacheWriteTokens}:undefined;
    const response=cursorResponse(path,input.model,calls.length?'':result.result??'',usage,input.stream,calls);
    if(input.limit)response.headers.set('X-Token-Flow-Output-Limit','advisory; Cursor SDK does not expose a hard output token limit');
    return response;
   }catch(error){return errorResponse(cursorFailure(error).message,signal.aborted?499:502);}
-  finally{signal.removeEventListener('abort',cancel);for(const release of releases)release();if(agent){if(agent[Symbol.asyncDispose])await agent[Symbol.asyncDispose]().catch(()=>{});else agent.close();}this.active=undefined;this.generating=false;if(temp)await rm(temp,{recursive:true,force:true});}
+  finally{signal.removeEventListener('abort',cancel);for(const release of releases)release();await cleanup();this.active=undefined;this.generating=false;}
  }
 }
 /** Per-account SDK state stays isolated; persisted legacy single-account records
@@ -209,4 +222,10 @@ function cursorFailure(error:unknown){
  const blocked=auth||e.status===403||e.code==='plan_required';
  const message=e.code==='plan_required'?'Cursor 官方返回 plan_required：当前账号套餐不支持此 API，请在官方确认 Pro 或团队套餐后刷新。':auth?'Cursor 授权已失效，请重新连接账号。':e.status===403?'Cursor API 权限不足，请在官方账号或团队设置中确认权限。':e.status===429||e.name==='RateLimitError'?'Cursor 请求受限，请检查官方额度或稍后重试。':e.code==='deadline_exceeded'?'Cursor 连接超时，请检查网络后刷新。':e.name==='TypeError'?'Cursor 网络连接失败，请检查网络后刷新。':process.env.CURSOR_BACKEND_URL?'检测到 CURSOR_BACKEND_URL 覆盖，请移除后重启；SDK 授权与模型目录使用不同的官方地址。':'Cursor 服务或模型目录暂不可用，请刷新重试。';
  return {auth,blocked,message};
+}
+
+function containsTransportPath(value:unknown,root:string):boolean {
+ if(typeof value==='string')return value.replaceAll('\\','/').includes(root.replaceAll('\\','/'));
+ if(Array.isArray(value))return value.some(item=>containsTransportPath(item,root));
+ return !!value&&typeof value==='object'&&Object.values(value).some(item=>containsTransportPath(item,root));
 }
