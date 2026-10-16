@@ -15,7 +15,7 @@ import {createStartupWindow} from './startup-window.js';
 import {guardCredentialAccess} from './credential-access.js';
 import {claudeKeychain} from '../../../packages/core/src/claude-accounts.js';
 import {agentPaths} from '../../../packages/core/src/agent-connections.js';
-import {workspaceWindowOptions} from './window-options.js';
+import {workspaceWindowOptions,windowsTitleBar} from './window-options.js';
 
 const here=dirname(fileURLToPath(import.meta.url));
 if(process.argv.includes('--tokenflow-qoder-crypto')){void runQoderCrypto();}
@@ -36,6 +36,7 @@ async function start() {
   let closing=false;
   let tray:Tray|undefined;
   await app.whenReady();
+  if(process.platform==='win32')Menu.setApplicationMenu(null);
   const icon=join(here,'console','app-icon.png');
   const startup=await createStartupWindow(icon);
   await startup.update('正在准备网络连接…');
@@ -88,6 +89,11 @@ async function start() {
     if(!window || event.sender!==window.webContents || event.senderFrame!==window.webContents.mainFrame || new URL(event.senderFrame.url).origin!==address)throw new Error('Clipboard request denied');
     if(typeof text!=='string' || text.length>1_000_000)throw new Error('Invalid clipboard text');
     clipboard.writeText(text);
+  });
+  ipcMain.handle('window:set-theme',(event,theme:unknown)=>{
+    if(!window||event.sender!==window.webContents||event.senderFrame!==window.webContents.mainFrame||new URL(event.senderFrame.url).origin!==address)throw new Error('Window theme request denied');
+    if(theme!=='dark'&&theme!=='light')throw new Error('Invalid window theme');
+    if(process.platform==='win32')window.setTitleBarOverlay(windowsTitleBar(theme));
   });
   await session.defaultSession.cookies.set({url:address,name:'agent_session',value:token,httpOnly:true,sameSite:'strict',path:'/'});
   const show=async()=>{

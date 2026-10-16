@@ -42,7 +42,10 @@ function App(){
  const [pageSelections,setPageSelections]=useState<Partial<Record<View,MaintenanceContext>>>({});
  const setPageContext=useCallback((context:MaintenanceContext)=>setPageSelections(current=>({...current,[context.page]:context})),[]);
  const [theme,setTheme]=useState<'dark'|'light'>(()=>{try{return localStorage.getItem('token-flow.appearance')==='light'?'light':'dark';}catch{return 'dark';}});
- useEffect(()=>{document.documentElement.dataset.theme=theme;document.querySelector('meta[name=theme-color]')?.setAttribute('content',theme==='dark'?'#161719':'#f7f9fc');try{localStorage.setItem('token-flow.appearance',theme);}catch{}},[theme]);
+ useEffect(()=>{document.documentElement.dataset.theme=theme;document.querySelector('meta[name=theme-color]')?.setAttribute('content',theme==='dark'?'#161719':'#f7f9fc');try{localStorage.setItem('token-flow.appearance',theme);}catch{}
+  const desktop=(window as Window&{desktop?:{platform:string;setTheme?:(theme:'dark'|'light')=>Promise<void>}}).desktop;
+  document.documentElement.dataset.platform=desktop?.platform??'browser';void desktop?.setTheme?.(theme).catch(()=>{});
+ },[theme]);
  const [local,setLocal]=useState<LocalAgentSnapshot>(empty);
  const [localLoaded,setLocalLoaded]=useState(false),[localError,setLocalError]=useState('');
  const [notice,setNotice]=useState<Notice>();
@@ -114,8 +117,8 @@ function App(){
  const platform=(window as Window&{desktop?:{platform:string}}).desktop?.platform;
  const navButton=([id,label,icon]:[View,string,IconName])=><button key={id} className={view===id?'on':''} aria-current={view===id?'page':undefined} onClick={()=>setView(id)}><Icon name={icon} size={icon==='key'?18:16}/>{label}</button>;
 
- return <div className={`tf ${platform==='darwin'?'nativeMac':''}`}>
-  {platform==='darwin'&&<div className="tfTitlebar" aria-hidden="true"/>}
+ return <div className={`tf ${platform==='darwin'?'nativeMac':platform==='win32'?'nativeWindows':''}`}>
+  {(platform==='darwin'||platform==='win32')&&<div className="tfTitlebar" aria-hidden="true"/>}
   <aside className="tfSide">
    <div className="tfBrand"><img src="/logo.svg" alt="" width="24" height="24"/>TokenFlow<i className={`dot ${local.state==='running'?'ok':local.state==='failed'?'bad':''}`} title={gatewayText[local.state]??'网关运行中'}/></div>
    <nav aria-label="主导航">
