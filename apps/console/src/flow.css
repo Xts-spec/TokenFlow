@@ -783,9 +783,6 @@ to{transform:translate(0)}
 .tfAgentColumns .tfActions{margin-left:auto}
 @media(max-width:950px){.tfAgentColumns.hasLogin{grid-template-columns:minmax(0,1fr)}
 }
-.tfAgentColumns.hasLogin{transition:grid-template-columns .18s ease}
-.tfAgentColumns.hasLogin.active-accounts{grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)}
-.tfAgentColumns.hasLogin.active-models{grid-template-columns:minmax(0,1fr) minmax(0,1.3fr)}
 .tfAgentColumns>.tfAgentSection{transition:opacity .18s ease,filter .18s ease}
 .tfAgentColumns.hasLogin.active-accounts>.tfAgentSection:last-child,.tfAgentColumns.hasLogin.active-models>.tfAgentSection:first-child{opacity:.6;filter:grayscale(.65)}
 .tfAgentColumns .tfRowText strong,.tfAgentColumns .tfRowText small{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
@@ -927,7 +924,7 @@ to{transform:translate(0)}
 .tfGatewayTitle .tfAddButton{min-height:28px;padding:4px 8px;font-size:11px;border:0;background:transparent}
 
 /* Fixed proportions keep the original lists steady while moving the pointer. */
-.tfAgentColumns.hasLogin,.tfAgentColumns.hasLogin.active-accounts,.tfAgentColumns.hasLogin.active-models,.tfAccountColumns,.tfAccountColumns.active-quota,.tfAccountColumns.active-models{grid-template-columns:minmax(0,1fr) minmax(0,1.8fr);transition:none}
+.tfAccountColumns,.tfAccountColumns.active-quota,.tfAccountColumns.active-models{grid-template-columns:minmax(0,1fr) minmax(0,1.8fr);transition:none}
 .tfAgentColumns .tfRowText strong,.tfAccountColumns .tfCatalogModelName strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;max-width:40ch}
 .tfAgentColumns .tfRowText small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
 .tfAccountColumns .tfCatalogModelName{overflow:hidden;min-width:0;max-height:none}
