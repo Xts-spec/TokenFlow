@@ -14,7 +14,7 @@ it('backs up exact original config, preserves providers and unrelated settings, 
  const {root,paths,connections}=await setup();const original='# original comment\nmodel = "old"\nprofile = "work"\n[profiles.work]\nmodel = "profile-old"\n[model_providers.original]\nbase_url = "https://example.test"\n';await writeFile(paths.codex,original);
  const status=(await connections.status())[0];const record=await connections.apply({target:'codex',revision:status.revision,origin:'http://127.0.0.1:9527',model:'codex/model',sourceId:'source',keyId:randomUUID(),key:'fixture-key'});
  const text=await readFile(paths.codex,'utf8');const parsed=parse(text);expect(parsed.profile).toBe('work');expect(parsed.model_provider).toBe('token_flow');expect(parsed.model_providers).toHaveProperty('original');expect(parsed.profiles).toHaveProperty('work.model','codex/model');
- expect((await stat(paths.codex)).mode&0o777).toBe(0o600);expect(JSON.stringify(await connections.status())).not.toContain('fixture-key');
+ if(process.platform!=='win32')expect((await stat(paths.codex)).mode&0o777).toBe(0o600);expect(JSON.stringify(await connections.status())).not.toContain('fixture-key');
  await new AgentConnections(root,paths,async()=>[]).restore(record.id);expect(await readFile(paths.codex,'utf8')).toBe(original);
 });
 

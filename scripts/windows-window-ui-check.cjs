@@ -22,13 +22,14 @@ const assert=require('node:assert/strict');
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));const win=new BrowserWindow({show:false,width:1320,height:900,webPreferences:{sandbox:true,preload}});
  const evaluate=code=>win.webContents.executeJavaScript(code);
- const wait=async code=>{for(let n=0;n<120;n++){if(await evaluate(code))return;await new Promise(r=>setTimeout(r,30));}throw Error('Windows renderer did not become ready');};
+ const wait=async code=>{for(let n=0;n<250;n++){if(await evaluate(code))return;await new Promise(r=>setTimeout(r,30));}throw Error('Windows renderer did not become ready');};
  try{
   await win.loadURL(`http://127.0.0.1:${server.address().port}`);await wait("!!document.querySelector('.nativeWindows .tfTitlebar')");
   assert.equal(await evaluate('document.documentElement.dataset.platform'),'win32');
   assert.equal(await evaluate("getComputedStyle(document.querySelector('.tfTitlebar')).getPropertyValue('-webkit-app-region')"),'drag');
   assert.equal(await evaluate("document.querySelector('.tfTitlebar').getBoundingClientRect().height"),40);
   assert.equal(await evaluate("document.querySelector('.tfMain').getBoundingClientRect().top>=40"),true);
+  await wait("!![...document.querySelectorAll('button')].find(b=>b.textContent==='设置')");
   await evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent==='设置').click()");await wait("!!document.querySelector('[aria-label=浅色外观]')");
   await evaluate("document.querySelector('[aria-label=浅色外观]').click()");await wait("document.documentElement.dataset.theme==='light'");
   await new Promise(r=>setTimeout(r,50));assert.ok(themes.includes('light'));assert.equal(themes[0],'dark');

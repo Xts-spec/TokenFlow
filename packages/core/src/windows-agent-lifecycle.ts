@@ -139,6 +139,54 @@ $checked+= $p
 if($p.HasExited -or $p.StartTime.ToUniversalTime().Ticks.ToString() -cne $e.started -or ![String]::Equals($p.Path,$e.path,[StringComparison]::OrdinalIgnoreCase)){throw 'Process changed'}
 }
 foreach($p in $checked){if(!$p.HasExited -and $p.MainWindowHandle -ne 0){[void]$p.CloseMainWindow()}}
+$alive=@($checked|Where-Object{!$_.HasExited})
+if($alive.Count -gt 0){
+if(-not ([System.Management.Automation.PSTypeName]'TokenFlowCloser').Type){
+Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public class TokenFlowCloser {
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(EnumWindowsProc proc, IntPtr lp);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr OpenDesktop(string lpszDesktop, uint dwFlags, bool fInherit, uint dwDesiredAccess);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool CloseDesktop(IntPtr hDesktop);
+    [DllImport("user32.dll")]
+    public static extern bool EnumDesktopWindows(IntPtr hDesktop, EnumWindowsProc proc, IntPtr lp);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+    [DllImport("user32.dll")]
+    public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wp, IntPtr lp, uint flags, uint timeout, out IntPtr res);
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lp);
+    public static void Close(int[] pids) {
+        var set = new HashSet<int>(pids);
+        EnumWindowsProc proc = (hWnd, lp) => {
+            uint pid;
+            GetWindowThreadProcessId(hWnd, out pid);
+            if (set.Contains((int)pid)) {
+                IntPtr res;
+                SendMessageTimeout(hWnd, 0x0010, IntPtr.Zero, IntPtr.Zero, 2, 1000, out res);
+                SendMessageTimeout(hWnd, 0x0011, IntPtr.Zero, IntPtr.Zero, 2, 1000, out res);
+                SendMessageTimeout(hWnd, 0x0016, (IntPtr)1, IntPtr.Zero, 2, 1000, out res);
+            }
+            return true;
+        };
+        try { EnumWindows(proc, IntPtr.Zero); } catch {}
+        try {
+            IntPtr hDesk = OpenDesktop("Default", 0, false, 0x0040 | 0x0001);
+            if (hDesk != IntPtr.Zero) {
+                EnumDesktopWindows(hDesk, proc, IntPtr.Zero);
+                CloseDesktop(hDesk);
+            }
+        } catch {}
+    }
+}
+'@
+}
+[TokenFlowCloser]::Close(@($alive|ForEach-Object{$_.Id}))
+}
 } finally {foreach($p in $checked){$p.Dispose()}}`);}catch{throw failure('进程身份已变化或无法请求退出，请手动退出目标 Agent 后重试。未强制结束进程。');}
    for(let tick=0;tick<40;tick++){if(!(await this.processes(target)).length)return;await this.wait();}
    throw failure(`${apps[target].name} 尚未退出，请处理保存提示，或从系统托盘退出后重试。未强制结束进程。`);
