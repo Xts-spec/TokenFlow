@@ -26,20 +26,24 @@ async function powershell(run:WindowsRun,script:string){return (await run('power
 
 /** Read only the bounded package.json entry from Electron's ASAR; never execute app code. */
 async function electronPackageMetadata(archive:string):Promise<{name?:string;productName?:string}>{
- const file=await open(archive,'r');
+ const wasNoAsar=(process as {noAsar?:boolean}).noAsar;
+ (process as {noAsar?:boolean}).noAsar=true;
  try{
-  const size=(await file.stat()).size;
-  const read=async(length:number,position:number)=>{if(position+length>size)throw Error('Truncated ASAR');const buffer=Buffer.alloc(length);if((await file.read(buffer,0,length,position)).bytesRead!==length)throw Error('Truncated ASAR');return buffer;};
-  const prefix=await read(8,0),headerSize=prefix.readUInt32LE(4);
-  if(prefix.readUInt32LE(0)!==4||headerSize<8||headerSize>16*1024*1024)throw Error('Invalid ASAR header');
-  const header=await read(headerSize,8),jsonSize=header.readUInt32LE(4);
-  if(jsonSize>headerSize-8)throw Error('Invalid ASAR header');
-  const entry=JSON.parse(header.subarray(8,8+jsonSize).toString()).files?.['package.json'];
-  if(!entry||entry.link||entry.unpacked||!Number.isSafeInteger(entry.size)||entry.size<=0||entry.size>1024*1024||!/^\d+$/.test(entry.offset))throw Error('Invalid ASAR package');
-  const offset=Number(entry.offset);if(!Number.isSafeInteger(offset))throw Error('Invalid ASAR offset');
-  const data=JSON.parse((await read(entry.size,8+headerSize+offset)).toString());
-  return {name:typeof data.name==='string'?data.name:undefined,productName:typeof data.productName==='string'?data.productName:undefined};
- }finally{await file.close();}
+  const file=await open(archive,'r');
+  try{
+   const size=(await file.stat()).size;
+   const read=async(length:number,position:number)=>{if(position+length>size)throw Error('Truncated ASAR');const buffer=Buffer.alloc(length);if((await file.read(buffer,0,length,position)).bytesRead!==length)throw Error('Truncated ASAR');return buffer;};
+   const prefix=await read(8,0),headerSize=prefix.readUInt32LE(4);
+   if(prefix.readUInt32LE(0)!==4||headerSize<8||headerSize>16*1024*1024)throw Error('Invalid ASAR header');
+   const header=await read(headerSize,8),jsonSize=header.readUInt32LE(4);
+   if(jsonSize>headerSize-8)throw Error('Invalid ASAR header');
+   const entry=JSON.parse(header.subarray(8,8+jsonSize).toString()).files?.['package.json'];
+   if(!entry||entry.link||entry.unpacked||!Number.isSafeInteger(entry.size)||entry.size<=0||entry.size>1024*1024||!/^\d+$/.test(entry.offset))throw Error('Invalid ASAR package');
+   const offset=Number(entry.offset);if(!Number.isSafeInteger(offset))throw Error('Invalid ASAR offset');
+   const data=JSON.parse((await read(entry.size,8+headerSize+offset)).toString());
+   return {name:typeof data.name==='string'?data.name:undefined,productName:typeof data.productName==='string'?data.productName:undefined};
+  }finally{await file.close();}
+ }finally{(process as {noAsar?:boolean}).noAsar=wasNoAsar;}
 }
 export async function electronPackageName(archive:string){return (await electronPackageMetadata(archive)).name;}
 export async function electronDesktopIdentity(archive:string){
@@ -64,8 +68,9 @@ export function codexCliWindowsIdentity(path:string):string|undefined{
 export async function windowsAppIdentity(path:string):Promise<string|undefined>{
  if(!win32.isAbsolute(path)||!path.toLowerCase().endsWith('.exe'))return;
  try{const identity=await electronDesktopIdentity(win32.join(win32.dirname(path),'resources','app.asar'));if(identity)return identity;}catch{}
- if(win32.basename(path).toLowerCase()==='qoder.exe')try{return await qoderIdeWindowsIdentity(win32.join(win32.dirname(path),'resources','app'));}catch{}
- if(win32.basename(path).toLowerCase()==='codex.exe')try{return codexCliWindowsIdentity(path);}catch{}
+ const base=win32.basename(path).toLowerCase();
+ if(base==='qoder.exe')try{return await qoderIdeWindowsIdentity(win32.join(win32.dirname(path),'resources','app'));}catch{}
+ if(base==='codex.exe'||base==='codexcli.exe')try{return codexCliWindowsIdentity(path);}catch{}
 }
 
 /** Unknown processes block automation. A known different app (for example Qoder IDE) is ignored. */

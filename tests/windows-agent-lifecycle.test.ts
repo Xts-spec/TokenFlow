@@ -170,3 +170,14 @@ it('identifies official OpenAI Codex CLI binaries and ignores them during deskto
  const payload=JSON.parse(Buffer.from(close.match(/FromBase64String\('([^']+)'\)/)![1],'base64').toString());
  expect(payload.map((p:WindowsProcess)=>p.pid)).toEqual([100]);
 });
+
+it('reads ASAR metadata with process.noAsar=true even when running inside Electron',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'asar-noasar-'));dirs.push(dir);
+ const asarPath=join(dir,'app.asar');
+ const contentDir=join(dir,'src');
+ await mkdir(contentDir,{recursive:true});
+ await writeFile(join(contentDir,'package.json'),JSON.stringify({name:'test-app',productName:'TestApp'}));
+ await createPackage(contentDir,asarPath);
+ (process as {noAsar?:boolean}).noAsar=false;
+ expect(await electronPackageName(asarPath)).toBe('test-app');
+});
