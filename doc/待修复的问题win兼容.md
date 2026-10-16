@@ -385,6 +385,8 @@ node scripts/check-file-cleanup-native.mjs
 
 ### 5.8 最终 Windows 包交付（P0）
 
+用量对账补充 U17（Windows 未实测）：在开发测试环境使用实际已安装官方 CLI 运行 `scripts/codex-official-usage-check.ts` 的只读检查，记录账号是否匹配、日桶原始数值与采集时刻；不登录新账号、不创建模型请求、不输出凭据。对照本机审计的同账号／其他账号／未确认分区和半开日期窗口，标出尚未结束的时区日窗；空日桶与 0 不混淆。macOS 已观察到个人主页 3.5 亿与官方 CLI 263,551,960 不同，不能拿任何一方作为 Windows 的固定预期，也不能为了匹配而改本机 Token。新版主页接口若返回权限错误就记录阻塞，不绕过权限。
+
 | ID | 前置与操作 | 预期／核对点 |
 | --- | --- | --- |
 | B01 | 干净环境解压最终包，核对 `.exe`、sidecar、Cursor／WorkBuddy SDK、许可证 | 只有目标 Windows 架构的原生依赖；没有 Mac 二进制、开发配置或真实凭据混入 |
