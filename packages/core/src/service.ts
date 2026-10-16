@@ -218,7 +218,7 @@ export async function createDesktopService(options:ServiceOptions) {
   const localUsage=new LocalUsageIndex(root,connections.paths,()=>{const address=app.server.address();return [proxy.port,...(address&&typeof address==='object'?[address.port]:[])];});
   // A managed Agent uses the model selected here even if an existing conversation retains an older model ID.
   // Bind by saved connection key, never by its editable display name or by an arbitrary single-model key.
-  const fixedRoutes=new Map((await connections.status()).flatMap(t=>t.connection?.state==='applied'?[[t.connection.keyId,{target:t.id,sourceId:t.connection.sourceId,model:t.connection.model,selections:t.connection.selections}] as const]:[]));
+  const fixedRoutes=new Map<string,{target:Target;sourceId:string;model:string;selections?:ModelSelection[];modelAliases?:Record<string,string>}>((await connections.status()).flatMap(t=>t.connection?.state==='applied'?[[t.connection.keyId,{target:t.id,sourceId:t.connection.sourceId,model:t.connection.model,selections:t.connection.selections,modelAliases:t.connection.modelAliases}] as const]:[]));
   const desktopRoute=await claudeDesktop.route().catch(()=>null);if(desktopRoute?.keyId&&desktopRoute.selections[0])fixedRoutes.set(desktopRoute.keyId,{target:'claude',...desktopRoute.selections[0],selections:desktopRoute.selections});
   const codexContext=new CodexContext(root,connections.paths.codex,gatewayContext);
   const codexContextScopes=async()=>((await connections.status()).find(t=>t.id==='codex')?.backups??[]).flatMap(record=>(record.selections??[record]).map(item=>({owner:record.keyId,source:item.sourceId,model:item.model})));
@@ -400,7 +400,7 @@ export async function createDesktopService(options:ServiceOptions) {
     try{
       const local=await localSnapshot(),catalog=local.models;
       const record=await connections.apply({...input,modelLabels:Object.fromEntries(selections.map(item=>[item.model,modelLabel(catalog,item.model,local.apiSources)])),modelImages:Object.fromEntries(selections.map(item=>[item.model,catalog.find(model=>model.id===item.model)?.capabilities?.images===true])),keyId:created.key.id,key:created.apiKey,origin});
-      fixedRoutes.set(record.keyId,{target:record.target,sourceId:record.sourceId,model:record.model,selections:record.selections});
+      fixedRoutes.set(record.keyId,{target:record.target,sourceId:record.sourceId,model:record.model,selections:record.selections,modelAliases:record.modelAliases});
       if(input.replaceId){const previous=(await connections.status()).flatMap(t=>t.backups).find(r=>r.id===input.replaceId);if(previous){fixedRoutes.delete(previous.keyId);if(gatewayKeys.list().some(k=>k.id===previous.keyId))await gatewayKeys.remove(previous.keyId);}}
       if(input.target==='codex')await codexThreads.migrate(input.model,selections.map(item=>item.model));
       const verification=await connections.review(record.id);if(!verification.checks.every(c=>c.ok))throw new Error('写入后的配置复查未通过，接入记录和备份已保留，请生成维修方案。');return {...record,verification};
@@ -957,6 +957,11 @@ export async function createDesktopService(options:ServiceOptions) {
     const client=gatewayKeys.authenticate(bearer);
     if(bearer && !same(bearer,options.token) && !client) return reply.code(401).send({error:{message:'Invalid or disabled API key',type:'authentication_error'}});
     const fixed=client&&fixedRoutes.get(client.id);
+    if(path!=='models'&&fixed?.target==='workbuddy'&&fixed.modelAliases){
+      const requested=z.object({model:z.string().min(1).max(300)}).parse(req.body).model;
+      const alias=requested.replace(/^custom-local:/,'');
+      if(Object.hasOwn(fixed.modelAliases,alias))req.body={...(req.body as Record<string,unknown>),model:fixed.modelAliases[alias]};
+    }
     if(path!=='models'&&fixed&&!fixed.selections&&client.sourceId===fixed.sourceId&&client.models.length===1&&client.models[0]===fixed.model){
       z.object({model:z.string().min(1).max(300)}).parse(req.body);
       req.body={...(req.body as Record<string,unknown>),model:fixed.model};
@@ -1007,7 +1012,14 @@ export async function createDesktopService(options:ServiceOptions) {
           if(client.models.includes(model))try{selectedAuth=sourceAuth(model);}catch{record(503);return reply.code(503).send({error:{message:'Selected source account is unavailable',type:'source_unavailable'}});}
         }
       }
-      if(path==='models'){const sources=await apiSources.list();return {object:'list',data:available.map(model=>({id:model.id,object:'model',owned_by:model.provider,name:modelLabel(available,model.id,sources),display_name:modelLabel(available,model.id,sources),...(model.capabilities?{capabilities:model.capabilities}:model.textOnly?{capabilities:{text:true,tools:false,images:false}}:{})}))};}
+      if(path==='models'){
+        const sources=await apiSources.list();
+        return {object:'list',data:available.map(model=>{
+          const id=fixed?.target==='workbuddy'?Object.entries(fixed.modelAliases??{}).find(([,route])=>route===model.id)?.[0]??model.id:model.id;
+          const name=id!==model.id?id:modelLabel(available,model.id,sources);
+          return {id,object:'model',owned_by:model.provider,name,display_name:name,...(model.capabilities?{capabilities:model.capabilities}:model.textOnly?{capabilities:{text:true,tools:false,images:false}}:{})};
+        })};
+      }
       if(!allowsProtocol(client.agents,path)){record(403);return reply.code(403).send({error:{message:'This API key does not allow this agent protocol',type:'agent_not_allowed'}});}
       const model=z.object({model:z.string().min(1).max(300)}).parse(req.body).model;
       if(!client.models.includes(model)){record(403);return reply.code(403).send({error:{message:`此 Key 未授权请求模型。请将主模型、辅助模型及项目级配置统一为已授权的模型 ID（含提供商前缀）：${client.models.slice(0,5).join('、')||'暂无授权模型'}。无需重新登录厂商账号。`,type:'model_not_allowed'}});}

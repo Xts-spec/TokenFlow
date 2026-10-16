@@ -40,10 +40,11 @@ const conflict=(message:string)=>Object.assign(new Error(message),{statusCode:40
 export const modelSelectionSchema=z.object({sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(3).max(300)}).strict();
 export type ModelSelection=z.infer<typeof modelSelectionSchema>;
 export const modelSelectionsSchema=z.array(modelSelectionSchema).min(1).max(100).refine(items=>new Set(items.map(i=>i.model)).size===items.length,'每个模型只能选择一个来源账号');
-const recordSchema=z.object({id:z.string().uuid(),target:targetSchema,createdAt:z.string(),before:z.string().nullable(),after:z.string(),beforeHash:z.string(),afterHash:z.string(),state:z.enum(['prepared','applied','restored']),keyId:z.string().uuid(),sourceId:z.string(),model:z.string(),selections:modelSelectionsSchema.optional(),supersedes:z.string().uuid().optional(),previousConfig:z.string().nullable().optional(),previousHash:z.string().optional(),deepseekScope:z.enum(['home','profile']).optional()});
+const recordSchema=z.object({id:z.string().uuid(),target:targetSchema,createdAt:z.string(),before:z.string().nullable(),after:z.string(),beforeHash:z.string(),afterHash:z.string(),state:z.enum(['prepared','applied','restored']),keyId:z.string().uuid(),sourceId:z.string(),model:z.string(),selections:modelSelectionsSchema.optional(),modelAliases:z.record(z.string().min(1).max(300)).optional(),supersedes:z.string().uuid().optional(),previousConfig:z.string().nullable().optional(),previousHash:z.string().optional(),deepseekScope:z.enum(['home','profile']).optional()});
 type Record=z.infer<typeof recordSchema>;
 export type ConnectionRecord=Omit<Record,'before'|'after'|'previousConfig'>;
 const publicRecord=({before,after,previousConfig,...record}:Record):ConnectionRecord=>record;
+const clientModelID=(record:Record,model:string)=>Object.entries(record.modelAliases??{}).find(([,route])=>route===model)?.[0]??model;
 export type AgentPaths={[K in Target]:string};
 const targetNames={codex:'Codex',claude:'Claude Code',workbuddy:'WorkBuddy',qoder:'Qoder',deepseek:'DeepSeek Harness',pi:'Pi Agent'};
 export function agentPaths(home=homedir()):AgentPaths {
@@ -238,7 +239,8 @@ function repairConfigBase(record:Record,current:string|null):string|null {
   if(record.target==='workbuddy'){
     const models=Array.isArray(actual)?actual:object(actual).models;
     if(!Array.isArray(models))throw conflict('WorkBuddy 模型配置格式无效，未覆盖。');
-    const kept=models.filter(item=>!(record.selections??[record]).some(m=>item.id===m.model||item.id===`custom-local:${m.model}`));
+    const owned=new Set([...(record.selections??[record]).map(m=>m.model),...Object.keys(record.modelAliases??{})]);
+    const kept=models.filter(item=>!owned.has(String(item.id).replace(/^custom-local:/,'')));
     return JSON.stringify(Array.isArray(actual)?kept:{...object(actual),models:kept},null,2)+'\n';
   }
   if(record.target==='qoder'){
@@ -295,7 +297,15 @@ export function connectedConfig(target:Target,original:string|null,origin:string
     if(Object.keys(doc).some(k=>k!=='models'))throw conflict('WorkBuddy models.json 包含额外设置，自动转换为原生数组会丢失字段，已保留原文件；请先整理这些设置再接入。');
     const models=doc.models===undefined?[]:z.array(z.object({id:z.string()}).passthrough()).parse(doc.models);
     if(models.some(m=>chosen.some(model=>m.id===model||m.id===`custom-local:${model}`)))throw conflict('已有同名自定义模型，请先保留或移除该配置后再接入。');
-    const next:{[key:string]:any}={...doc,models:[...models,...chosen.map(model=>({id:model,name:label(model),url:`${url.origin}/v1/chat/completions`,apiKey:key,supportsToolCall:true}))]};
+    // WorkBuddy renders custom models as name:ID when those two fields differ.
+    // Give it a readable ID; the connection journal maps it back to the authorized route.
+    const used=new Set(models.map(m=>m.id.replace(/^custom-local:/,'')));
+    const imported=chosen.map(model=>{
+      const base=label(model).replace(/[\r\n\t]/g,' ').slice(0,260);let id=base,n=2;
+      while(used.has(id)||chosen.some(other=>other!==model&&other===id))id=`${base} (${n++})`;
+      used.add(id);return {id,name:id,url:`${url.origin}/v1/chat/completions`,apiKey:key,supportsToolCall:true};
+    });
+    const next:{[key:string]:any}={...doc,models:[...models,...imported]};
     return JSON.stringify(next.models,null,2)+'\n';
   }
   if(target==='claude'){
@@ -406,8 +416,8 @@ export class AgentConnections {
         const provider=actual.providers?.['token-flow'],original=expected.providers['token-flow'];
         checks.push({name:'自定义模型已写入',ok:(record.selections??[record]).some(item=>item.model===provider?.model)&&(record.selections??[record]).every(item=>provider.models?.some((m:{model:string})=>m.model===item.model))},{name:'Responses 接口正确',ok:provider?.baseUrl===original.baseUrl&&provider?.protocol==='openai-responses'},{name:'客户端 Key 未被覆盖',ok:provider?.apiKey===original.apiKey});
       }else if(record.target==='workbuddy'){
-        const model=actual.models?.find((m:{id:string})=>m.id===record.model);const original=expected.models.find((m:{id:string})=>m.id===record.model);
-        checks.push({name:'自定义模型已写入配置',ok:!!model&&(!actual.availableModels?.length||actual.availableModels.includes(record.model))},{name:'接口地址与工具能力正确',ok:model?.url===original.url&&model?.supportsToolCall===true},{name:'客户端 Key 未被覆盖',ok:model?.apiKey===original.apiKey});
+        const id=clientModelID(record,record.model),model=actual.models?.find((m:{id:string})=>m.id===id);const original=expected.models.find((m:{id:string})=>m.id===id);
+        checks.push({name:'自定义模型已写入配置',ok:!!model&&(!actual.availableModels?.length||actual.availableModels.includes(id))},{name:'接口地址与工具能力正确',ok:model?.url===original.url&&model?.supportsToolCall===true},{name:'客户端 Key 未被覆盖',ok:model?.apiKey===original.apiKey});
       }else if(record.target==='pi'||record.target==='deepseek'){
         const provider=record.target==='pi'?actual.providers?.['token-flow']:actual['llm-pi-ai']?.config?.providers?.['token-flow'];
         const original=record.target==='pi'?expected.providers['token-flow']:expected['llm-pi-ai'].config.providers['token-flow'];
@@ -424,7 +434,7 @@ export class AgentConnections {
         const ids=record.selections.map(item=>item.model);
         if(record.target==='codex'){const catalog=JSON.parse(await readFile(String(actual.model_catalog_json),'utf8'));checks.push({name:'所选模型目录完整',ok:isDeepStrictEqual(catalog.models.map((m:{slug:string})=>m.slug),ids)});}
         if(record.target==='claude')checks.push({name:'所选模型菜单与授权一致',ok:isDeepStrictEqual(actual.availableModels,ids)&&isDeepStrictEqual(actual.modelPicker,expected.modelPicker)&&actual.env?.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY==='1'});
-        if(record.target==='workbuddy')checks.push({name:'所选模型配置完整',ok:ids.every(id=>{const model=actual.models?.find((m:{id:string})=>m.id===id),original=expected.models.find((m:{id:string})=>m.id===id);return model?.apiKey===original?.apiKey&&model?.url===original?.url&&model?.supportsToolCall===true;})});
+        if(record.target==='workbuddy')checks.push({name:'所选模型配置完整',ok:ids.every(route=>{const id=clientModelID(record,route),model=actual.models?.find((m:{id:string})=>m.id===id),original=expected.models.find((m:{id:string})=>m.id===id);return model?.apiKey===original?.apiKey&&model?.url===original?.url&&model?.supportsToolCall===true;})});
       }
     }catch{checks.push({name:'配置格式可解析',ok:false});}
     return {id,target:record.target,model:record.model,checks,liveCallVerified:false,...(record.target==='claude'?{compatibility:{autoMode:'unverified' as const,note:'主模型、辅助模型配置一致不代表 Auto Mode 审批可用。审批分类器与 App 的维修审批模型相互独立；Messages 文本和工具检测也不能验证分类器。'}}:{}),note:record.target==='pi'?'在官方 Pi 的 /model 菜单选择 token-flow 模型。':record.target==='deepseek'?'重新打开 DeepSeek Harness 官方桌面应用，在模型菜单选择 token-flow 模型；已有对话从历史继续。':record.target==='qoder'?`重启 Qoder 独立应用，在模型菜单选择 ${record.model}。原登录与内置模型保留；不适用于 Qoder IDE。`:record.target==='workbuddy'?`在 WorkBuddy 新建任务的输入框下方打开模型菜单，选择 ${record.model}。若没有显示，重启 WorkBuddy 后再查看。配置检查不代表已在客户端选用。`:'重启 Agent 后加载配置；项目级设置或已有终端环境变量仍可能覆盖用户配置。'};
@@ -448,7 +458,9 @@ export class AgentConnections {
         await safePath(catalogPath);const temp=`${catalogPath}.${randomUUID()}.tmp`;
         try{await writeFile(temp,JSON.stringify(catalog),{mode:0o600,flag:'wx'});await rename(temp,catalogPath);}finally{await rm(temp,{force:true});}
       }
-      const record:Record={id:randomUUID(),target:input.target,createdAt:new Date().toISOString(),before:original,after,beforeHash:hash(original),afterHash:hash(after),state:'prepared',keyId:input.keyId,sourceId:input.sourceId,model:input.model,...(input.target==='deepseek'?{deepseekScope:this.deepseekProfilePath?'profile' as const:'home' as const}:{}),...(input.selections?{selections:input.selections}:{}),...(active?{supersedes:active.id,previousConfig:before,previousHash:hash(before)}:{})};
+      const routes=selectedModels??[input.model];
+      const modelAliases=input.target==='workbuddy'?Object.fromEntries((JSON.parse(after) as {id:string}[]).slice(-routes.length).flatMap((entry,i)=>entry.id!==routes[i]?[[entry.id,routes[i]]]:[])):undefined;
+      const record:Record={id:randomUUID(),target:input.target,createdAt:new Date().toISOString(),before:original,after,beforeHash:hash(original),afterHash:hash(after),state:'prepared',keyId:input.keyId,sourceId:input.sourceId,model:input.model,...(modelAliases&&Object.keys(modelAliases).length?{modelAliases}:{}),...(input.target==='deepseek'?{deepseekScope:this.deepseekProfilePath?'profile' as const:'home' as const}:{}),...(input.selections?{selections:input.selections}:{}),...(active?{supersedes:active.id,previousConfig:before,previousHash:hash(before)}:{})};
       await this.save(record);await this.replace(input.target,input.revision,after,input.allowRunning);record.state='applied';await this.save(record);await this.retirePrevious(record);return publicRecord(record);
     });
   }

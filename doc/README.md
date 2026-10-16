@@ -11,6 +11,7 @@
 | 桌面、界面、网关、来源适配器如何协作 | [项目架构](architecture.md) |
 | 当前还要修什么、如何验收 | [统一 TODO](TODO.md) |
 | Claude／反重力的用量渠道、来源和统计边界 | [用量来源与本地验证](testing/usage-attribution.md) |
+| WorkBuddy 导入后只显示名称，以及名称到路由的映射 | [WorkBuddy 模型名称验证](testing/workbuddy-model-labels.md) |
 | Windows 进程、授权、窗口与完整功能测试 | [Windows 兼容与验收](待修复的问题win兼容.md) |
 | 文件清理的范围与恢复方式 | [文件清理](guides/file-cleanup.md) |
 

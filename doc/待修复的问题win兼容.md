@@ -242,6 +242,7 @@ node scripts/check-file-cleanup-native.mjs
 | C09 | 接入 TokenFlow 后用 CC Switch 切换 Codex／Claude Code 的地址、Key 和模型，再返回 TokenFlow | 显示“重新应用”；先取消确认，文件和 Key 均不变；再次确认后备份完整旧配置并更新所选模型，保留其他 provider、MCP、权限与偏好设置；真实客户端发消息验证路由；Codex 只确认一次并退出、应用、重开 |
 | C10 | 客户端未安装、装多个版本、不同配置目录、客户端仍运行 | 明确支持范围；配置写入、退出和重启均有正确前置判断；安装失败不冒充接入成功 |
 | C11 | 打开重新应用确认后，再用第三方工具写入同一配置；另测第三方工具持续回写、文件损坏与无法写入 | 版本冲突不覆盖新改动；取消并重开确认可获取新版本；持续回写应提示冲突，不自动循环争抢；坏文件／权限错误保留原文与备份，不能仅清除提示 |
+| C12 | WorkBuddy 重新导入 Qoder／Codex 模型并打开原生菜单；重命名、重启、同名模型和恢复配置 | 只显示可读名称，不出现“名称:内部 ID”；实际请求仍使用原来源与模型，用量归属正确；同名项可区分且不覆盖其他自定义模型。MODEL-001 的 macOS 原生函数／CLI 已验证，Windows 4.22.16 菜单仍需实测，见 [验证记录](testing/workbuddy-model-labels.md) |
 
 ### 5.5 API 来源、导出 Key、协议与真实调用（P0/P1）
 
@@ -349,7 +350,7 @@ Windows 版本／架构／终端：
 脚本索引也包含构建、补丁、探测、真实账号 live 和历史修复工具，**不是批量执行清单**。运行 live／repair／replay／stress 类工具前必须读其文件头、参数、路径和副作用，适配 Windows 并使用测试账号／测试配置；已有脚本里有硬编码 macOS 路径，不得直接照搬执行。
 
 <details>
-<summary>Vitest 测试文件：105 个</summary>
+<summary>Vitest 测试文件：106 个</summary>
 
 - [tests/a2a-interoperability.test.ts](../tests/a2a-interoperability.test.ts)
 - [tests/a2a-service.test.ts](../tests/a2a-service.test.ts)
@@ -357,6 +358,7 @@ Windows 版本／架构／终端：
 - [tests/account-startup.test.ts](../tests/account-startup.test.ts)
 - [tests/activity-traces.test.ts](../tests/activity-traces.test.ts)
 - [tests/agent-connections.test.ts](../tests/agent-connections.test.ts)
+- [tests/workbuddy-model-labels.test.ts](../tests/workbuddy-model-labels.test.ts)
 - [tests/agent-installation.test.ts](../tests/agent-installation.test.ts)
 - [tests/agent-lifecycle.test.ts](../tests/agent-lifecycle.test.ts)
 - [tests/agent-model-switching.test.ts](../tests/agent-model-switching.test.ts)
@@ -482,7 +484,7 @@ Windows 版本／架构／终端：
 </details>
 
 <details>
-<summary>脚本完整索引（需逐个确认平台和副作用）：75 个</summary>
+<summary>脚本完整索引（需逐个确认平台和副作用）：76 个</summary>
 
 - [scripts/a2a-desktop-live.ts](../scripts/a2a-desktop-live.ts)
 - [scripts/account-startup-ui-check.cjs](../scripts/account-startup-ui-check.cjs)
@@ -498,6 +500,7 @@ Windows 版本／架构／终端：
 - [scripts/check-file-cleanup-native.mjs](../scripts/check-file-cleanup-native.mjs)
 - [scripts/check-packaged-runtime.mjs](../scripts/check-packaged-runtime.mjs)
 - [scripts/check-runtime-bundle.mjs](../scripts/check-runtime-bundle.mjs)
+- [scripts/check-workbuddy-model-labels.ts](../scripts/check-workbuddy-model-labels.ts)
 - [scripts/claude-integration-ui-check.ts](../scripts/claude-integration-ui-check.ts)
 - [scripts/clean-build.mjs](../scripts/clean-build.mjs)
 - [scripts/clean-package.mjs](../scripts/clean-package.mjs)
