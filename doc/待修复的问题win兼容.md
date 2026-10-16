@@ -226,6 +226,7 @@ node scripts/check-file-cleanup-native.mjs
 | L10 | Antigravity 本机账号切换、退出客户端后恢复 | 数据库／身份和账号池正确关联；文件变化／占用时拒绝覆盖；没有自动重启能力时明确人工步骤 |
 | L11 | Cursor 本机身份变化后刷新 | 只读显示准确；需在官方客户端切换时明示，不把网关来源变更当作官方登录变更 |
 | L12 | 重启期间再点切换／删除／恢复；进程自重启、PID 复用 | 操作互斥；不写入过期预览；不启动重复实例，不关闭已变成其他程序的 PID |
+| L13 | WorkBuddy、WorkBuddyAI、Qoder 保留官方身份并使用自定义模型，切换／恢复官方账号；另核对 Codex 网关模式 | 官方身份仍选中并显示“已登录”；切账号不移除自定义模型与 Key，国内／海外不互相影响；Codex 的活动 provider 模式仍区分。LOGIN-001，见 [验证记录](testing/official-login-coexist.md)；WorkBuddyAI 本轮未新增自动导入入口 |
 
 ### 5.4 接入配置、模型切换、对话备份和恢复（P0）
 
@@ -484,7 +485,7 @@ Windows 版本／架构／终端：
 </details>
 
 <details>
-<summary>脚本完整索引（需逐个确认平台和副作用）：76 个</summary>
+<summary>脚本完整索引（需逐个确认平台和副作用）：77 个</summary>
 
 - [scripts/a2a-desktop-live.ts](../scripts/a2a-desktop-live.ts)
 - [scripts/account-startup-ui-check.cjs](../scripts/account-startup-ui-check.cjs)
@@ -527,6 +528,7 @@ Windows 版本／架构／终端：
 - [scripts/network-diagnostics-ui-check.cjs](../scripts/network-diagnostics-ui-check.cjs)
 - [scripts/official-catalog-overlay.mjs](../scripts/official-catalog-overlay.mjs)
 - [scripts/official-login-ui-check.ts](../scripts/official-login-ui-check.ts)
+- [scripts/official-login-coexist-ui-check.cjs](../scripts/official-login-coexist-ui-check.cjs)
 - [scripts/package-release.mjs](../scripts/package-release.mjs)
 - [scripts/provider-login-overlay.mjs](../scripts/provider-login-overlay.mjs)
 - [scripts/provider-matrix-live.ts](../scripts/provider-matrix-live.ts)

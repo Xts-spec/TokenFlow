@@ -1,5 +1,5 @@
 import {hasNativeLogin} from './native-login-visibility';
-import {desktopIdentityMatches} from '../../shared/native-login-identity';
+import {desktopIdentityMatches,officialLoginCoexists,officialLoginSelected} from '../../shared/native-login-identity';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LocalAgentSnapshot } from '../../../packages/core/src/cliproxy';
 import type { AgentConnections } from '../../../packages/core/src/agent-connections';
@@ -37,14 +37,14 @@ export function useNativeLogin(provider:LoginProvider,local:LocalAgentSnapshot,e
 
  const accounts:LoginAccount[]=pooled.filter(a=>!desktop||status?.accounts.some(c=>c.id===a.id)).map(a=>{
   const credential=status?.accounts.find(item=>item.id===a.id);
-  const current=matches(credential)&&!status?.gatewayConnected;
+  const current=officialLoginSelected(provider,matches(credential),!!status?.gatewayConnected);
   return {id:a.id,label:a.label,remaining:a.remaining,models:usable(provider,a.models),switchable:!!credential?.switchable,reason:credential?.reason??'',current,local:matches(credential)};
  });
  const current=accounts.find(a=>a.current);
  const nativeCurrent=pooled.find(a=>matches(status?.accounts.find(c=>c.id===a.id)));
  const nativeLabel=hasNativeLogin({status,error})?((provider==='qoder'||provider==='qoder-ide')?status?.email||status?.displayName:'')||nativeCurrent?.label||status?.email||status?.displayName||(status?.accountId?`${loginNames[provider]} 账号 ${status.accountId.slice(0,8)}`:''):'';
 
- // A client routed through TokenFlow ignores its own login, so switching first restores its original config.
+ // Only clients with an exclusive gateway mode must release it when returning to official login.
  const releaseGateway=async()=>{
   if(provider==='antigravity')return;
   const targets=(await requestJSON<{targets:Awaited<ReturnType<AgentConnections['status']>>}>('/api/a2a')).targets;
@@ -60,7 +60,7 @@ export function useNativeLogin(provider:LoginProvider,local:LocalAgentSnapshot,e
   // Codex, desktop clients and Claude use server-side lifecycle checks before releasing the gateway.
   if(!desktop&&provider!=='codex'&&provider!=='claude'&&latest.pids.length)throw new Error(`请先完全退出 ${loginNames[provider]}，再切换本机登录。`);
   if(provider==='codex'&&!model)throw new Error('这个账号还没有可用模型，请先刷新账号。');
-  const released=latest.gatewayConnected;
+  const released=latest.gatewayConnected&&!officialLoginCoexists(provider);
   if(released&&!desktop&&provider!=='codex'&&provider!=='claude'){await releaseGateway();latest=await requestJSON<Status>(base(provider));}
   const body=provider==='codex'?{revision:latest.revision,allowRunning:true,restartCodex,sourceId:id,model}:provider==='claude'?{revision:latest.revision,sourceId:id,restart:true}:{revision:latest.revision,sourceId:id};
   const saved=await requestJSON<Status>(`${base(provider)}/switch`,post(body),provider==='codex'||provider==='claude'||desktop?600000:20000);setStatus(saved);

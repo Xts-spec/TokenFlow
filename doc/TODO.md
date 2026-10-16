@@ -6,6 +6,7 @@
 
 | 编号 | 优先级 | 事项 | 当前状态与验收入口 |
 | --- | --- | --- | --- |
+| LOGIN-001 | P1 | 自定义模型客户端的官方登录选中与网关配置独立 | WorkBuddy／WorkBuddyAI／Qoder 共存规则已修正，70 项回归及界面模拟通过；Windows 待实机，见 [验证记录](testing/official-login-coexist.md) |
 | MODEL-001 | P1 | WorkBuddy 导入后模型名称重复、附带内部 ID | 代码已修复，86 项回归及本机原生函数／CLI 验证通过；Windows 菜单待实测，见 [验证记录](testing/workbuddy-model-labels.md) |
 | USAGE-001 | P1 | Claude 用量的渠道、来源账号与真实客户端归属 | 源码夹具通过；真实渠道与包内历史失败待验收 |
 | USAGE-002 | P1 | 反重力使用渠道与来源统计 | 网关双账号和 Gemini／Claude 模型已验证；原生客户端直连采集待实现／评估 |
@@ -14,6 +15,13 @@
 | CONFIG-001 | P1 | CC Switch 等工具改配置后的重新应用 | 代码、67 项回归与界面模拟通过；Windows 共存实测待完成，见 C09/C11 |
 | CORE-001 | P1 | Codex 官方登录恢复时的外部并发修改 | 历史 FIX-001 未完成闭环，需在当前版本复现和验证 |
 | ARCH-001 | P2 | 按领域逐步拆分服务装配与路由 | [架构说明](architecture.md)已整理，运行模块尚未重构 |
+
+## LOGIN-001：官方身份与自定义模型共存
+
+- [x] WorkBuddy、WorkBuddyAI、Qoder 不因网关配置取消官方身份选中；已保存账号和未入池本机账号共用规则，显示“已登录”。
+- [x] WorkBuddy、Qoder 切换或恢复官方账号保留网关模型、接入记录和 Key，身份失败时不修改资料；国内／海外身份隔离。
+- [x] Codex 继续区分官方直连和网关模式；本机 Qoder 原生显示函数与 Codex `model/list` 未复现重复名称。
+- [ ] Windows 实际客户端验证切换／恢复后自定义模型仍可选择，官方账号仍已登录；WorkBuddyAI 的 TokenFlow 自动导入入口没有在本轮新增。
 
 ## MODEL-001：WorkBuddy 导入后的模型命名
 

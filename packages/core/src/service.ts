@@ -562,7 +562,8 @@ export async function createDesktopService(options:ServiceOptions) {
       await manager.check(input.revision,action==='restore');
       const prepared='sourceId' in input?await manager.prepare(await proxy.desktopCredential(provider==='qoder-ide'?'qoder':provider,input.sourceId as string)):null;
       let saved=false;
-      const work=async()=>{if(provider==='qoder-ide')await qoderIdeLogin.apply(input.revision,prepared);else await desktopAccounts[provider].apply(input.revision,prepared,async()=>{const target=(await connections.status()).find(t=>t.id===provider);if(target?.connection)await restoreConnection(target.connection.id,{revision:target.revision,allowRunning:false});});saved=true;};
+      // Desktop custom-model providers are independent of the client's official login.
+      const work=async()=>{if(provider==='qoder-ide')await qoderIdeLogin.apply(input.revision,prepared);else await desktopAccounts[provider].apply(input.revision,prepared);saved=true;};
       try{await (options.desktopAccountChange?options.desktopAccountChange(provider,work):desktopLifecycle.change(provider,work));}
       catch(error){if(saved)throw Object.assign(new Error(`${action==='restore'?'原登录已恢复':'所选登录已保存，原登录备份仍保留'}，但客户端重新打开未确认。请手动打开并检查登录状态。`),{statusCode:409});throw error;}
       return desktopStatus(provider);
