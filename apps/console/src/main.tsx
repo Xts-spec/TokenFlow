@@ -60,7 +60,7 @@ function App(){
   try{next=visibleLocalAgent(await requestJSON<LocalAgentSnapshot>('/api/local-agent'));setLocal(next);setLocalLoaded(true);setLocalError('');}
   catch(error){setLocalError('暂时无法获取账号与模型信息，请检查连接后重新加载。');throw error;}
   // Nothing to use yet: start where models are added.
-  if(firstLoad.current&&next.state==='running'){firstLoad.current=false;if(!next.models.length)setView('accounts');}
+  if(firstLoad.current&&next.state==='running'&&!next.accountsLoading){firstLoad.current=false;if(!next.models.length)setView('accounts');}
  },[]);
  useEffect(()=>{
   void refresh().catch(()=>{});
@@ -69,10 +69,20 @@ function App(){
  // Only follow an in-progress operation; stop on completion or a read failure.
  useEffect(()=>{
   const pending=local.login&&['starting','waiting_for_browser','verifying'].includes(local.login.status);
-  if(localError||!pending&&!local.quotaBusy&&!['starting','stopping'].includes(local.state))return;
+  if(localError||!pending&&!local.accountsLoading&&!local.quotaBusy&&!['starting','stopping'].includes(local.state))return;
   const timer=setTimeout(()=>void refresh().catch(()=>{}),1500);return()=>clearTimeout(timer);
  },[local,localError,refresh]);
  const previousLoginStatus=useRef<string|undefined>(undefined);
+ const previousAccountsLoading=useRef(false);
+ const accountIDs=local.accounts.map(account=>account.id).sort().join(',');
+ const previousAccountIDs=useRef('');
+ useEffect(()=>{
+  if(!local.accountsLoading&&local.state==='running'){
+   if(previousAccountsLoading.current||previousAccountIDs.current!==accountIDs)notifyNativeLoginChanged();
+   previousAccountIDs.current=accountIDs;
+  }
+  previousAccountsLoading.current=!!local.accountsLoading;
+ },[accountIDs,local.accountsLoading,local.state]);
  useEffect(()=>{const previous=previousLoginStatus.current;previousLoginStatus.current=local.login?.status;if(previous&&['starting','waiting_for_browser','verifying'].includes(previous)&&local.login?.status==='completed')notifyNativeLoginChanged();},[local.login?.status]);
  const dismissNotice=useCallback(()=>setNotice(undefined),[]);
  useEffect(()=>{document.querySelector('main')?.scrollTo(0,0);},[view]);

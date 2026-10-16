@@ -126,6 +126,7 @@ export class CLIProxyManager {
       logs: this.recent,...(this.networkCheck?{networkCheck:this.networkCheck}:{}),...(this.options.networkSnapshot||this.network?{network:this.options.networkSnapshot?.()??this.network!.snapshot()}:{}), accounts: [...accounts,...cursor.accounts], models: [...this.models,...(this.state==='running'?cursor.models:[])], accountError: this.accountError, lastError: this.lastError,
       quotas: {...this.quotas,...cursor.quotas}, quotaBusy: this.quotaBusy, providers: [...loginProviderCatalog(),cursorCatalog], login: this.cursorLoginSelected?cursor.login:this.login_.snapshot()});
   }
+  isLoadingAccounts(){return !!this.startTask||!!this.refreshTask||!!this.refreshTimer;}
   /** 内部 sidecar 地址和密钥；不含 Cursor SDK 模型，不进 snapshot / 日志。 */
   gateway() {
     return {baseURL: `http://127.0.0.1:${this.port}/v1`, apiKey: this.key, running: this.state === 'running'};
@@ -261,6 +262,7 @@ export class CLIProxyManager {
   }
   async stop() {
     clearTimeout(this.refreshTimer);
+    this.refreshTimer=undefined;
     if (this.startTask) await this.startTask.catch(() => undefined);
     if (this.busy) throw new Error('Local Agent 正在切换状态');
     this.busy = true;
@@ -270,6 +272,7 @@ export class CLIProxyManager {
         catch {this.log('无法确认授权取消；停止进程以终止本次授权。');}
       }
       clearTimeout(this.refreshTimer);
+      this.refreshTimer=undefined;
       this.requests.abort();
       await this.terminate(this.child); this.child = undefined; this.state = 'stopped';
       await this.refreshTask?.catch(() => undefined); await this.quotaTask?.catch(() => undefined);
@@ -282,6 +285,7 @@ export class CLIProxyManager {
     if (this.refreshTask) return !this.refreshScope||this.refreshScope===provider?this.refreshTask:this.refreshTask.catch(()=>undefined).then(()=>this.refreshAccounts(provider,refreshUsage));
     clearTimeout(this.refreshTimer);
     this.refreshScope=provider;
+    this.refreshTimer=undefined;
     this.refreshTask = this.loadAccounts(provider,refreshUsage).finally(() => {
       this.refreshTask = undefined;
       this.refreshScope=undefined;
@@ -663,4 +667,4 @@ export class CLIProxyManager {
   async shutdown() {this.closing = true;this.networkCheckAbort?.abort();try{await this.cursor.close(); this.login_.close(); await this.stop(); await this.refreshTask?.catch(() => undefined); await this.quotaTask?.catch(() => undefined);await Promise.allSettled([...this.quotaProviderTasks.values()]);await this.networkCheckTask;}finally{await this.network?.close();this.network=undefined;}}
 }
 
-export type LocalAgentSnapshot = ReturnType<CLIProxyManager['snapshot']> & {apiSources?:import('./api-sources.js').ApiSource[]};
+export type LocalAgentSnapshot = ReturnType<CLIProxyManager['snapshot']> & {accountsLoading?:boolean;apiSources?:import('./api-sources.js').ApiSource[]};

@@ -15,6 +15,7 @@ import {createStartupWindow} from './startup-window.js';
 import {guardCredentialAccess} from './credential-access.js';
 import {claudeKeychain} from '../../../packages/core/src/claude-accounts.js';
 import {agentPaths} from '../../../packages/core/src/agent-connections.js';
+import {workspaceWindowOptions} from './window-options.js';
 
 const here=dirname(fileURLToPath(import.meta.url));
 if(process.argv.includes('--tokenflow-qoder-crypto')){void runQoderCrypto();}
@@ -92,7 +93,8 @@ async function start() {
   const show=async()=>{
     if(process.platform==='darwin')await app.dock?.show();
     if(window){if(window.isMinimized())window.restore();window.show();window.focus();return;}
-    window=new BrowserWindow({width:1320,height:900,minWidth:900,minHeight:640,show:false,backgroundColor:'#161719',title:'TokenFlow',icon,...(process.platform==='darwin'?{titleBarStyle:'hiddenInset' as const,trafficLightPosition:{x:20,y:20}}:{}),webPreferences:{preload:join(here,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+    window=new BrowserWindow({...workspaceWindowOptions(icon),...startup.bounds(),webPreferences:{preload:join(here,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+    if(startup.isMaximized())window.maximize();
     window.webContents.setWindowOpenHandler(projectWindowOpenHandler(url=>shell.openExternal(url),url=>{
         dialog.showErrorBox('无法打开项目页面',`请在浏览器中打开 ${url}`);
     }));

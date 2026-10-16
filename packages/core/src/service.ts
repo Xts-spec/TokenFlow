@@ -91,8 +91,8 @@ export async function createDesktopService(options:ServiceOptions) {
   const apiSources=await ApiSources.open(root,options.secrets,config);
   const proxy=new CLIProxyManager(root,options.binary,options.localKey,proxyPort,{outboundProxyURL:options.outboundProxyURL,networkSnapshot:options.networkSnapshot,openExternal:options.openExternal,secrets:options.secrets,apiConfig:()=>apiSources.sidecarConfig(),apiModelIDs:()=>apiSources.sidecarModelIDs()});
   const localSnapshot=async():Promise<LocalAgentSnapshot>=>{
-    const local=proxy.snapshot();const sources=await apiSources.list();
-    return {...local,apiSources:sources,models:[...local.models,...sources.filter(s=>s.enabled&&s.hasKey).flatMap(s=>s.models.filter(model=>proxy.apiModelAvailable(apiModelID(s.id,model))).map(model=>({id:apiModelID(s.id,model),displayName:modelLabel([],apiModelID(s.id,model),sources),provider:'api' as const})))]};
+    const sources=await apiSources.list();const local=proxy.snapshot();
+    return {...local,accountsLoading:discovery.state==='loading'||proxy.isLoadingAccounts(),apiSources:sources,models:[...local.models,...sources.filter(s=>s.enabled&&s.hasKey).flatMap(s=>s.models.filter(model=>proxy.apiModelAvailable(apiModelID(s.id,model))).map(model=>({id:apiModelID(s.id,model),displayName:modelLabel([],apiModelID(s.id,model),sources),provider:'api' as const})))]};
   };
   const resolveSource=(id:string,model:string,retryKnownModel=false)=>{
     if(apiSources.has(id)){if(proxy.snapshot().state!=='running')throw Object.assign(new Error('网关未启动'),{statusCode:409});apiSources.assert(id,model);if(!proxy.apiModelAvailable(model))throw new RunnerCoreError('API 模型路由暂不可用，请重新保存来源或重启网关。',{code:'api_model_unavailable',statusCode:409});return '';}
