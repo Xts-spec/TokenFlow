@@ -175,7 +175,7 @@ function AgentPanel({clientTabs,target,update,login,local,usage,problem,notify,o
  });};
  const restore=(promptRestart=true,history=false,approved=false)=>changeCodex(async restartCodex=>{
   const next=await latest();
-  await requestJSON('/api/a2a/restore',post({id:next.connection!.id,revision:next.revision,allowRunning:true,restartCodex,restoreHistory:history}),600000);
+  await requestJSON('/api/a2a/restore',post({id:next.connection!.id,revision:next.revision,allowRunning:true,restartCodex,restoreHistory:history,overwrite:true}),600000);
   setRestoreOpen(false);saveDraft(models,false);if(promptRestart||restartCodex)configurationSaved(restartCodex);else setRestartPending(desktopRestart);
   return restartCodex?`Codex 已恢复原配置${history?'并处理旧对话':''}，已自动重新打开。`:`${target.name} 已恢复原配置，${desktopRestart?'重启':'下次启动'}后生效。`;
  },approved,!history);

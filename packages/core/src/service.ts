@@ -291,14 +291,14 @@ export async function createDesktopService(options:ServiceOptions) {
     if(apiModelRoute(source,selected.model).protocol!=='responses'||!(await apiSources.list()).find(s=>s.id===selected.sourceId)?.hasKey)throw Object.assign(new Error('备用通道仅支持有可读取密钥的 Responses API 来源'),{statusCode:409});
     return '';
   };
-  const restoreConnection=async(id:string,approval?:{revision:string;allowRunning:boolean},officialModel?:string|(()=>Promise<string|undefined>),restoreHistory=true)=>{
+  const restoreConnection=async(id:string,approval?:{revision?:string;allowRunning?:boolean;overwrite?:boolean},officialModel?:string|(()=>Promise<string|undefined>),restoreHistory=true)=>{
     const target=(await connections.status()).find(t=>t.backups.some(b=>b.id===id));
     if(target?.id==='codex'){
-      if(approval&&target.revision!==approval.revision)throw Object.assign(new Error('配置已变化，请刷新后重试。'),{statusCode:409});
+      if(approval?.revision&&target.revision!==approval.revision)throw Object.assign(new Error('配置已变化，请刷新后重试。'),{statusCode:409});
       // Provider routing must be reconciled before removing its definition.
       await restoreCodexHistory(restoreHistory,officialModel??(()=>connections.officialModel(id)));
     }
-    const record=await connections.restore(id,approval);fixedRoutes.delete(record.keyId);
+    const record=await connections.restore(id,{...approval,overwrite:approval?.overwrite??true});fixedRoutes.delete(record.keyId);
     if(gatewayKeys.list().some(key=>key.id===record.keyId))await gatewayKeys.remove(record.keyId);
     return record;
   };
@@ -665,10 +665,10 @@ export async function createDesktopService(options:ServiceOptions) {
   });
   app.post('/api/a2a/restore',async req=>{
 
-    const input=z.object({id:z.string().uuid(),revision:z.string().regex(/^[a-f0-9]{64}$/).optional(),allowRunning:z.boolean().default(false),restartCodex:z.boolean().default(false),restoreHistory:z.boolean().default(true)}).strict().refine(v=>!v.allowRunning||!!v.revision,'运行中还原需要当前配置版本').parse(req.body);
+    const input=z.object({id:z.string().uuid(),revision:z.string().regex(/^[a-f0-9]{64}$/).optional(),allowRunning:z.boolean().default(false),restartCodex:z.boolean().default(false),restoreHistory:z.boolean().default(true),overwrite:z.boolean().default(true)}).strict().refine(v=>!v.allowRunning||!!v.revision,'运行中还原需要当前配置版本').parse(req.body);
     approval.clear();
     if(input.restartCodex){const target=(await connections.status()).find(t=>t.backups.some(b=>b.id===input.id));if(target?.id!=='codex'||target.revision!==input.revision)throw Object.assign(new Error('Codex 配置已变化，请刷新后重试。'),{statusCode:409});}
-    return codexChange(input.restartCodex,()=>restoreConnection(input.id,input.revision?{revision:input.revision,allowRunning:input.allowRunning}:undefined,undefined,input.restoreHistory));
+    return codexChange(input.restartCodex,()=>restoreConnection(input.id,input.revision?{revision:input.revision,allowRunning:input.allowRunning,overwrite:input.overwrite}:{allowRunning:false,overwrite:input.overwrite},undefined,input.restoreHistory));
   });
   app.post('/api/a2a/delete',async req=>{
 

@@ -494,22 +494,28 @@ export class AgentConnections {
   async restoration(id:string){
     const record=(await this.records()).find(r=>r.id===id);if(!record)throw conflict('备份不存在');
     const current=await readConfig(this.paths[record.target]);
-    return equivalentConfig(record.target,current,record.before)?current:restoredConfig(record,current);
+    if(equivalentConfig(record.target,current,record.before))return current;
+    try{return restoredConfig(record,current);}catch{return record.before;}
   }
   async officialModel(id:string){
     const record=(await this.records()).find(r=>r.id===id&&r.target==='codex');
     if(!record)return undefined;
     return officialCodexModel(this.paths.codex,record.before);
   }
-  async restore(id:string,approval?:{revision:string;allowRunning:boolean}){
+  async restore(id:string,approval?:{revision?:string;allowRunning?:boolean;overwrite?:boolean}){
     const entry=(await this.records()).find(r=>r.id===id);if(!entry)throw conflict('备份不存在');
     return this.run(entry.target,async()=>{
       const record=(await this.records()).find(r=>r.id===id)!;
       if(record.state==='restored')return publicRecord(record);
       const currentText=await readConfig(this.paths[record.target]);const current=hash(currentText);
-      if(approval&&current!==approval.revision)throw conflict('审批后配置已变更，请重新生成方案。');
+      if(approval?.revision&&current!==approval.revision)throw conflict('审批后配置已变更，请重新生成方案。');
       if(equivalentConfig(record.target,currentText,record.before)){record.state='restored';await this.save(record);await this.retirePrevious(record);return publicRecord(record);}
-      const restored=restoredConfig(record,currentText);
+      let restored:string|null;
+      if(approval?.overwrite){
+        try{restored=restoredConfig(record,currentText);}catch{restored=record.before;}
+      }else{
+        restored=restoredConfig(record,currentText);
+      }
       await this.replace(record.target,current,restored,approval?.allowRunning);record.state='restored';await this.save(record);await this.retirePrevious(record);return publicRecord(record);
     });
   }

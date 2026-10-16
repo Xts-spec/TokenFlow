@@ -296,6 +296,15 @@ it('restores a missing file without requiring a maintenance model',async()=>{
  const record=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:'antigravity/m',sourceId:'s',keyId:randomUUID(),key:'key'});
  await rm(paths.codex);await connections.restore(record.id);expect((await connections.status())[0].connection).toBeNull();
 });
+it('restores and overwrites original configuration when overwrite is enabled despite external modifications',async()=>{
+ const {paths,connections}=await setup();await writeFile(paths.codex,'model = "original"\n');
+ const record=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:'workbuddy/test',sourceId:'s',keyId:randomUUID(),key:'key'});
+ await writeFile(paths.codex,'model = "externally-changed"\n');
+ await expect(connections.restore(record.id)).rejects.toThrow('外部修改');
+ await connections.restore(record.id,{overwrite:true});
+ expect(await readFile(paths.codex,'utf8')).toBe('model = "original"\n');
+ expect((await connections.status())[0].connection).toBeNull();
+});
 
 it('requires a public HTTPS endpoint for manual Cursor setup and never invents a writable settings file',()=>{
  for(const url of ['http://127.0.0.1:9527','https://localhost','https://10.0.0.1','https://192.168.1.2','https://gateway.example.com/v1','https://user:password@gateway.example.com'])expect(()=>agentConfig('cursor',url,'antigravity/gemini-3-flash')).toThrow();
