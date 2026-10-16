@@ -38,3 +38,26 @@ it('retains Claude account and official classification when a log grows after re
   await vi.waitFor(()=>{const state=index.snapshot();expect(state.scanning).toBe(false);expect(state.rows.map(r=>[r.nativeAccountId,r.channel,r.requests]).sort()).toEqual([['a','official',1],['b','official',1]].map(([id,channel,requests])=>[nativeIdentity('claude',String(id)),channel,requests]).sort());expect(state.recent).toHaveLength(2);},{timeout:5000,interval:25});
  }finally{await index.close();await rm(root,{recursive:true,force:true});}
 });
+
+it('rebuilds v12 Codex cache so an unchanged parent log uses request-level child identity',async()=>{
+ const root=await mkdtemp(join(await realpath(tmpdir()),'tf-codex-reindex-')),paths=agentPaths(root),directory=join(root,'.codex','sessions');let index=new LocalUsageIndex(root,paths);
+ try{
+  await mkdir(directory,{recursive:true});const timestamp='2026-10-16T10:00:00Z';
+  await writeFile(join(directory,'parent.jsonl'),[
+   {type:'session_meta',payload:{id:'parent',creator_account_id:'not-payer',model_provider:'openai'}},
+   {type:'turn_context',payload:{model:'fixture-model'}},
+   {type:'token_usage_record',timestamp,payload:{response_id:'response',thread_id:'child',usage:{input_tokens:100,cached_input_tokens:60,output_tokens:20}}},
+  ].map(r=>JSON.stringify(r)).join('\n'));
+  await writeFile(join(root,'usage-account-evidence.json'),JSON.stringify({version:1,records:[{thread:nativeIdentity('thread','child'),time:Date.parse(timestamp),model:'fixture-model',input:100,read:60,write:0,output:20,account:nativeIdentity('codex','payer')}]}));
+  index.snapshot();await vi.waitFor(()=>{expect(index.snapshot().scanning).toBe(false);expect(index.snapshot().rows).toHaveLength(1);},{timeout:5000,interval:25});await index.close();
+  const path=join(root,'local-usage-index.json'),saved=JSON.parse(await readFile(path,'utf8'));saved.version=12;
+  for(const e of Object.values(saved.files) as Array<{target:string;rows:any[]}>){if(e.target==='codex')for(const r of e.rows){r.nativeThreadId=nativeIdentity('thread','parent');delete r.nativeAccountId;delete r.nativeAccountEvidence;}}
+  await writeFile(path,JSON.stringify(saved));index=new LocalUsageIndex(root,paths);index.snapshot();
+  await vi.waitFor(()=>{const s=index.snapshot();expect(s.scanning).toBe(false);expect(s.rows[0]).toMatchObject({nativeAccountId:nativeIdentity('codex','payer'),nativeAccountEvidence:'otel',requests:1,inputTokens:100,outputTokens:20});},{timeout:5000,interval:25});
+  expect(JSON.parse(await readFile(path,'utf8')).version).toBe(13);
+  await index.close();await writeFile(join(root,'usage-account-evidence.json'),JSON.stringify({version:1,records:[]}));
+  const log=join(directory,'parent.jsonl');await writeFile(log,(await readFile(log,'utf8'))+'\n'+JSON.stringify({type:'token_usage_record',timestamp,payload:{response_id:'new-unconfirmed-response',thread_id:'child',usage:{input_tokens:10,output_tokens:2}}}));
+  index=new LocalUsageIndex(root,paths);index.snapshot();
+  await vi.waitFor(()=>{const s=index.snapshot();expect(s.scanning).toBe(false);expect(s.recent).toHaveLength(2);expect(s.recent?.find(r=>r.inputTokens===100)).toMatchObject({model:'fixture-model',nativeAccountEvidence:'otel',nativeAccountId:nativeIdentity('codex','payer')});expect(s.recent?.find(r=>r.inputTokens===10)).toMatchObject({model:'未标注模型',nativeModelUnconfirmed:true});expect(s.recent?.find(r=>r.inputTokens===10)?.nativeAccountId).toBeUndefined();},{timeout:5000,interval:25});
+ }finally{await index.close();await rm(root,{recursive:true,force:true});}
+});

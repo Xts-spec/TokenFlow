@@ -47,7 +47,7 @@ export class NativeUsageLogins{
 /** A login snapshot is an explicitly labelled fallback. Request-level identity always wins. */
 export function enrichNativeLoginRows(rows:readonly LocalUsageRow[],intervals:readonly NativeLoginInterval[]):LocalUsageRow[]{
  return rows.map(row=>{
-  if(row.nativeAccountId||row.nativeAccountEvidence==='conflict'||row.channel==='api'||!providers.includes(row.target as NativeUsageProvider)||row.provider!==row.target)return row;
+  if(row.nativeModelUnconfirmed||row.nativeAccountId||row.nativeAccountEvidence==='conflict'||row.channel==='api'||!providers.includes(row.target as NativeUsageProvider)||row.provider!==row.target)return row;
   // A coexisting desktop login cannot prove that an unlabelled request used it.
   if(!['codex','claude'].includes(row.target)&&row.channel!=='official')return row;
   const at=Date.parse(row.last),matches=intervals.filter(i=>i.provider===row.target&&i.from<=at&&i.to>=at&&i.to>i.from),unique=new Map(matches.map(i=>[identityKey(i),i]));

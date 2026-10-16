@@ -51,3 +51,17 @@ describe('local program token accounting',()=>{
  });
 
 });
+
+it('uses the response thread for route exclusion and keeps sibling responses independent',()=>{
+ const seen:string[]=[];const p=new LocalUsageParser('codex','parent',{channelFor:thread=>{seen.push(thread);return thread==='gateway-child'?'gateway':thread==='official-child'?'official':'unknown';}});
+ p.accept({type:'session_meta',payload:{id:'parent',model_provider:'openai'}});p.accept({type:'turn_context',payload:{model:'gpt-test'}});
+ for(const thread of ['gateway-child','official-child'])p.accept({type:'token_usage_record',timestamp,payload:{thread_id:thread,response_id:thread,usage:{input_tokens:100,output_tokens:20}}});
+ expect(seen).toEqual(['gateway-child','official-child']);expect(p.rows()).toHaveLength(1);expect(p.rows()[0]).toMatchObject({channel:'official',inputTokens:100,outputTokens:20});
+});
+
+it('does not inherit parent gateway configuration or billing identity into another thread',()=>{
+ const p=new LocalUsageParser('codex','parent',{channelFor:thread=>thread==='direct-child'?'official':'unknown'});
+ p.accept({type:'session_meta',payload:{id:'parent',model_provider:'token-flow',billing_account_id:'parent-payer'}});p.accept({type:'turn_context',payload:{model:'workbuddy/parent-model'}});
+ for(const thread of ['direct-child','unconfirmed-child'])p.accept({type:'token_usage_record',timestamp,payload:{thread_id:thread,response_id:thread,usage:{input_tokens:100,output_tokens:20}}});
+ expect(p.rows()).toHaveLength(2);expect(p.rows().map(r=>r.channel)).toEqual(['official','unknown']);expect(p.rows().every(r=>!r.nativeAccountId&&r.model==='未标注模型')).toBe(true);
+});
