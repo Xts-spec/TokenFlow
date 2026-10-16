@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { parseDocument as parseYAMLDocument, stringify as stringifyYAML } from 'yaml';
 import { detectAgent } from './agent-installation.js';
 import { codexModelCatalog } from './codex-model-catalog.js';
+import { apiModelDisplayName } from '../../../apps/shared/api-endpoint.js';
 
 /** Read the official default with an isolated config, never the active gateway catalog. */
 export async function officialCodexModel(configPath:string,text:string|null,originalAuth?:string|null){
@@ -246,7 +247,7 @@ function codexProfile(doc:{[key:string]:any}):{[key:string]:any}|undefined {
 }
 export function connectedConfig(target:Target,original:string|null,origin:string,model:string,key:string,catalogPath?:string,selectedModels?:string[],modelLabels:{[id:string]:string}={}) {
   const chosen=selectedModels??[model];
-  const label=(id:string)=>modelLabels[id]??id;
+  const label=(id:string)=>apiModelDisplayName(modelLabels[id]?.trim()||id);
   const url=new URL(origin);if(url.protocol!=='http:'||!['127.0.0.1','localhost'].includes(url.hostname)||url.pathname!=='/'||url.search||url.hash||url.username||url.password)throw new Error('接入地址必须是本机网关');
   if(target==='pi'||target==='deepseek'){
     const doc=original===null?{}:object(decodeConfig(target,original));
@@ -392,11 +393,13 @@ export class AgentConnections {
       const original=active?(input.rewrite?repairConfigBase(active,before):restoredConfig(active,before)):before;
       const selectedModels=input.selections?.map(item=>item.model);
       if(input.selections){modelSelectionsSchema.parse(input.selections);if(!input.selections.some(item=>item.model===input.model&&item.sourceId===input.sourceId))throw conflict('默认模型必须在已选模型中');}
-      const catalogPath=input.target==='codex'?this.catalogPath(selectedModels?JSON.stringify(selectedModels):input.model):undefined;
+      // Include display metadata so a renamed menu does not reuse the legacy cached path.
+      const catalog=input.target==='codex'?codexModelCatalog(selectedModels??input.model,input.modelLabels,input.modelImages):undefined;
+      const catalogPath=catalog?this.catalogPath(JSON.stringify(catalog)):undefined;
       let after:string;try{after=connectedConfig(input.target,original,input.origin,input.model,input.key,catalogPath,selectedModels,input.modelLabels);}catch{throw conflict('配置格式无法安全解析，未修改原文件。');}
       if(catalogPath){
         await safePath(catalogPath);const temp=`${catalogPath}.${randomUUID()}.tmp`;
-        try{await writeFile(temp,JSON.stringify(codexModelCatalog(selectedModels??input.model,input.modelLabels,input.modelImages)),{mode:0o600,flag:'wx'});await rename(temp,catalogPath);}finally{await rm(temp,{force:true});}
+        try{await writeFile(temp,JSON.stringify(catalog),{mode:0o600,flag:'wx'});await rename(temp,catalogPath);}finally{await rm(temp,{force:true});}
       }
       const record:Record={id:randomUUID(),target:input.target,createdAt:new Date().toISOString(),before:original,after,beforeHash:hash(original),afterHash:hash(after),state:'prepared',keyId:input.keyId,sourceId:input.sourceId,model:input.model,...(input.selections?{selections:input.selections}:{}),...(active?{supersedes:active.id,previousConfig:before,previousHash:hash(before)}:{})};
       await this.save(record);await this.replace(input.target,input.revision,after,input.allowRunning);record.state='applied';await this.save(record);await this.retirePrevious(record);return publicRecord(record);

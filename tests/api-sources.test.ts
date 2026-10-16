@@ -643,3 +643,16 @@ it('cleans only invalid Messages text blocks while keeping tool results, signatu
  expect(cleaned.messages).toEqual([{role:'assistant',content:[{type:'text',text:' preserved '},thinking]},{role:'user',content:[tool]}]);
  expect(body).toEqual(original);
 });
+
+it('exports the saved API source name and platform model label through Agent menus and model discovery',async()=>{
+ const {service,headers,add,root}=await fixture();const source=await add('🍋 公司接口','fixture-export-key');const model=apiModelID(source.id,'shared');
+ const local=(await service.app.inject({url:'/api/local-agent',headers})).json();
+ expect(local.models.find((m:{id:string})=>m.id===model)?.displayName).toBe('🍋 公司接口 · shared');
+ const target=(await service.app.inject({url:'/api/a2a',headers})).json().targets.find((t:{id:string})=>t.id==='claude');
+ const connected=await service.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload:{target:'claude',sourceId:source.id,model,selections:[{sourceId:source.id,model}],revision:target.revision}});
+ expect(connected.statusCode,connected.body).toBe(200);
+ const config=JSON.parse(await readFile(join(root,'claude/settings.json'),'utf8'));
+ expect(config.modelPicker.options).toEqual([{model,label:'🍋 公司接口 · shared'}]);
+ const listed=await service.app.inject({url:'/v1/models',headers:{...headers,authorization:`Bearer ${config.env.ANTHROPIC_AUTH_TOKEN}`}});
+ expect(listed.statusCode,listed.body).toBe(200);expect(listed.json().data.find((m:{id:string})=>m.id===model)).toMatchObject({id:model,name:'🍋 公司接口 · shared',display_name:'🍋 公司接口 · shared'});
+});

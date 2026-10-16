@@ -16,7 +16,7 @@ import type { UsageData } from './usage-data';
 import { UsageFold } from './UsagePanel';
 import {DragHandle,dropOrder,orderModels,useModelOrder} from './display-order';
 import { isSourceSelectionAvailable, sourceLabel, sourceOptions } from './source-options';
-import { modelLabel } from './model-label';
+import { qualifiedModelLabel as modelLabel } from './model-label';
 import { useNativeLogin } from './native-login';
 import { FlowDialog } from './FlowDialog';
 import {useListReturn} from './list-return';
@@ -66,7 +66,7 @@ export function AgentsPage({local,calls,usage,notify,onRepair,onAgent}:{local:Lo
     const problem=!!problemOf(item,calls,available);
     return <button key={item.id} role="tab" aria-selected={target?.id===item.id} tabIndex={target?.id===item.id?0:-1} className="tfTile" onClick={()=>choose(item.id)}>
      <ProviderIcon provider={item.id} size={30}/>
-     <span className="tfTileText"><strong>{item.name}</strong><small>{connection?modelLabel(local.models,connection.model):native?`账号 · ${native.label}`:item.connection?'模型不可用':'未接入'}</small></span>
+     <span className="tfTileText"><strong>{item.name}</strong><small>{connection?modelLabel(local,connection.model):native?`账号 · ${native.label}`:item.connection?'模型不可用':'未接入'}</small></span>
      <i className={`dot ${problem?'bad':connection||native?'ok':''}`} aria-label={problem?'有问题':connection||native?'使用中':'未接入'}/>
     </button>;
    })}
@@ -107,7 +107,7 @@ function AgentPanel({target,update,login,local,usage,problem,notify,onRepair,onC
  const current=connection&&isSourceSelectionAvailable(available,connection)?{sourceId:connection.sourceId,model:connection.model}:undefined;
  const isCurrent=(choice:Choice)=>!!current&&current.sourceId===choice.sourceId&&current.model===choice.model;
  const models:Choice[]=draftDirty?draftModels:connection?.selections??(connection?[{sourceId:connection.sourceId,model:connection.model}]:draftModels.length?draftModels:target.backups.find(record=>record.selections)?.selections??[]);
- const shownModels=orderModels(models,choice=>modelLabel(local.models,choice.model),modelOrder==='manual'?'manual':'name',modelRanks);const modelIds=shownModels.map(item=>item.model);
+ const shownModels=orderModels(models,choice=>modelLabel(local,choice.model),modelOrder==='manual'?'manual':'name',modelRanks);const modelIds=shownModels.map(item=>item.model);
  const moveAgentModel=(from:string,to:string,items:readonly string[],after=false)=>{if(from===to||!items.includes(from)||!items.includes(to))return;moveModel(from,to,items,after);const ids=items.filter(id=>id!==from);ids.splice(ids.indexOf(to)+(after?1:0),0,from);saveDraft(ids.flatMap(id=>models.filter(choice=>choice.model===id)));};
  const accounts=(login?.accounts??[]).filter(account=>account.current||!hidden.includes(`account:${account.id}`));
  const hiddenCount=(login?.accounts.length??0)-accounts.length;
@@ -148,7 +148,7 @@ function AgentPanel({target,update,login,local,usage,problem,notify,onRepair,onC
   await requestJSON('/api/a2a/connect',post({allowRunning:true,restartCodex,target:target.id,selections,sourceId:choice.sourceId,model:choice.model,revision:next.revision,...(next.connection?{replaceId:next.connection.id}:{}),tokenLimit:null}),600000);
   saveDraft(selections,false);configurationSaved(restartCodex);
   if(hidden.includes(choiceId(choice)))hide(hidden.filter(id=>id!==choiceId(choice)));
-  const label=modelLabel(local.models,choice.model);
+  const label=modelLabel(local,choice.model);
   const menu=target.id==='qoder'||target.id==='workbuddy'?`，在它的模型菜单里选 ${label}`:'';
   if(target.id==='pi'||target.id==='claude')return `${target.name} 已导入 ${selections.length} 个模型，下次启动时加载配置，可用 /model 选择模型。`;
   if(target.id==='deepseek')return `DeepSeek Harness 桌面版已导入 ${selections.length} 个模型，默认 ${label}；重新打开应用后生效。`;
@@ -259,10 +259,10 @@ function AgentPanel({target,update,login,local,usage,problem,notify,onRepair,onC
     const used=totalsOf(rows.filter(row=>row.model===choice.model&&(!row.sourceId||row.sourceId===choice.sourceId)));
     return <li key={id} className={`tfDragRow ${on?'on':''}`} {...dropOrder('models',choice.model,modelIds,moveAgentModel)}>
      <div className="tfLine">
-      <DragHandle kind="models" id={choice.model} label={modelLabel(local.models,choice.model)} items={modelIds} move={moveAgentModel}/>
+      <DragHandle kind="models" id={choice.model} label={modelLabel(local,choice.model)} items={modelIds} move={moveAgentModel}/>
       <div className="tfLineMain tfModelCardMain">
        <ProviderIcon provider={available.find(source=>source.id===choice.sourceId)?.provider??'api'} size={22}/>
-       <span className="tfRowText"><strong title={modelLabel(local.models,choice.model)}>{modelLabel(local.models,choice.model)}</strong><small>{sourceLabel(local,choice.sourceId)}{used.requests?` · ${compactTokens(used.totalTokens)} tokens`:''}</small></span>
+       <span className="tfRowText"><strong title={modelLabel(local,choice.model)}>{modelLabel(local,choice.model)}</strong><small>{sourceLabel(local,choice.sourceId)}{used.requests?` · ${compactTokens(used.totalTokens)} tokens`:''}</small></span>
        {on&&target.configurationState==='configured'&&<b className="tfUsing">{target.id==='pi'?'已导入':'默认模型'}</b>}
       </div>
       <span className="tfActions">
@@ -274,7 +274,7 @@ function AgentPanel({target,update,login,local,usage,problem,notify,onRepair,onC
       <strong>Token 使用（{rangeLabel(usage.range)}）</strong>
       <span>{used.requests?`${formatTokens(used.requests)} 次请求${used.failed?`（${formatTokens(used.failed)} 次失败）`:''} · ${formatTokens(used.totalTokens)} tokens`:'这段时间还没有请求'}</span>
       {used.requests>0&&<span>未缓存输入 {formatTokens(used.uncachedTokens)} · 缓存读取 {formatTokens(used.cachedTokens)}（命中 {percentText(used.hitRate)}） · 输出 {formatTokens(used.outputTokens)}{used.last?` · 最近 ${new Date(used.last).toLocaleString()}`:''}</span>}
-      <small>{modelLabel(local.models,choice.model)} · {sourceLabel(local,choice.sourceId)}</small>
+      <small>{modelLabel(local,choice.model)} · {sourceLabel(local,choice.sourceId)}</small>
      </div>}
     </li>;
    })}

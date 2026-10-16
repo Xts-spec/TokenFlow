@@ -1,5 +1,10 @@
 export type ApiProtocol='responses'|'chat'|'messages';
 
+/** Keep source identities in routing IDs, not in fallback menu labels. */
+export function apiModelDisplayName(value:string){
+ return value.replace(/^api-[a-f0-9]{24}\//,'');
+}
+
 /** A version suffix alone cannot distinguish OpenAI protocols. */
 export function protocolFromURL(value:string):ApiProtocol|undefined{
  try{

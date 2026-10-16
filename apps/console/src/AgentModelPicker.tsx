@@ -1,7 +1,7 @@
 import {useEffect,useLayoutEffect,useRef,useState} from 'react';
 import type {LocalAgentSnapshot} from '../../../packages/core/src/cliproxy';
 import {modelGroups,type Choice} from './flow-model';
-import {modelLabel} from './model-label';
+import {qualifiedModelLabel as modelLabel} from './model-label';
 import {compareNames,DragHandle,dropOrder,orderModels,useModelOrder} from './display-order';
 import {modelManufacturer} from './UsagePanel';
 import {ProviderIcon} from './ProviderIcon';
@@ -26,7 +26,7 @@ export function AgentModelPicker({open,title,local,current,selected,onConfirm,on
  const chooseSource=(id:string)=>{if(list.current)positions.current.set(key,list.current.scrollTop);setSource(id);};
  const available=(choice:Choice)=>all.some(group=>group.id===choice.sourceId&&group.models.some(model=>model.id===choice.model));
  const toggle=(choice:Choice)=>setDraft(items=>items.some(item=>same(item,choice))?items.filter(item=>!same(item,choice)):[...items,choice]);
- const chosen=orderModels(draft,item=>modelLabel(local.models,item.model),displayOrder,ranks);
+ const chosen=orderModels(draft,item=>modelLabel(local,item.model),displayOrder,ranks);
  const chosenIds=chosen.map(item=>item.model),visibleIds=active?.models.map(model=>model.id)??[];
  const move=(from:string,to:string,items:readonly string[],after=false)=>{moveModel(from,to,items,after);};
  const count=(id:string)=>draft.filter(item=>item.sourceId===id).length;
@@ -36,7 +36,7 @@ export function AgentModelPicker({open,title,local,current,selected,onConfirm,on
   <label className="tfSearch tfAgentPickerSearch"><Icon name="search" size={16}/><input ref={search} type="search" placeholder="搜索模型、来源或账号" aria-label="搜索厂商、账号或模型" value={query} onChange={event=>{if(list.current)positions.current.set(key,list.current.scrollTop);setQuery(event.target.value);}}/></label>
   <section className="tfAgentPicked" aria-label="已选模型">
    <header><span>已选模型 <b aria-live="polite">{draft.length}</b></span><button type="button" className="textButton" disabled={!draft.length} onClick={()=>setDraft([])}>清空选择</button></header>
-   <ul>{chosen.map(choice=>{const group=all.find(group=>group.id===choice.sourceId);const label=modelLabel(local.models,choice.model);const ok=available(choice);return <li className={`tfAgentPickedTag tfDragRow ${ok?'':'unavailable'}`} key={`${choice.sourceId}/${choice.model}`} {...dropOrder('models',choice.model,chosenIds,move)} title={`${label} · ${group?.accountLabel??'来源不可用'}`}>
+   <ul>{chosen.map(choice=>{const group=all.find(group=>group.id===choice.sourceId);const label=modelLabel(local,choice.model);const ok=available(choice);return <li className={`tfAgentPickedTag tfDragRow ${ok?'':'unavailable'}`} key={`${choice.sourceId}/${choice.model}`} {...dropOrder('models',choice.model,chosenIds,move)} title={`${label} · ${group?.accountLabel??'来源不可用'}`}>
     <DragHandle kind="models" id={choice.model} label={label} items={chosenIds} move={move}/><ProviderIcon provider={modelManufacturer(choice.model,local)} size={16}/><strong>{label}</strong><button type="button" className="iconButton" aria-label={`移除 ${label}`} onClick={()=>toggle(choice)}><Icon name="close" size={12}/></button>
    </li>;})}</ul>{!chosen.length&&<p>从下方选择模型</p>}
   </section>

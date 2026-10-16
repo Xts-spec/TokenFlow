@@ -5,7 +5,7 @@ import {localDay} from './usage-model';
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { LocalAgentSnapshot } from '../../../packages/core/src/cliproxy';
 import { QuotaDetails } from './QuotaDetails';
-import { modelLabel } from './model-label';
+import { qualifiedModelLabel as modelLabel } from './model-label';
 import { formatTokens, percentText, rangeLabel, totalsOf } from './usage-model';
 import type { UsageData } from './usage-data';
 import { loginNames, useNativeLogin, type LoginProvider } from './native-login';
@@ -117,7 +117,7 @@ export function AccountsPage({local,usage,disabled,actions,notify}:{local:LocalA
     </div>
     {(()=>{
      const quota=local.quotas[account.id];const native=login?.accounts.find(a=>a.id===account.id);
-     const shownModels=orderModels(account.models??[],id=>modelLabel(local.models,id),modelOrder==='manual'?'manual':'name',modelRanks);
+     const shownModels=orderModels(account.models??[],id=>modelLabel(local,id),modelOrder==='manual'?'manual':'name',modelRanks);
      return <div id={`account-panel-${account.id}`} role="tabpanel" aria-labelledby={`account-tab-${account.id}`} className={`tfAccountDetail ${account.disabled?'off':''}`}>
       <div className="tfAccountTop">
        {login&&native&&!native.current&&<button className="textButton tfAccountLogin" disabled={locked||!native.switchable} title={native.switchable?`把 ${loginNames[provider.id as LoginProvider]} 自己的登录换成这个账号`:native.reason} onClick={()=>void switchLogin(provider.id as LoginProvider,account.id,account.label)}>{switching?'正在切换…':'登录此账号'}</button>}
@@ -131,7 +131,7 @@ export function AccountsPage({local,usage,disabled,actions,notify}:{local:LocalA
        <ColumnDivider storageKey="token-flow.layout.account-split" label="调整额度与模型宽度"/>
        <section className="tfModelsSide" aria-label="账号模型"><div className="tfAccountModels" id={`models-${account.id}`}>
        <header className="tfAccountModelsHead"><h3>模型</h3><small className="tfAccountModelCount">{account.models?.length??0} 个模型</small></header>
-       {account.models?.length?<ul aria-label={`${account.label} 支持的模型`}>{shownModels.map(id=><li key={id} className="tfDragRow" {...dropOrder('models',id,shownModels,moveModel)}><DragHandle kind="models" id={id} label={modelLabel(local.models,id)} items={shownModels} move={moveModel}/><ProviderIcon provider={modelManufacturer(id,local)} size={20}/><span className="tfCatalogModelName"><strong title={modelLabel(local.models,id)}>{modelLabel(local.models,id)}</strong></span><button className="textButton" aria-label={`复制模型 ${modelLabel(local.models,id)}`} title={id} onClick={()=>void copyText(id).then(()=>notify({kind:'ok',text:'模型 ID 已复制'})).catch(()=>notify({kind:'error',text:'复制失败'}))}>复制</button></li>)}</ul>:<p className="tfHint">尚未获取到模型，请启用账号后刷新。</p>}
+       {account.models?.length?<ul aria-label={`${account.label} 支持的模型`}>{shownModels.map(id=><li key={id} className="tfDragRow" {...dropOrder('models',id,shownModels,moveModel)}><DragHandle kind="models" id={id} label={modelLabel(local,id)} items={shownModels} move={moveModel}/><ProviderIcon provider={modelManufacturer(id,local)} size={20}/><span className="tfCatalogModelName"><strong title={modelLabel(local,id)}>{modelLabel(local,id)}</strong></span><button className="textButton" aria-label={`复制模型 ${modelLabel(local,id)}`} title={id} onClick={()=>void copyText(id).then(()=>notify({kind:'ok',text:'模型 ID 已复制'})).catch(()=>notify({kind:'error',text:'复制失败'}))}>复制</button></li>)}</ul>:<p className="tfHint">尚未获取到模型，请启用账号后刷新。</p>}
       </div></section></div>
       {login?.error&&<p className="tfWarn">本机登录状态读取失败：{login.error}</p>}
       {login&&native&&!native.current&&!native.switchable&&native.reason&&<p className="tfHint">{native.reason}</p>}

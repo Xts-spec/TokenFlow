@@ -1,7 +1,7 @@
 import type { LocalAgentSnapshot } from '../../../packages/core/src/cliproxy';
 import type { GatewayUsage } from '../../../packages/core/src/gateway-activity';
 import { isSourceSelectionAvailable, sourceOptions, type AvailableSourceModels } from './source-options';
-import { modelLabel } from './model-label';
+import { qualifiedModelLabel as modelLabel } from './model-label';
 import {formatTokens} from './usage-model';
 
 export type ModelGroup={id:string;label:string;models:{id:string;label:string}[]};
@@ -29,7 +29,7 @@ export function modelGroups(local:LocalAgentSnapshot):ModelSourceGroup[]{
   accountLabel:source.label,
   remaining:source.remaining,
   quota:local.quotas[source.id],
-  models:source.models.map(id=>({id,label:modelLabel(local.models,id)})),
+  models:source.models.map(id=>({id,label:modelLabel(local,id)})),
  })).filter(group=>group.models.length);
 }
 
@@ -41,7 +41,7 @@ export function keyScopes(local:LocalAgentSnapshot):ModelGroup[]{
   const id=source?`api-${source.id}`:model.provider??model.id.split('/')[0];
   const label=source?source.name:local.providers.find(p=>p.id===id)?.label??id;
   const group=groups.get(id)??{id,label,models:[]};
-  group.models.push({id:model.id,label:modelLabel(local.models,model.id)});groups.set(id,group);
+  group.models.push({id:model.id,label:modelLabel(local,model.id)});groups.set(id,group);
  }
  return [...groups.values()].sort((a,b)=>a.label.localeCompare(b.label));
 }

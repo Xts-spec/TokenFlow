@@ -2,7 +2,7 @@ import { useLayoutEffect, useId, useRef, useState } from 'react';
 import {createPortal} from 'react-dom';
 import type { LocalAgentSnapshot } from '../../../packages/core/src/cliproxy';
 import { modelGroups, type Choice, type ModelSourceGroup } from './flow-model';
-import { modelLabel } from './model-label';
+import { qualifiedModelLabel as modelLabel } from './model-label';
 import {DragHandle,dropOrder,compareNames,ModelOrderControl,orderModels,useModelOrder} from './display-order';
 import { Icon } from './Icons';
 import { ProviderIcon } from './ProviderIcon';
@@ -24,10 +24,10 @@ export function ModelPicker({open,title,local,current,recent=[],isDisabled,onPic
  const allGroups=modelGroups(local).sort((a,b)=>Number(b.provider==='api')-Number(a.provider==='api')||compareNames(a.label,b.label));
  const available=(choice:Choice)=>allGroups.some(group=>group.id===choice.sourceId&&group.models.some(model=>model.id===choice.model));
  const canKeep=(choice:Choice)=>retained.some(item=>same(item,choice));
- const matches=(group:ModelSourceGroup,id:string)=>!q||`${group.label} ${group.providerLabel} ${id} ${modelLabel(local.models,id)}`.toLowerCase().includes(q);
+ const matches=(group:ModelSourceGroup,id:string)=>!q||`${group.label} ${group.providerLabel} ${id} ${modelLabel(local,id)}`.toLowerCase().includes(q);
  const groups=allGroups.map(group=>({...group,models:orderModels(group.models.filter(model=>matches(group,model.id)),model=>model.label,modelOrder,modelRanks)})).filter(group=>group.models.length);
  const visibleByGroup=new Map(groups.map(group=>[group.id,group.models.map(model=>model.id)]));
- const shownRecent=orderModels(recent.flatMap(choice=>{const group=allGroups.find(g=>g.id===choice.sourceId&&g.models.some(m=>m.id===choice.model));return group&&matches(group,choice.model)?[{choice,group}]:[];}).slice(0,6),item=>modelLabel(local.models,item.choice.model),modelOrder,modelRanks,item=>item.choice.model);
+ const shownRecent=orderModels(recent.flatMap(choice=>{const group=allGroups.find(g=>g.id===choice.sourceId&&g.models.some(m=>m.id===choice.model));return group&&matches(group,choice.model)?[{choice,group}]:[];}).slice(0,6),item=>modelLabel(local,item.choice.model),modelOrder,modelRanks,item=>item.choice.model);
  const row=(choice:Choice,label:string,group:ModelSourceGroup,recent=false)=>{
   const on=multiple?draft.some(item=>same(item,choice)):same(current,choice);
   const duplicate=multiple&&draft.some(item=>item.model===choice.model&&!same(item,choice));
@@ -48,8 +48,8 @@ export function ModelPicker({open,title,local,current,recent=[],isDisabled,onPic
   <label className="tfSearch"><Icon name="search" size={15}/><input type="search" autoFocus placeholder="搜索厂商、账号或模型" aria-label="搜索厂商、账号或模型" value={query} onChange={event=>{setQuery(event.target.value);setExpanded({});}}/></label>
   <div className="tfPickerOrder"><ModelOrderControl value={modelOrder} onChange={setModelOrder}/></div>
   <div className="tfPickBody">
-   {multiple&&draft.some(choice=>!available(choice))&&<section className="tfPickUnavailable"><h3>不可用的已选模型</h3><p className="tfHint">{retained.length?'已绑定来源的模型可保留原权限或移除。没有绑定来源的模型，请移除后重新选择。':'移除不可用模型后，可应用其余选择。'}</p>{draft.filter(choice=>!available(choice)).map(choice=><button type="button" key={`${choice.sourceId}/${choice.model}`} onClick={()=>setDraft(items=>items.filter(item=>!same(item,choice)))}>移除 {modelLabel(local.models,choice.model)}</button>)}</section>}
-   {shownRecent.length>0&&<section className="tfPickRecent"><h3>最近使用</h3><div className="tfPickOptions">{shownRecent.map(({choice,group})=>row(choice,modelLabel(local.models,choice.model),group,true))}</div></section>}
+   {multiple&&draft.some(choice=>!available(choice))&&<section className="tfPickUnavailable"><h3>不可用的已选模型</h3><p className="tfHint">{retained.length?'已绑定来源的模型可保留原权限或移除。没有绑定来源的模型，请移除后重新选择。':'移除不可用模型后，可应用其余选择。'}</p>{draft.filter(choice=>!available(choice)).map(choice=><button type="button" key={`${choice.sourceId}/${choice.model}`} onClick={()=>setDraft(items=>items.filter(item=>!same(item,choice)))}>移除 {modelLabel(local,choice.model)}</button>)}</section>}
+   {shownRecent.length>0&&<section className="tfPickRecent"><h3>最近使用</h3><div className="tfPickOptions">{shownRecent.map(({choice,group})=>row(choice,modelLabel(local,choice.model),group,true))}</div></section>}
    {groups.map(group=>{
     const isOpen=expanded[group.id]??!!q;
     const count=multiple?draft.filter(choice=>choice.sourceId===group.id).length:current?.sourceId===group.id?1:0;
