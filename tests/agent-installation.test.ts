@@ -75,3 +75,12 @@ it('offers repair when Claude package exists but its native binary cannot start'
  fixture.files.set('/fixture/lib/node_modules/@anthropic-ai/claude-code/package.json',JSON.stringify({name:'@anthropic-ai/claude-code',version:'2.1.0'}));fixture.fail=true;
  expect(await detectAgent('claude')).toMatchObject({installed:false,automatic:true});
 });
+
+it.runIf(process.platform==='darwin')('reads the international WorkBuddy version independently from the domestic client',async()=>{
+ fixture.files.set('/Applications/WorkBuddy.app/Contents/Info.plist','<key>CFBundleShortVersionString</key><string>5.8.2</string>');
+ expect(await detectAgent('workbuddy-ai')).toMatchObject({installed:false,channel:'missing',automatic:false});
+ fixture.files.set('/Applications/WorkBuddy AI.app/Contents/Info.plist','<key>CFBundleShortVersionString</key><string>5.5.2</string>');
+ expect(await detectAgent('workbuddy-ai')).toMatchObject({installed:true,channel:'application',version:'5.5.2',path:'/Applications/WorkBuddy AI.app'});
+ expect(await detectAgent('workbuddy')).toMatchObject({installed:true,version:'5.8.2'});
+ expect(fixture.commands).toHaveLength(0);
+});

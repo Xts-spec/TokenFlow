@@ -1,3 +1,4 @@
+import type {AgentInstallation} from '../../../packages/core/src/agent-installation';
 import {hasNativeLogin} from './native-login-visibility';
 import {desktopIdentityMatches,officialLoginCoexists,officialLoginSelected} from '../../shared/native-login-identity';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -10,7 +11,7 @@ import { sourceOptions } from './source-options';
 export type LoginProvider='codex'|'claude'|'antigravity'|'workbuddy'|'workbuddy-ai'|'qoder'|'qoder-ide'|'cursor';
 export const loginNames:Record<LoginProvider,string>={codex:'Codex',claude:'Claude Code',antigravity:'Antigravity',workbuddy:'WorkBuddy','workbuddy-ai':'WorkBuddyAI',qoder:'Qoder','qoder-ide':'Qoder IDE',cursor:'Cursor'};
 export const clientOptions={workbuddy:[['workbuddy','WorkBuddy'],['workbuddy-ai','WorkBuddyAI']],qoder:[['qoder','Qoder'],['qoder-ide','Qoder IDE']]} as const;
-type Status={readOnly?:boolean;displayName?:string;loginState?:'signed-in'|'signed-out'|'unreadable';readError?:string;unavailableReason?:string;message?:string;organizationId?:string|null;domain?:string;enterpriseId?:string;revision:string;email?:string|null;accountId?:string|null;model?:string|null;pids:number[];backup:{state:string}|null;gatewayConnected:boolean;
+type Status={installation?:AgentInstallation;readOnly?:boolean;displayName?:string;loginState?:'signed-in'|'signed-out'|'unreadable';readError?:string;unavailableReason?:string;message?:string;organizationId?:string|null;domain?:string;enterpriseId?:string;revision:string;email?:string|null;accountId?:string|null;model?:string|null;pids:number[];backup:{state:string}|null;gatewayConnected:boolean;
  accounts:{organizationId?:string|null;domain?:string;enterpriseId?:string;id:string;email?:string|null;accountId?:string|null;switchable:boolean;reason:string}[]};
 export type LoginAccount={id:string;label:string;remaining:number|null;models:string[];switchable:boolean;reason:string;current:boolean;local:boolean};
 
@@ -53,7 +54,8 @@ export function useNativeLogin(provider:LoginProvider,local:LocalAgentSnapshot,e
  };
  const switchTo=async(id:string,restartCodex=false)=>{
   if(status?.readOnly)throw new Error('请在官方客户端切换本机登录。');
-  const account=accounts.find(a=>a.id===id);if(!account)throw new Error('账号已不可用，请刷新。');
+  const account=accounts.find(a=>a.id===id);if(!account)throw new Error('账号已不可用，请刷新。');if(account.local)return '';
+
   let latest=await requestJSON<Status>(base(provider));
   const preferred=`${provider}/${latest.model}`;
   const model=account.models.includes(preferred)?preferred:account.models[0];

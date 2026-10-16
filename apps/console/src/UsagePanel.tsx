@@ -160,7 +160,7 @@ export function modelManufacturer(model:string,local:LocalAgentSnapshot){
  if(/claude|sonnet|opus|haiku/.test(id))return 'claude';
  if(/deepseek/.test(id))return 'deepseek';
  if(/kimi|moonshot/.test(id))return 'kimi';
- if(/glm/.test(id))return 'zcode';
+ if(/glm/.test(id))return 'zai';
  if(/grok/.test(id))return 'xai';
  if(/doubao/.test(id))return 'doubao';
  return local.models.find(item=>item.id===model)?.provider??(model.startsWith('api-')?'api':model.split('/')[0]);

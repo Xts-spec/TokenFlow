@@ -14,6 +14,7 @@ const recipes={
  deepseek:{bin:'dsh',package:'',download:'https://www.deepseek.com/zh/download/'},
  qoder:{bin:'qoder',package:'',download:'https://qoder.com/download'},
  workbuddy:{bin:'workbuddy',package:'',download:'https://www.codebuddy.cn/work/'},
+ 'workbuddy-ai':{bin:'workbuddyai',package:'',download:'https://www.workbuddy.ai/'},
 } as const;
 export type AgentInstallation={installed:boolean;channel:'npm'|'application'|'other'|'missing';version?:string;path?:string;download:string;automatic:boolean;supported?:boolean;reason?:string};
 const failure=(message:string)=>Object.assign(new Error(message),{statusCode:409});
@@ -38,7 +39,7 @@ export function desktopCandidates(target:Target|'claude-desktop'|'workbuddy-ai'|
  if(platform==='win32')return (desktopNames[target]??[]).flatMap(name=>[env.LOCALAPPDATA&&win32.join(env.LOCALAPPDATA,'Programs'),env.LOCALAPPDATA,env.ProgramFiles,env['ProgramFiles(x86)']].filter((base):base is string=>!!base&&win32.isAbsolute(base)).map(base=>win32.join(base,name,`${target==='workbuddy-ai'?'WorkBuddyAI':target==='qoder-ide'?'Qoder':name}.exe`)));
  return [];
 }
-export function agentCompatibility(target:Target|'claude-desktop',platform=process.platform,arch=process.arch){
+export function agentCompatibility(target:Target|'claude-desktop'|'workbuddy-ai',platform=process.platform,arch=process.arch){
  return target==='deepseek'&&platform==='darwin'&&arch!=='arm64'?{supported:false,reason:'DeepSeek 官方暂未提供 Intel Mac 桌面安装包。'}:{supported:true};
 }
 const versionOf=(text:string)=>text.match(/\b(\d+\.\d+\.\d+(?:-[\w.-]+)?)\b/)?.[1];
@@ -69,7 +70,7 @@ const cachedStoreApp=(target:Target)=>{
  const cached=storeCache.get(target);if(cached&&cached.expires>Date.now())return cached.value;
  const value=windowsStoreApp(target);storeCache.set(target,{expires:Date.now()+15000,value});return value;
 };
-async function desktopInstallation(target:Target|'claude-desktop'):Promise<AgentInstallation|undefined>{
+async function desktopInstallation(target:Target|'claude-desktop'|'workbuddy-ai'):Promise<AgentInstallation|undefined>{
  for(const path of desktopCandidates(target))try{
   let version:string|undefined;
   if(process.platform==='darwin'){
@@ -89,11 +90,11 @@ async function desktopInstallation(target:Target|'claude-desktop'):Promise<Agent
   if(store?.location)return {installed:true,channel:'application',path:store.location,version:store.version,download:recipes[target].download,automatic:false,...agentCompatibility(target)};
  }
 }
-export async function detectAgent(target:Target|'claude-desktop'):Promise<AgentInstallation>{
+export async function detectAgent(target:Target|'claude-desktop'|'workbuddy-ai'):Promise<AgentInstallation>{
  const recipe=recipes[target];
  const desktop=await desktopInstallation(target);if(desktop&&(target!=='codex'))return desktop;
  // DeepSeek is the official desktop app; Pi is the official coding-agent package.
- if(target==='deepseek'||target==='claude-desktop')return {installed:false,channel:'missing',download:recipe.download,automatic:false,...agentCompatibility(target)};
+ if(target==='deepseek'||target==='claude-desktop'||target==='workbuddy-ai')return {installed:false,channel:'missing',download:recipe.download,automatic:false,...agentCompatibility(target)};
  let path=await executable(recipe.bin);
  if(target==='claude'&&path&&/\.cmd$/i.test(path)){
   for(const name of ['bin/claude.exe','cli.js']){const native=join(dirname(path),'node_modules','@anthropic-ai','claude-code',name);try{await access(native,constants.F_OK);path=native;break;}catch{}}
