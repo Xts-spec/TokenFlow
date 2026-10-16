@@ -25,12 +25,13 @@ const service = await createDesktopService({
 });
 
 try {
-  console.log('=== 2. 真实监听 127.0.0.1:9527 ===');
-  const address = await service.app.listen({ host: '127.0.0.1', port: 9527 });
+  const testPort = Number(process.env.AGENT_TEST_PORT ?? 9528);
+  console.log(`=== 2. 真实监听 127.0.0.1:${testPort} ===`);
+  const address = await service.app.listen({ host: '127.0.0.1', port: testPort });
   console.log('服务已在本地监听:', address);
 
   const headers = {
-    host: '127.0.0.1:9527',
+    host: `127.0.0.1:${testPort}`,
     authorization: `Bearer ${token}`,
   };
 
