@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join,resolve } from 'node:path';
 import { createServer } from 'node:net';
 import { createDesktopService } from '../packages/core/src/service.js';
-it('switches only permitted Codex accounts via admin API and preserves the gateway pool',async()=>{
+it.each([true,false])('switches Codex with history compatibility by default and always reconciles thread routes when compatibility normalization is disabled (%s)',async historyEnabled=>{
  const root=await mkdtemp(join(await realpath(tmpdir()),'native-account-api-'));const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
  await mkdir(join(root,'cliproxy/auth'),{recursive:true});
  await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'a.json',provider:'codex',status:'active',models:['model-a']},{name:'b.json',provider:'codex',status:'active',models:['model-b']}]));
@@ -15,19 +15,19 @@ it('switches only permitted Codex accounts via admin API and preserves the gatew
  const paths={qoder:join(root,'qoder/settings.json'),codex:join(root,'codex/config.toml'),claude:join(root,'claude/settings.json'),workbuddy:join(root,'workbuddy/models.json')};
  const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin-token',localKey:'internal-key',secrets:{get:async()=>'',set:async()=>{}},agentPaths:paths,agentProcesses:async()=>[]});
  const headers={host:'127.0.0.1:9527',authorization:'Bearer admin-token'};
- const context=vi.spyOn(CodexContext.prototype,'prepareOfficial').mockRejectedValue(new Error('cannot back up history'));
- const history=vi.spyOn(CodexThreadMigration.prototype,'restore').mockRejectedValue(new Error('history unavailable'));
+ const context=vi.spyOn(CodexContext.prototype,'prepareOfficial').mockImplementation(async()=>{if(!historyEnabled)throw new Error('cannot back up history');return {changed:0} as any;});
+ const history=vi.spyOn(CodexThreadMigration.prototype,'restore').mockImplementation(async()=>({migrated:1}));
  try{
   await service.proxy.start();
   expect((await service.app.inject({url:'/api/codex-accounts',headers:{host:headers.host}})).statusCode).toBe(401);
   let status=(await service.app.inject({url:'/api/codex-accounts',headers})).json();expect(status.accounts.map((a:{switchable:boolean})=>a.switchable)).toEqual([true,false]);
   const source=service.proxy.snapshot().accounts.find(a=>a.models?.includes('codex/model-a'))!;
-  const payload={revision:status.revision,sourceId:source.id,model:'codex/model-b'};
+  const payload={revision:status.revision,sourceId:source.id,model:'codex/model-b',...(historyEnabled?{}:{restoreHistory:false})};
   expect((await service.app.inject({url:'/api/codex-accounts/switch',method:'POST',headers,payload})).statusCode).toBe(409);
   const switched=await service.app.inject({url:'/api/codex-accounts/switch',method:'POST',headers,payload:{...payload,model:'codex/model-a'}});expect(switched.statusCode,switched.body).toBe(200);expect(switched.body).not.toMatch(/secret-|refresh_token|access_token/);
   expect(JSON.parse(await readFile(join(root,'codex/auth.json'),'utf8')).tokens.account_id).toBe('account-a');
   expect(await readFile(join(root,'cliproxy/auth/a.json'),'utf8')).toBe(a);expect(await readFile(join(root,'cliproxy/auth/b.json'),'utf8')).toBe(b);
-  status=switched.json();expect((await service.app.inject({url:'/api/codex-accounts/restore',method:'POST',headers,payload:{revision:status.revision}})).statusCode).toBe(200);
+  status=switched.json();expect((await service.app.inject({url:'/api/codex-accounts/restore',method:'POST',headers,payload:{revision:status.revision,...(historyEnabled?{}:{restoreHistory:false})}})).statusCode).toBe(200);
   const targets=(await service.app.inject({url:'/api/a2a',headers})).json().targets;
   expect((await service.app.inject({url:'/api/a2a/connect',method:'POST',headers,payload:{target:'codex',revision:targets.find((t:{id:string})=>t.id==='codex').revision,sourceId:source.id,model:'codex/model-a'}})).statusCode).toBe(200);
   status=(await service.app.inject({url:'/api/codex-accounts',headers})).json();expect(status.gatewayConnected).toBe(true);
@@ -37,10 +37,10 @@ it('switches only permitted Codex accounts via admin API and preserves the gatew
   const again=(await service.app.inject({url:'/api/a2a',headers})).json().targets.find((t:{id:string})=>t.id==='codex');
   expect((await service.app.inject({url:'/api/a2a/connect',method:'POST',headers,payload:{target:'codex',revision:again.revision,sourceId:source.id,model:'codex/model-a'}})).statusCode).toBe(200);
   status=(await service.app.inject({url:'/api/codex-accounts',headers})).json();
-  const restored=await service.app.inject({url:'/api/codex-accounts/restore',method:'POST',headers,payload:{revision:status.revision}});
+  const restored=await service.app.inject({url:'/api/codex-accounts/restore',method:'POST',headers,payload:{revision:status.revision,...(historyEnabled?{}:{restoreHistory:false})}});
   expect(restored.statusCode,restored.body).toBe(200);expect(restored.json()).toMatchObject({gatewayConnected:false,accountId:null,backup:null});
   await expect(readFile(paths.codex)).rejects.toMatchObject({code:'ENOENT'});
   expect(await readFile(join(root,'cliproxy/auth/a.json'),'utf8')).toBe(a);
-  expect(context).not.toHaveBeenCalled();expect(history).not.toHaveBeenCalled();
+  if(historyEnabled)expect(context).toHaveBeenCalled();else expect(context).not.toHaveBeenCalled();expect(history).toHaveBeenCalledWith('model-a');
  }finally{context.mockRestore();history.mockRestore();await service.app.close();await rm(root,{recursive:true,force:true});}
 });

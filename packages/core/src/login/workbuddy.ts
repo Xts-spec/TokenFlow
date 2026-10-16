@@ -13,5 +13,5 @@ export const workbuddy = deviceProvider({
 });
 
 export const workbuddyOverseas = deviceProvider({
- id:'workbuddy-overseas',label:'WorkBuddy 海外',hint:'WorkBuddy 海外账号授权',route:'/workbuddy-auth-url?region=overseas',accountProvider:'workbuddy',modelTypes:[],verification:{host:'www.workbuddy.ai',path:'/login'},requireUserCode:false,
+ id:'workbuddy-overseas',label:'WorkBuddy 国际版',hint:'WorkBuddy 国际版账号授权',route:'/workbuddy-auth-url?region=overseas',accountProvider:'workbuddy',modelTypes:[],verification:{host:'www.workbuddy.ai',path:'/login'},requireUserCode:false,
 });

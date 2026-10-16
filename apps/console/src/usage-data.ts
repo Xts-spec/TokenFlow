@@ -23,9 +23,10 @@ export function useUsage(enabled = true) {
   }, [range]);
   useEffect(() => {
     if (!enabled) return;
+    const reconnect=()=>void load();window.addEventListener('online',reconnect);
     void load();
     const timer = setInterval(() => void load(), 8000);
-    return () => { version.current++; clearInterval(timer); };
+    return () => { version.current++; clearInterval(timer);window.removeEventListener('online',reconnect); };
   }, [load, enabled]);
   return { range, setRange, reload: load, ...state };
 }

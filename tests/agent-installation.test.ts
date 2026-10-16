@@ -5,7 +5,7 @@ vi.mock('node:fs/promises',()=>({
  realpath:async(path:string)=>fixture.links.get(path)??path,
  readFile:async(path:string)=>{if(!fixture.files.has(path))throw Error('missing');return fixture.files.get(path);},
 }));
-vi.mock('node:child_process',()=>({execFile:(file:string,args:string[],options:{env?:{[key:string]:string}},callback:(error:Error|null,value:unknown)=>void)=>{fixture.commands.push({file,args,env:options?.env});if(fixture.fail){callback(Error('private install output must not escape'),undefined);return;}if(args.includes('install'))fixture.links.set('/fixture/bin/codex','/fixture/lib/node_modules/@openai/codex/bin/codex.js');callback(null,{stdout:''});}}));
+vi.mock('node:child_process',()=>({execFile:(file:string,args:string[],options:{env?:{[key:string]:string}},callback:(error:Error|null,value:unknown)=>void)=>{fixture.commands.push({file,args,env:options?.env});if(fixture.fail){callback(Error('private install output must not escape'),undefined);return;}if(args.includes('install')&&args.includes('@anthropic-ai/claude-code')){fixture.links.set('/fixture/bin/claude','/fixture/lib/node_modules/@anthropic-ai/claude-code/cli.js');fixture.files.set('/fixture/lib/node_modules/@anthropic-ai/claude-code/package.json',JSON.stringify({name:'@anthropic-ai/claude-code',version:'2.1.0'}));}if(args.includes('install'))fixture.links.set('/fixture/bin/codex','/fixture/lib/node_modules/@openai/codex/bin/codex.js');callback(null,{stdout:args.includes('--version')?'2.1.0 (Claude Code)':''});}}));
 import {detectAgent,AgentInstallationManager,desktopCandidates,agentCompatibility} from '../packages/core/src/agent-installation';
 afterEach(()=>vi.unstubAllEnvs());
 beforeEach(()=>{fixture.files.clear();fixture.links.clear();fixture.commands=[];fixture.fail=false;vi.stubEnv('PATH','/fixture/bin');fixture.links.set('/fixture/bin/npm','/fixture/node_modules/npm/bin/npm-cli.js');fixture.files.set('/fixture/lib/node_modules/@openai/codex/package.json',JSON.stringify({name:'@openai/codex',version:'1.1.0'}));});
@@ -61,4 +61,17 @@ it('finds the Microsoft Store Codex by its fixed package identity and tolerates 
  expect(await windowsStoreApp('codex',{run:async()=>{throw Error('no powershell');}})).toBeUndefined();
  // Only packages with a known identity are queried.
  expect(await windowsStoreApp('qoder',{run:async()=>{throw Error('must not run');}})).toBeUndefined();
+});
+
+it('runs the required Claude installer and verifies the executable, not just package metadata',async()=>{
+ const result=await new AgentInstallationManager(async()=>[]).manage('claude','install');
+ expect(result.installation.installed).toBe(true);
+ const install=fixture.commands.find(c=>c.args.includes('install'))!;
+ expect(install.args).toContain('--ignore-scripts=false');
+ expect(fixture.commands.some(c=>c.args.some(a=>a.endsWith('/claude-code/cli.js'))&&c.args.includes('--version'))).toBe(true);
+});
+it('offers repair when Claude package exists but its native binary cannot start',async()=>{
+ fixture.links.set('/fixture/bin/claude','/fixture/lib/node_modules/@anthropic-ai/claude-code/cli.js');
+ fixture.files.set('/fixture/lib/node_modules/@anthropic-ai/claude-code/package.json',JSON.stringify({name:'@anthropic-ai/claude-code',version:'2.1.0'}));fixture.fail=true;
+ expect(await detectAgent('claude')).toMatchObject({installed:false,automatic:true});
 });

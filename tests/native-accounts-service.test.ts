@@ -33,7 +33,7 @@ it('protects native account APIs, binds sources to providers, switches/restores 
   const targets=(await service.app.inject({url:'/api/a2a',headers})).json().targets;
   const connected=await service.app.inject({url:'/api/a2a/connect',method:'POST',headers,payload:{target:'claude',revision:targets.find((t:{id:string})=>t.id==='claude').revision,sourceId:source.id,model:'claude/sonnet'}});expect(connected.statusCode,connected.body).toBe(200);
   const status=(await service.app.inject({url:'/api/native-accounts/claude',headers})).json();expect(status.gatewayConnected).toBe(true);
-  const blocked=await service.app.inject({url:'/api/native-accounts/claude/switch',method:'POST',headers,payload:{revision:status.revision,sourceId:source.id,model:'claude/sonnet'}});expect(blocked.statusCode).toBe(409);expect(blocked.body).toContain('先还原');
+  const blocked=await service.app.inject({url:'/api/native-accounts/claude/switch',method:'POST',headers,payload:{revision:status.revision,sourceId:source.id,model:'claude/sonnet'}});expect(blocked.statusCode,blocked.body).toBe(200);expect(blocked.json().gatewayConnected).toBe(false);expect(blocked.json().email).toBe('claude@example.test');
   for(const [name,raw] of Object.entries(pool))expect(await readFile(join(root,'cliproxy/auth',name),'utf8')).toBe(raw);
  }finally{await service.app.close();await rm(root,{recursive:true,force:true});}
 });

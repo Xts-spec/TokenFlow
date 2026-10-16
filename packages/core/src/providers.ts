@@ -1,6 +1,51 @@
 import OpenAI from 'openai';
 import { z } from 'zod';
-import type { ResponsesClient, ResponsesApiResponse } from './responses-loop.js';
+type FunctionCallItem = {
+  arguments?: string;
+  call_id?: string;
+  name?: string;
+  status?: string;
+  type: "function_call";
+};
+
+type MessageItem = {
+  content?: Array<{
+    text?: string;
+    refusal?: string;
+    type?: string;
+  }>;
+  role?: string;
+  status?: string;
+  phase?: string | null;
+  type: "message";
+};
+
+type ResponseOutputItem =
+  | FunctionCallItem
+  | MessageItem
+  | { [key: string]: unknown; type: string };
+
+export type ResponsesApiResponse = {
+  error?: { message?: string } | null;
+  id: string;
+  output?: ResponseOutputItem[];
+  status?: string;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    output_tokens_details?: {
+      reasoning_tokens?: number;
+    };
+    total_tokens?: number;
+  } | null;
+};
+
+export type ResponsesClient = {
+  create: (
+    request: Record<string, unknown>,
+    signal: AbortSignal,
+  ) => Promise<ResponsesApiResponse>;
+};
 
 export const providerSchema = z.object({
   kind: z.enum(['cliproxy','openai','custom']),

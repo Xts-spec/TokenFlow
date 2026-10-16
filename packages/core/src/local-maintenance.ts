@@ -7,6 +7,7 @@ import { connect as tcpConnect } from 'node:net';
 import { z } from 'zod';
 import { detectAgent } from './agent-installation.js';
 import { AgentConnections, agentProcesses, readConfig, safePath, targetSchema, type Target } from './agent-connections.js';
+import {networkFailure} from './maintenance-http.js';
 
 const conflict=(message:string)=>Object.assign(new Error(message),{statusCode:409});
 const digest=(value:string)=>createHash('sha256').update(value).digest('hex');
@@ -127,7 +128,7 @@ export class LocalMaintenance {
   const url=new URL(source.baseURL);url.search='';url.hash='';const started=Date.now();
   // A credential-free HEAD checks the configured endpoint only. Never follow redirects or disable TLS.
   try{const response=await fetch(url,{method:'HEAD',redirect:'manual',signal:AbortSignal.any([signal,AbortSignal.timeout(10000)])});await response.body?.cancel();return {sourceId:input.sourceId,stage:url.protocol==='https:'?'DNS/TCP/TLS/HTTP':'TCP/HTTP',httpStatus:response.status,durationMs:Date.now()-started,message:'已收到 HTTP 响应。未带密钥、未调用模型；401/403/405 也不能据此判定模型权限。'};}
-  catch{signal.throwIfAborted();return {sourceId:input.sourceId,stage:'network',durationMs:Date.now()-started,message:'指定地址未完成网络检查。现有证据不足以区分 DNS、代理、TLS 与服务端超时。'};}
+  catch(error){signal.throwIfAborted();return {sourceId:input.sourceId,stage:'network',category:networkFailure(error),durationMs:Date.now()-started,message:'按系统错误代码分类；没有返回原始错误或凭据。超时或连接失败不能单独证明供应商故障。'};}
  }
  private async start(kind:LocalRun['kind'],title:string,perform:(run:LocalRun,signal:AbortSignal)=>Promise<void>){
   this.ensureIdle();const controller=new AbortController();this.abort=controller;

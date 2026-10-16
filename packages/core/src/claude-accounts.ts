@@ -5,6 +5,7 @@ import { homedir, userInfo } from 'node:os';
 import { createHash } from 'node:crypto';
 import { readConfig } from './agent-connections.js';
 import { nativeConflict, nativeDigest, writePrivate, type NativeStore, type NativeState, type NativeCredential } from './native-accounts.js';
+import type {NativeUsageLogin} from './native-usage-logins.js';
 const exec=promisify(execFile);
 export interface CredentialStore {read():Promise<string|null>;write(value:string|null):Promise<void>}
 export function claudeKeychain(configDir:string):CredentialStore {
@@ -61,7 +62,12 @@ export class ClaudeAccountStore implements NativeStore {
     if(!this.describe(state).email)return {loginState:'unreadable',readError:'检测到 Claude Code 凭据，但缺少账号资料，请在客户端完成登录。'};
     return {loginState:'signed-in'};
   }
-
+  async usageLogin():Promise<NativeUsageLogin|null>{
+    const state=await this.read(),login=this.describe(state),routing=object(state.routing),oauth=object(state.auth??state.fileAuth);
+    const overrides=['ANTHROPIC_BASE_URL','ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN','ANTHROPIC_PROFILE','apiKeyHelper','forceLoginGatewayUrl'];
+    if(!login.accountId||!oauth.accessToken||overrides.some(k=>!!routing[k])||['CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY'].some(k=>!!routing[k]&&routing[k]!=='0'&&routing[k]!==false)||routing.forceLoginMethod&&routing.forceLoginMethod!=='claudeai')return null;
+    return {provider:'claude',accountId:login.accountId,email:login.email,organizationId:login.organizationId};
+  }
   identity(state:NativeState){const a=this.describe(state);return a.email?JSON.stringify([a.accountId,a.organizationId,a.email.toLowerCase()]):null;}
   signedOut(state:NativeState){return state.auth===null&&state.fileAuth===null&&state.account===null;}
   restoreState(current:NativeState,original:NativeState,applied:NativeState){return {...original,routing:current.routing,model:current.model!==applied.model&&current.model!==original.model?current.model:original.model};}

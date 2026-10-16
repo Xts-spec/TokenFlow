@@ -13,13 +13,30 @@ async function fixture(){
  await mkdir(join(root,'cliproxy'));
  const accounts=[{name:'qoder.json',provider:'qoder',status:'active',models:['kmodel_latest']},{name:'workbuddy.json',provider:'workbuddy',status:'active',models:['hy4-preview']}];
  await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify(accounts));
- const paths={codex:join(root,'codex/config.toml'),claude:join(root,'claude.json'),workbuddy:join(root,'workbuddy.json'),qoder:join(root,'qoder.json')};
+ const paths={codex:join(root,'codex/config.toml'),claude:join(root,'claude.json'),workbuddy:join(root,'workbuddy.json'),qoder:join(root,'qoder.json'),pi:join(root,'pi/models.json'),deepseek:join(root,'deepseek/settings.json')};
  const service=await createDesktopService({workbuddySDKFactory:fakeWorkbuddySDK,root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin-fixture',localKey:'internal-fixture',secrets:{get:async()=>'',set:async()=>{}},agentPaths:paths,agentProcesses:async()=>[]});await service.proxy.start();
  const headers={host:'127.0.0.1:9527',authorization:'Bearer admin-fixture'};
  const post=(url:string,payload:unknown)=>service.app.inject({method:'POST',url,headers,payload:payload as object});
  const state=async(target:string)=>(await service.app.inject({url:'/api/a2a',headers})).json().targets.find((t:{id:string})=>t.id===target);
  return {root,port,accounts,paths,service,headers,post,state,close:async()=>{await service.app.close();await rm(root,{recursive:true,force:true});}};
 }
+
+it('runs source-pinned HTTP probes across Agent protocols, cleans temporary Keys and preserves failures',async()=>{
+ const f=await fixture();try{
+  await f.service.app.listen({host:'127.0.0.1',port:0});const source=f.service.proxy.snapshot().accounts.find(a=>a.provider==='qoder')!;
+  const input={sourceId:source.id,model:'qoder/kmodel_latest'};const keys=async()=>(await f.service.app.inject({url:'/api/gateway-keys',headers:f.headers})).json().keys;
+  const before=await keys();
+  expect((await f.service.app.inject({method:'POST',url:'/api/maintenance/http-probe',headers:{host:f.headers.host},payload:input})).statusCode).toBe(401);
+  expect((await f.post('/api/maintenance/http-probe',{...input,url:'http://untrusted.invalid'})).statusCode).toBe(400);
+  for(const protocol of ['responses','messages','chat/completions']){
+   const response=await f.post('/api/maintenance/http-probe',{...input,protocol});expect(response.statusCode,response.body).toBe(200);expect(response.json()).toMatchObject({passed:true,protocol,sourceId:source.id,model:input.model,clientVerified:false});expect(response.body).not.toContain('tfl_');expect(await keys()).toEqual(before);
+  }
+  await fetch(`http://127.0.0.1:${f.port}/fixture`,{method:'POST',body:JSON.stringify({mode:'claude-source-policy'})});
+  const failed=await f.post('/api/maintenance/http-probe',{...input,protocol:'messages'});expect(failed.json()).toMatchObject({passed:false,httpStatus:400,category:'source_policy'});expect(await keys()).toEqual(before);
+  await fetch(`http://127.0.0.1:${f.port}/fixture`,{method:'POST',body:JSON.stringify({mode:'truncated-stream'})});
+  const truncated=await f.post('/api/maintenance/http-probe',input);expect(truncated.json().passed).toBe(false);expect(await keys()).toEqual(before);
+ }finally{await f.close();}
+},20000);
 
 it('lets a pinned known model recover when the public catalog hides it after an upstream failure',async()=>{
  const f=await fixture();try{
@@ -77,3 +94,60 @@ it.each(['codex','claude','workbuddy','qoder'] as const)('previews and applies %
   const stale=await f.post('/api/maintenance/approve',{id:renew.json().id,approve:true});expect(stale.json().proposal.status).toBe('failed');expect(await readFile(f.paths[target],'utf8')).toBe(next+'\n');
  }finally{await f.close();}
 });
+
+it('uses the selected page instead of a stale Agent chain and exposes resumable local history',async()=>{
+ const f=await fixture();try{
+  const source=f.service.proxy.snapshot().accounts.find(account=>account.provider==='qoder')!;
+  const chosen=await f.service.app.inject({method:'PUT',url:'/api/maintenance',headers:f.headers,payload:{sourceId:source.id,model:'qoder/kmodel_latest'}});expect(chosen.statusCode,chosen.body).toBe(200);
+  const maintenance=async()=>(await f.service.app.inject({url:'/api/maintenance',headers:f.headers})).json();
+  await expect.poll(async()=>(await maintenance()).readiness.status).toBe('ready');
+  expect((await f.post('/api/maintenance/run',{prompt:'检查 Pi',chain:{target:'pi'},context:{page:'agents',target:'pi'},interfaceAgent:'pi'})).statusCode).toBe(200);
+  await expect.poll(async()=>(await maintenance()).status).toBe('completed');
+  const previous=(await maintenance()).conversationId;
+  expect((await f.post('/api/maintenance/run',{prompt:'检查代理 Key',context:{page:'proxy'}})).statusCode).toBe(200);
+  await expect.poll(async()=>(await maintenance()).status).toBe('completed');
+  const current=await maintenance();expect(current.chain).toBeUndefined();expect(current.context).toEqual({page:'proxy'});
+  const inspection=JSON.parse(current.messages.find((message:{text:string})=>message.text.startsWith('只读预检: ')).text.slice('只读预检: '.length));
+  expect(inspection.selectedAgent).toBeNull();expect(inspection.chain).toBeNull();expect(inspection.pageContext).toEqual({page:'proxy'});expect(inspection.pageData).toHaveProperty('keys');
+  const history=(await f.service.app.inject({url:'/api/maintenance/history',headers:f.headers})).json().conversations;expect(history).toHaveLength(2);
+  expect((await f.service.app.inject({url:'/api/maintenance/history',headers:{host:f.headers.host}})).statusCode).toBe(401);
+  const resumed=await f.post(`/api/maintenance/history/${previous}/resume`,{});expect(resumed.statusCode,resumed.body).toBe(200);expect(resumed.json().context).toEqual({page:'agents',target:'pi'});
+  expect((await f.service.app.inject({url:`/api/maintenance/history/${previous}`,headers:f.headers})).json().title).toBe('检查 Pi');
+ }finally{await f.close();}
+},15000);
+
+it('preflights the selected Key and date from the same usage ledger without exposing the Key or unrelated Agent state',async()=>{
+ const f=await fixture();try{
+  const source=f.service.proxy.snapshot().accounts.find(a=>a.provider==='qoder')!;
+  const key=(await f.post('/api/gateway-keys',{name:'Selected usage',sourceId:source.id,models:['qoder/kmodel_latest']})).json();
+  const response=await f.service.app.inject({method:'POST',url:'/v1/responses',headers:{host:f.headers.host,authorization:`Bearer ${key.apiKey}`},payload:{model:'qoder/kmodel_latest',input:'OK'}});expect(response.statusCode,response.body).toBe(200);
+  await f.service.app.inject({method:'PUT',url:'/api/maintenance',headers:f.headers,payload:{sourceId:source.id,model:'qoder/kmodel_latest'}});
+  const snapshot=async()=>(await f.service.app.inject({url:'/api/maintenance',headers:f.headers})).json();
+  await expect.poll(async()=>(await snapshot()).readiness.status).toBe('ready');
+  const context={page:'proxy',range:'today',origin:'gateway',keyId:key.key.id};
+  expect((await f.post('/api/maintenance/run',{prompt:'今天的模型生成速度',context})).statusCode).toBe(200);
+  await expect.poll(async()=>(await snapshot()).status).toBe('completed');
+  const result=await snapshot();const inspection=JSON.parse(result.messages.find((m:{text:string})=>m.text.startsWith('只读预检: ')).text.slice(6));
+  expect(inspection.pageContext).toEqual(context);expect(inspection.pageData.keys.map((k:{id:string})=>k.id)).toEqual([key.key.id]);
+  expect(inspection.pageData.usage).toMatchObject({requests:1,scope:{keyId:key.key.id,origin:'gateway'},modelCount:1});
+  expect(inspection.pageData.usage.models[0]).toMatchObject({model:'qoder/kmodel_latest',tokensPerSecond:null});
+  expect(inspection.selectedAgent).toBeNull();expect(JSON.stringify(inspection)).not.toContain(key.apiKey);
+ }finally{await f.close();}
+},15000);
+
+it('opens old-conversation repair as read-only diagnosis with current routing evidence, without migrating or restoring',async()=>{
+ const f=await fixture();try{
+  const {DatabaseSync}=await import('node:sqlite');await mkdir(join(f.root,'codex'),{recursive:true});await writeFile(f.paths.codex,'model = "official-test"\n');
+  const db=new DatabaseSync(join(f.root,'codex/state_5.sqlite'));db.exec('CREATE TABLE threads (id TEXT, model_provider TEXT, model TEXT, rollout_path TEXT, archived INTEGER, source TEXT)');db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?)').run('stale-thread','token_flow','qoder/old','/private/must-not-be-sent.jsonl',0,'cli');db.close();
+  const before=await readFile(f.paths.codex,'utf8');
+  const source=f.service.proxy.snapshot().accounts.find(a=>a.provider==='qoder')!;
+  await f.service.app.inject({method:'PUT',url:'/api/maintenance',headers:f.headers,payload:{sourceId:source.id,model:'qoder/kmodel_latest'}});
+  const snapshot=async()=>(await f.service.app.inject({url:'/api/maintenance',headers:f.headers})).json();await expect.poll(async()=>(await snapshot()).readiness.status).toBe('ready');
+  expect((await f.post('/api/maintenance/run',{prompt:'检查切换后旧对话',context:{page:'agents',target:'codex',intent:'codex-history'},chain:{target:'codex'}})).statusCode).toBe(200);
+  await expect.poll(async()=>(await snapshot()).status).toBe('completed');
+  const result=await snapshot(),text=result.messages.find((m:{text:string})=>m.text.startsWith('只读预检: ')).text;const evidence=JSON.parse(text.slice(6)).pageData;
+  expect(evidence.current).toMatchObject({provider:'openai',model:'official-test'});expect(evidence.threads).toMatchObject({available:true,mismatched:1});expect(evidence.threads.samples[0].id).toBe('stale-thread');expect(evidence.switchHistory).toEqual([]);
+  expect(text).not.toContain('/private/must-not-be-sent');expect(await readFile(f.paths.codex,'utf8')).toBe(before);expect(result.proposal).toBeUndefined();
+  const after=new DatabaseSync(join(f.root,'codex/state_5.sqlite'),{readOnly:true});expect(after.prepare('SELECT model_provider FROM threads').get()?.model_provider).toBe('token_flow');after.close();
+ }finally{await f.close();}
+},15000);

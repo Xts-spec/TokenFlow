@@ -1,8 +1,10 @@
 // Reused from the user's youzhao desktop app.
 import type { CSSProperties, ReactNode } from 'react';
 
-export type IconName='grip'|'workspace'|'model'|'plug'|'history'|'browser'|'arrow'|'plus'|'briefcase'|'resume'|'shield'|'chevron'|'send'|'sliders'|'message'|'menu'|'close'|'search'|'user'|'wrench'|'checkCircle'|'alertCircle'|'refresh'|'copy'|'download'|'tokens';
+export type IconName='key'|'more'|'grip'|'workspace'|'model'|'plug'|'history'|'browser'|'arrow'|'plus'|'briefcase'|'resume'|'shield'|'chevron'|'send'|'sliders'|'message'|'menu'|'close'|'search'|'user'|'wrench'|'checkCircle'|'alertCircle'|'refresh'|'copy'|'download'|'tokens';
 const paths:Record<IconName,ReactNode>={
+  key:<><circle cx="15.5" cy="7.5" r="4.5"/><path d="m12.3 10.7-9.8 9.8m3-3 2 2m1-5 2 2"/></>,
+  more:<><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></>,
   grip:<><circle cx="8" cy="5" r="1"/><circle cx="16" cy="5" r="1"/><circle cx="8" cy="12" r="1"/><circle cx="16" cy="12" r="1"/><circle cx="8" cy="19" r="1"/><circle cx="16" cy="19" r="1"/></>,
   tokens:<><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 4 16 4 16 0V5M4 12c0 4 16 4 16 0"/></>,
   workspace:<><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></>,

@@ -50,8 +50,6 @@ Session Storage/
 Local Storage/
 logs/
 output/
-.playwright-cli/
-playwright-report/
 test-results/
 coverage/
 *.har
@@ -90,7 +88,6 @@ extensions/
 
 # Temporary and tool directories
 .tmp/
-.playwright-cli/
 .ai-tracker/
 .local-notes/
 

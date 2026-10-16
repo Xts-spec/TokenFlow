@@ -2,16 +2,18 @@
  * upstream boundary keeps both buffered and streamed calls alive. */
 export function upstreamIdle(milliseconds=120_000) {
  const controller=new AbortController();
+ let timedOut=false;
  let timer:ReturnType<typeof setTimeout>|undefined;
  const close=()=>clearTimeout(timer);
  const touch=()=>{
   close();
-  if(!controller.signal.aborted)timer=setTimeout(()=>controller.abort(new Error('Upstream idle timeout')),milliseconds);
+  if(!controller.signal.aborted)timer=setTimeout(()=>{timedOut=true;controller.abort(new Error('Upstream idle timeout'));},milliseconds);
  };
  controller.signal.addEventListener('abort',close,{once:true});
  touch();
  return {
   signal:controller.signal,
+  get timedOut(){return timedOut;},
   abort:()=>controller.abort(),
   close,
   watch(response:Response) {

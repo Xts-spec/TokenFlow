@@ -17,19 +17,22 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
+	runtimeexecutor "github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/proxyutil"
 )
 
 // A catalog is scoped to the credential, provider and endpoint. Failed refreshes
-// retain that account's last successful list; model tables are the final fallback.
+// retain that account's last verified list briefly; static tables never grant access.
 type officialCatalogEntry struct {
 	mu          sync.Mutex
 	fingerprint [32]byte
 	checked     time.Time
 	models      []*ModelInfo
 	succeeded   bool
+	successful  time.Time
+	latestOK    bool
 }
 
 func metadataText(a *coreauth.Auth, key string) string {
@@ -42,10 +45,15 @@ func metadataText(a *coreauth.Auth, key string) string {
 	return strings.TrimSpace(a.Attributes[key])
 }
 
-func (s *Service) refreshOfficialAccountCatalog(ctx context.Context, id string, force bool) {
+func officialCatalogFingerprint(a *coreauth.Auth) [32]byte {
+	mode, _ := json.Marshal([]any{a.Attributes["using_api"], a.Metadata["using_api"], a.Attributes["auth_kind"], a.Metadata["auth_kind"]})
+	return sha256.Sum256([]byte(a.Provider + "\x00" + metadataText(a, "jwt") + "\x00" + metadataText(a, "provider") + "\x00" + metadataText(a, "zcode_client_version") + "\x00" + metadataText(a, "access_token") + "\x00" + metadataText(a, "base_url") + "\x00" + metadataText(a, "enterprise_id") + "\x00" + metadataText(a, "enterpriseId") + "\x00" + metadataText(a, "uid") + "\x00" + a.ProxyURL + "\x00" + metadataText(a, "project_id") + "\x00" + metadataText(a, "domain") + "\x00" + string(mode) + "\x00" + codexCatalogVersion(a)))
+}
+
+func (s *Service) refreshOfficialAccountCatalog(ctx context.Context, id string, force bool) map[string]any {
 	a, ok := s.latestAuthForModelRegistration(id)
 	if !ok || a.Disabled {
-		return
+		return map[string]any{"status": "unavailable"}
 	}
 	s.officialCatalogMu.Lock()
 	entry := s.officialCatalog[id]
@@ -53,7 +61,7 @@ func (s *Service) refreshOfficialAccountCatalog(ctx context.Context, id string, 
 	if entry != nil {
 		entry.mu.Lock()
 	}
-	fresh := entry != nil && time.Since(entry.checked) < 30*time.Second
+	fresh := entry != nil && entry.fingerprint == officialCatalogFingerprint(a) && time.Since(entry.checked) < 30*time.Second
 	if force && entry != nil {
 		entry.checked = time.Time{}
 	}
@@ -61,16 +69,46 @@ func (s *Service) refreshOfficialAccountCatalog(ctx context.Context, id string, 
 		entry.mu.Unlock()
 	}
 	if fresh && !force {
-		return
+		return s.officialCatalogStatus(a)
 	}
 	s.refreshModelRegistrationForAuthWithContext(ctx, a, nil)
+	return s.officialCatalogStatus(a)
+}
+
+// Discovery provenance is returned separately from the registry; a registry entry
+// alone is not proof that the vendor still advertises the model.
+func (s *Service) officialCatalogStatus(a *coreauth.Auth) map[string]any {
+	result := map[string]any{"status": "unavailable"}
+	if a.Provider == "doubao" {
+		result["status"] = "unsupported"
+		result["reason"] = "legacy_adapter_removed"
+		return result
+	}
+
+	s.officialCatalogMu.Lock()
+	entry := s.officialCatalog[a.ID]
+	s.officialCatalogMu.Unlock()
+	if entry == nil {
+		return result
+	}
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	result["checkedAt"] = entry.checked.UTC().Format(time.RFC3339)
+	if entry.succeeded && time.Since(entry.successful) < 15*time.Minute {
+		result["status"] = "stale"
+		if entry.latestOK {
+			result["status"] = "live"
+		}
+		result["verifiedAt"] = entry.successful.UTC().Format(time.RFC3339)
+	}
+	return result
 }
 
 func (s *Service) officialAccountModels(ctx context.Context, a *coreauth.Auth, fallback []*ModelInfo) []*ModelInfo {
 	if s == nil || a == nil || metadataText(a, "access_token") == "" {
 		return initialOfficialCatalog(a, fallback)
 	}
-	fingerprint := sha256.Sum256([]byte(a.Provider + "\x00" + metadataText(a, "access_token") + "\x00" + metadataText(a, "base_url") + "\x00" + metadataText(a, "enterprise_id") + "\x00" + metadataText(a, "enterpriseId") + "\x00" + metadataText(a, "uid") + "\x00" + a.ProxyURL + "\x00" + metadataText(a, "project_id") + "\x00" + metadataText(a, "domain") + "\x00" + codexCatalogVersion(a)))
+	fingerprint := officialCatalogFingerprint(a)
 	// Serialize refreshes so config reloads and polling do not duplicate requests.
 	// No application credentials or model permissions are persisted by discovery.
 	s.officialCatalogMu.Lock()
@@ -88,25 +126,21 @@ func (s *Service) officialAccountModels(ctx context.Context, a *coreauth.Auth, f
 	if time.Since(entry.checked) >= 30*time.Second {
 		live, ok := s.fetchOfficialAccountModels(ctx, a, fallback)
 		entry.checked = time.Now()
+		entry.latestOK = ok
 		if ok {
+			entry.successful = entry.checked
 			entry.models = live
 			entry.succeeded = true
 		}
 	}
-	if entry.succeeded {
+	if entry.succeeded && time.Since(entry.successful) < 15*time.Minute {
 		return cloneOfficialModels(entry.models)
 	}
 	return initialOfficialCatalog(a, fallback)
 }
 
-// An unverified static Antigravity table is not an account catalog. Retry discovery
-// instead of advertising old IDs; retain the last successful list on transient errors.
-func initialOfficialCatalog(a *coreauth.Auth, fallback []*ModelInfo) []*ModelInfo {
-	if a != nil && a.Provider == "antigravity" {
-		return nil
-	}
-	return fallback
-}
+// Static definitions supply capabilities for verified IDs, never permissions.
+func initialOfficialCatalog(_ *coreauth.Auth, _ []*ModelInfo) []*ModelInfo { return nil }
 
 func cloneOfficialModels(models []*ModelInfo) []*ModelInfo {
 	copyModels := make([]*ModelInfo, 0, len(models))
@@ -134,14 +168,8 @@ func (s *Service) fetchOfficialAccountModels(ctx context.Context, a *coreauth.Au
 				base = "https://www.workbuddy.ai"
 			}
 		}
-		enterprise := metadataText(a, "enterprise_id")
-		if enterprise == "" {
-			enterprise = metadataText(a, "enterpriseId")
-		}
-		if enterprise == "" {
-			enterprise = "personal"
-		}
-		path = "/console/enterprises/" + url.PathEscape(enterprise) + "/models"
+		// Official CLI CloudProductProvider reads the account-scoped conversation config.
+		path = "/v3/config"
 		headers["X-User-Id"] = metadataText(a, "uid")
 		headers["X-Product"] = "SaaS"
 		headers["Origin"] = "https://www.codebuddy.cn"
@@ -193,11 +221,18 @@ func (s *Service) fetchOfficialAccountModels(ctx context.Context, a *coreauth.Au
 		}
 		path = "/v1/models"
 	case "xai":
-		if base == "" {
-			base = "https://api.x.ai/v1"
+		resolved, identityHeaders := runtimeexecutor.TokenFlowXAICatalogRequest(a, token)
+		base = resolved
+		for key, values := range identityHeaders {
+			if len(values) > 0 {
+				headers[key] = values[0]
+			}
 		}
 		path = "/models"
 	case "zcode":
+		if base == "" && metadataText(a, "jwt") != "" {
+			return s.fetchZCodeConversationCatalog(ctx, a, fallback)
+		}
 		if base == "" {
 			if metadataText(a, "provider") == "zai" {
 				base = "https://api.z.ai/api/coding/paas/v4"
@@ -220,18 +255,12 @@ func (s *Service) fetchOfficialAccountModels(ctx context.Context, a *coreauth.Au
 		headers["X-IDE-Version-Type"] = "stable"
 		headers["Request-Traffic-Type"] = "prod"
 	case "doubao":
-		// Ark keys expose an OpenAI model directory. MarsCode login tokens use a
-		// different protocol and must not be sent to an unrelated Ark service.
-		if base == "" {
-			return nil, false
-		}
-		path = "/models"
+		return nil, false
 	default:
-		// Trae's chat protocol exposes no verified account-model listing endpoint.
-		// Keep the fallback rather than guessing a URL or publishing invented models.
+		// Unknown protocols never publish guessed permissions.
 		return nil, false
 	}
-	requestCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	requestCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(requestCtx, method, strings.TrimRight(base, "/")+path, strings.NewReader(body))
 	if err != nil {
@@ -396,13 +425,11 @@ func parseOfficialCatalog(provider string, raw []byte, fallback []*ModelInfo) ([
 			items = append(items, item)
 		}
 	case "qoder":
-		// CLI + desktop scenes use the same signed inference gateway. Server scene
-		// lists are authoritative; don't mix embedding/local/BYOK providers into OAuth.
-		for _, scene := range []string{"cli", "ide", "desktop", "work", "chat"} {
-			if list, ok := data[scene].([]any); ok {
-				items = append(items, list...)
-				recognized = true
-			}
+		// Current official CLI uses the chat picker (verified with --list-models).
+		// Honor an explicit CLI list on versions that provide one; never union IDE scenes.
+		items, recognized = data["cli"].([]any)
+		if !recognized {
+			items, recognized = data["chat"].([]any)
 		}
 		if !recognized {
 			items, recognized = data["models"].([]any)
@@ -440,12 +467,50 @@ func parseOfficialCatalog(provider string, raw []byte, fallback []*ModelInfo) ([
 	}
 	deprecated, _ := data["deprecatedModelIds"].(map[string]any)
 	allowed := map[string]bool{}
+	allowlistDeclared := false
+	if provider == "antigravity" {
+		// The models map also contains completion, image and historical aliases.
+		// Only the server's conversation picker grants agent model visibility.
+		sorts, ok := data["agentModelSorts"].([]any)
+		if !ok {
+			return nil, false
+		}
+		allowlistDeclared = true
+		for _, value := range sorts {
+			sort, ok := value.(map[string]any)
+			if !ok {
+				return nil, false
+			}
+			groups, ok := sort["groups"].([]any)
+			if !ok {
+				return nil, false
+			}
+			for _, value := range groups {
+				group, ok := value.(map[string]any)
+				if !ok {
+					return nil, false
+				}
+				ids, ok := group["modelIds"].([]any)
+				if !ok {
+					return nil, false
+				}
+				for _, value := range ids {
+					id, ok := value.(string)
+					if !ok || id == "" {
+						return nil, false
+					}
+					allowed[id] = true
+				}
+			}
+		}
+	}
 	if provider == "workbuddy" {
 		if agents, ok := data["agents"].([]any); ok {
 			for _, v := range agents {
 				agent, _ := v.(map[string]any)
 				if stringField(agent, "name") == "cli" {
 					if ids, ok := agent["models"].([]any); ok {
+						allowlistDeclared = true
 						for _, id := range ids {
 							if value, ok := id.(string); ok {
 								allowed[value] = true
@@ -503,7 +568,7 @@ func parseOfficialCatalog(provider string, raw []byte, fallback []*ModelInfo) ([
 		if disabled, ok := item["disabled"].(bool); ok && disabled {
 			continue
 		}
-		if len(allowed) > 0 && !allowed[id] {
+		if allowlistDeclared && !allowed[id] {
 			continue
 		}
 		if source := stringField(item, "source"); provider == "qoder" && (source == "custom" || source == "local" || stringField(item, "outer_provider") != "") {

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { maintenanceSelection } from './gateway-maintenance.js';
 export const approvalPolicy=z.object({mode:z.enum(['manual','model']).default('manual'),reviewer:maintenanceSelection.optional()}).strict();
 export type ApprovalPolicy=z.infer<typeof approvalPolicy>;
-export type RepairProposal={id:string;title:string;code:string;createdAt:string;expiresAt:string;status:'pending'|'reviewing'|'executing'|'completed'|'rejected'|'failed';reason?:string;reviewer?:string;result?:unknown};
+export type RepairProposal={id:string;title:string;code:string;createdAt:string;expiresAt:string;status:'pending'|'reviewing'|'executing'|'completed'|'rejected'|'failed';reason?:string;reviewer?:string;result?:unknown;manualOnly?:boolean};
 const conflict=(message:string)=>Object.assign(new Error(message),{statusCode:409});
 /** Exact, immutable, single-use operation. Models may approve or reject; never edit executable code. */
 export class MaintenanceApproval {
@@ -17,15 +17,15 @@ export class MaintenanceApproval {
  constructor(private review:(proposal:RepairProposal,policy:ApprovalPolicy)=>Promise<{decision:'approve'|'reject';reason:string;reviewer:string}>,private settled:()=>Promise<void>,private after:(result:unknown)=>Promise<void>){}
  snapshot(){return structuredClone({policy:this.policy,proposal:this.proposal});}
  isBusy(){return this.activeReviews>0||this.proposal?.status==='executing';}
- configure(policy:ApprovalPolicy){if(this.proposal?.status==='executing')throw conflict('维修正在执行');this.generation++;this.policy=policy;if(this.proposal?.status==='reviewing')this.proposal.status='pending';if(this.policy.mode==='model'&&this.proposal?.status==='pending')this.launchReview();return this.snapshot();}
+ configure(policy:ApprovalPolicy){if(this.proposal?.status==='executing')throw conflict('维修正在执行');this.generation++;this.policy=policy;if(this.proposal?.status==='reviewing')this.proposal.status='pending';if(this.policy.mode==='model'&&this.proposal?.status==='pending'&&!this.proposal.manualOnly)this.launchReview();return this.snapshot();}
  clear(){if(this.proposal?.status==='executing')throw conflict('维修正在执行');this.generation++;this.proposal=undefined;this.execute=undefined;}
  async close(){this.closed=true;this.generation++;await this.task;}
- propose(title:string,code:string,execute:()=>Promise<unknown>){
+ propose(title:string,code:string,execute:()=>Promise<unknown>,options:{manualOnly?:boolean}={}){
   if(this.closed)throw conflict('服务正在关闭');
   if(this.proposal?.status==='pending'&&Date.now()>Date.parse(this.proposal.expiresAt))this.proposal.status='failed';
   if(this.proposal&&['pending','reviewing','executing'].includes(this.proposal.status))return this.snapshot().proposal!;
-  const id=randomUUID();this.proposal={id,title,code,createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+600000).toISOString(),status:'pending'};this.execute=execute;
-  if(this.policy.mode==='model')this.launchReview();
+  const id=randomUUID();this.proposal={id,title,code,createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+600000).toISOString(),status:'pending',...(options.manualOnly?{manualOnly:true}:{})};this.execute=execute;
+  if(this.policy.mode==='model'&&!this.proposal.manualOnly)this.launchReview();
   return this.snapshot().proposal!;
  }
  private launchReview(){

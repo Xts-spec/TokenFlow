@@ -1,5 +1,5 @@
 import {createHash,randomUUID} from 'node:crypto';
-import {dirname,join,relative} from 'node:path';
+import {dirname,join,relative,basename} from 'node:path';
 import {mkdir,readdir,readFile,writeFile,rename,stat,rm} from 'node:fs/promises';
 import {GatewayContext,GatewayContextError,type ContextScope} from './gateway-context.js';
 import {safePath} from './agent-connections.js';
@@ -44,7 +44,7 @@ export class CodexContext {
    }
   };
   await walk(join(dirname(this.configPath),'sessions'),0);await walk(join(dirname(this.configPath),'archived_sessions'),0);
-  return files.sort((a,b)=>b.mtime-a.mtime).slice(0,2000);
+  return files.sort((a,b)=>b.mtime-a.mtime);
  }
  private async cached(token:string){
   try{return this.context.decodeCheckpoint(await readFile(join(this.cache,digest(token)),'utf8'),[codexContextScope]);}
@@ -88,12 +88,30 @@ export class CodexContext {
  }
  /** Called before leaving the gateway. Restore plaintext checkpoints only after
   * Codex has exited; compare bytes again and back up before atomic replacement. */
- async prepareOfficial(scopes:ContextScope[],processes:()=>Promise<number[]>){
+ async repairLineage(processes:()=>Promise<number[]>){return this.prepare([],processes,false);}
+ async prepareOfficial(scopes:ContextScope[],processes:()=>Promise<number[]>){return this.prepare(scopes,processes,true);}
+ private async prepare(scopes:ContextScope[],processes:()=>Promise<number[]>,normalize:boolean){
   const candidates:{path:string;before:string;after:string}[]=[];
+  // Keep only headers and numeric boundaries for unchanged history. A large
+  // Codex home can contain gigabytes of rollouts; never retain them all in RAM.
+  const views=new Map<string,{header:string;originalHeader:string;row:Item;boundaries:Map<number,number>}>();
+  const remember=(path:string,text:string)=>{
+   const lines=text.split('\n');let row:Item;try{row=JSON.parse(lines[0]!);}catch{return;}
+   const boundaries=new Map<number,number>([[0,0]]);let bytes=0,ordinal=0;
+   for(const line of lines){if(!line)break;let event:Item;try{event=JSON.parse(line);}catch{break;}if(event.ordinal!==ordinal)break;bytes+=Buffer.byteLength(line)+1;boundaries.set(++ordinal,bytes);}
+   views.set(path,{header:lines[0]!,originalHeader:views.get(path)?.originalHeader??lines[0]!,row,boundaries});
+  };
   for(const {path} of await this.files()){
-   await safePath(path);const before=await readFile(path,'utf8');const lines=before.split('\n');let index=-1,event:Item|undefined;let malformed=false;
+   await safePath(path);const before=await readFile(path,'utf8');remember(path,before);const lines=before.split('\n');let index=-1,event:Item|undefined;let malformed=false;
    let gatewayTurn=false;const foreignReasoning=new Set<string>();
-   const reasoning=(item:Item):Item[]=>{
+   const normalizeItem=(item:Item):Item[]=>{
+    // Gateway item IDs identify records in that source, not persisted OpenAI
+    // items. Replay complete inline items on return; call_id still binds every
+    // tool result to its call. Keep native IDs outside gateway turns intact.
+    if(gatewayTurn&&typeof item?.id==='string'&&['message','function_call','function_call_output','custom_tool_call','custom_tool_call_output'].includes(item.type)){
+     const value={...item};delete value.id;return [value];
+    }
+    if(!normalize)return [item];
     // Chat-to-Responses translators emit synthetic reasoning IDs and sometimes
     // an empty ciphertext. Neither is an official encrypted reasoning item.
     if(item?.type!=='reasoning'||!(gatewayTurn||foreignReasoning.has(item.id)||/^rs_chatcmpl[-_]/.test(String(item.id))))return [item];
@@ -105,14 +123,14 @@ export class CodexContext {
     if(!object(row.payload))continue;
     if(row.type==='session_meta')gatewayTurn=row.payload.model_provider==='token_flow';
     if(row.type==='turn_context'&&typeof row.payload.model==='string')gatewayTurn=row.payload.model.includes('/');
-    if(row.type==='response_item'&&row.payload.type==='reasoning'){
-     const normalized=reasoning(row.payload);
-     if(normalized.length!==1||normalized[0]!==row.payload)lines[i]=normalized.map(payload=>JSON.stringify({...row,payload})).join('\n');
+    if(row.type==='response_item'){
+     const normalized=normalizeItem(row.payload);
+     if(normalized.length!==1||normalized[0]!==row.payload)lines[i]=(normalized.length?normalized:[{type:'message',role:'assistant',content:[{type:'output_text',text:''}]}]).map(payload=>JSON.stringify({...row,payload})).join('\n');
     }
     if(row.type==='compacted'){
      const history=row.payload.replacement_history;
      if(Array.isArray(history)){
-      const normalized=history.flatMap(reasoning);
+      const normalized=history.flatMap(normalizeItem);
       if(JSON.stringify(normalized)!==JSON.stringify(history)){row.payload.replacement_history=normalized;delete row.payload.replacement_history_metadata;lines[i]=JSON.stringify(row);}
      }
      index=i;event=row;
@@ -123,6 +141,7 @@ export class CodexContext {
     if(malformed)throw new GatewayContextError('会话记录不完整，迁移已停止；请先退出 Codex 后重试，原文件保留。',409);
     candidates.push({path,before,after});
    };
+   if(!normalize){retainChanges();continue;}
    const history=event?.payload?.replacement_history;if(index<0||!Array.isArray(history)){retainChanges();continue;}
    const recoveredTokens=new Map<string,Item[]>();
    for(const item of history){
@@ -153,12 +172,58 @@ export class CodexContext {
    }
    retainChanges();
   }
+  // Codex paginated branches pin an ordinal AND a byte boundary in the
+  // canonical source rollout. Rewriting JSON changes UTF-8 byte lengths even
+  // when every event stays in place. Rebase dependants, including stale bounds
+  // left by older TokenFlow versions, from explicit ordinals (never guess).
+  for(const c of candidates)remember(c.path,c.after);
+  const sources=new Map<string,string>(),invalidated=new Set<string>();
+  for(const [path,view] of views){const meta=view.row.payload;if(typeof meta?.id==='string'&&basename(path).endsWith(`-${meta.id}.jsonl`))sources.set(meta.id,path);}
+  let changed=true,passes=0;
+  while(changed){
+   if(++passes>views.size+1)throw new GatewayContextError('分页历史依赖存在循环，原记录保留。',409);
+   changed=false;
+   for(const view of views.values()){
+    const base=view.row.type==='session_meta'?view.row.payload?.history_base:undefined;
+    if(!base||!Number.isSafeInteger(base.end_ordinal_exclusive)||base.end_ordinal_exclusive<0)continue;
+    const source=sources.get(base.thread_id);if(!source)continue;
+    const offset=views.get(source)!.boundaries.get(base.end_ordinal_exclusive);
+    if(offset===undefined||offset===base.end_byte_offset)continue;
+    invalidated.add(base.thread_id);base.end_byte_offset=offset;
+    const header=JSON.stringify(view.row),delta=Buffer.byteLength(header)-Buffer.byteLength(view.header);
+    for(const [ordinal,bytes] of view.boundaries)if(ordinal>0)view.boundaries.set(ordinal,bytes+delta);
+    view.header=header;changed=true;
+   }
+  }
+  for(const [path,view] of views){
+   if(view.header===view.originalHeader)continue;
+   let candidate=candidates.find(c=>c.path===path);
+   if(!candidate){await safePath(path);const before=await readFile(path,'utf8');if(before.split('\n')[0]!==view.originalHeader)throw new GatewayContextError('迁移期间会话发生变化，原记录保留。',409);candidate={path,before,after:before};candidates.push(candidate);}
+   candidate.after=view.header+candidate.after.slice(candidate.after.indexOf('\n'));
+  }
+  for(const c of candidates){const id=views.get(c.path)?.row.payload?.id;if(typeof id==='string')invalidated.add(id);}
   if(!candidates.length)return {migrated:0};
   if((await processes()).length)throw Object.assign(new Error(`有 ${candidates.length} 个会话需要兼容处理。请先退出 Codex，再切换官方登录；原配置和会话尚未修改。`),{statusCode:409});
   const batch=join(this.backups,randomUUID());await mkdir(batch,{recursive:true,mode:0o700});
   const journal=candidates.map((c,i)=>({path:relative(dirname(this.configPath),c.path),backup:`${i}.jsonl`,beforeHash:digest(c.before),afterHash:digest(c.after)}));
   for(let i=0;i<candidates.length;i++)await writeFile(join(batch,`${i}.jsonl`),candidates[i]!.before,{mode:0o600,flag:'wx'});
   await writeFile(join(batch,'manifest.json'),JSON.stringify({createdAt:new Date().toISOString(),files:journal}),{mode:0o600,flag:'wx'});
+  // This database is a derived UI projection with byte offsets into the
+  // rollouts. Preserve a consistent backup, then let Codex rebuild affected
+  // projections from history instead of reusing offsets into rewritten bytes.
+  const home=dirname(this.configPath);
+  for(const name of (await readdir(home)).filter(n=>/^thread_history_\d+\.sqlite$/.test(n))){
+   if(!invalidated.size)break;
+   const path=join(home,name);await safePath(path);
+   const {DatabaseSync,backup}=await import('node:sqlite');const db=new DatabaseSync(path);
+   try{
+    await backup(db,join(batch,name));
+    if((await processes()).length)throw new GatewayContextError('Codex 重新启动，迁移已停止。',409);
+    const tables=new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(r=>r.name));
+    db.exec('BEGIN IMMEDIATE');
+    try{for(const table of ['thread_turns','thread_items','thread_history_projection_state','thread_realtime_items'])if(tables.has(table)){const remove=db.prepare(`DELETE FROM ${table} WHERE thread_id=?`);for(const id of invalidated)remove.run(id);}db.exec('COMMIT');}catch(error){db.exec('ROLLBACK');throw error;}
+   }finally{db.close();}
+  }
   for(const candidate of candidates){
    await safePath(candidate.path);if(await readFile(candidate.path,'utf8')!==candidate.before)throw Object.assign(new Error('迁移期间会话发生变化，已停止；原始备份已保留。'),{statusCode:409});
    const temp=candidate.path+'.token-flow-'+randomUUID();

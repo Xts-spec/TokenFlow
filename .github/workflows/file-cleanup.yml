@@ -1,0 +1,55 @@
+name: File cleanup on Windows and Linux
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/file-cleanup.yml'
+      - 'packages/core/src/file-cleanup*.ts'
+      - 'apps/desktop/src/file-cleanup.ts'
+      - 'apps/desktop/src/main.ts'
+      - 'apps/shared/file-cleanup*.ts'
+      - 'apps/console/src/FileCleanupPane.tsx'
+      - 'apps/console/src/file-cleanup.css'
+      - 'tests/file-cleanup*.test.ts'
+      - 'scripts/*file-cleanup*'
+      - 'package*.json'
+  pull_request:
+    paths:
+      - '.github/workflows/file-cleanup.yml'
+      - 'packages/core/src/file-cleanup*.ts'
+      - 'apps/desktop/src/file-cleanup.ts'
+      - 'apps/desktop/src/main.ts'
+      - 'apps/shared/file-cleanup*.ts'
+      - 'apps/console/src/FileCleanupPane.tsx'
+      - 'apps/console/src/file-cleanup.css'
+      - 'tests/file-cleanup*.test.ts'
+      - 'scripts/*file-cleanup*'
+      - 'package*.json'
+
+permissions:
+  contents: read
+
+jobs:
+  native-cleanup:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+          cache: npm
+      - run: npm ci
+      - name: Native filesystem and cross-platform path checks
+        run: npx vitest run tests/file-cleanup-native.test.ts tests/file-cleanup-paths.test.ts tests/file-cleanup-full-scan.test.ts tests/file-cleanup-disks.test.ts
+      - name: Windows Recycle Bin and permanent deletion with disposable fixtures
+        if: runner.os == 'Windows'
+        run: node scripts/check-file-cleanup-native.mjs
+      - name: Linux desktop Trash and permanent deletion with disposable fixtures
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/check-file-cleanup-native.mjs

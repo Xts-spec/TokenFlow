@@ -1,6 +1,13 @@
 import {expect,it,vi} from 'vitest';
 import {MaintenanceApproval} from '../packages/core/src/maintenance-approval.js';
 const verdict={decision:'approve' as const,reason:'safe',reviewer:'source/model'};
+it('keeps history repairs manual even with model approval configured or reconfigured',async()=>{
+ const {queue,execute,review}=setup();queue.configure({mode:'model'});
+ const proposal=queue.propose('history','exact scope',execute,{manualOnly:true});
+ queue.configure({mode:'model'});await new Promise(resolve=>setTimeout(resolve,10));
+ expect(review).not.toHaveBeenCalled();expect(execute).not.toHaveBeenCalled();expect(proposal.manualOnly).toBe(true);
+ await queue.decide(proposal.id,true);expect(execute).toHaveBeenCalledOnce();
+});
 function setup(review=vi.fn(async(_proposal:unknown,_policy:unknown)=>verdict)) {const execute=vi.fn(async()=>({ok:true}));const after=vi.fn(async()=>{});const queue=new MaintenanceApproval(review,async()=>{},after);return {queue,execute,after,review};}
 it('requires explicit approval and executes an immutable proposal once, followed by review',async()=>{
  const {queue,execute,after}=setup();const proposal=queue.propose('repair','exact code',execute);expect(execute).not.toHaveBeenCalled();expect(queue.snapshot().policy.mode).toBe('manual');proposal.code='edited';expect(queue.snapshot().proposal?.code).toBe('exact code');

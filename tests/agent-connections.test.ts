@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parse } from 'smol-toml';
-import { AgentConnections,connectedConfig } from '../packages/core/src/agent-connections.js';
+import { AgentConnections,agentPaths,connectedConfig } from '../packages/core/src/agent-connections.js';
 import { agentConfig } from '../apps/console/src/agent-config.js';
 import { connectionEvidence } from '../apps/console/src/connection-evidence.js';
 const roots:string[]=[];afterEach(async()=>{for(const root of roots.splice(0))await rm(root,{recursive:true,force:true});});
@@ -143,13 +143,13 @@ it('allows confirmed settings writes while agent runs, with backup and conflict 
 it('generates Qoder IDE parameters and pins Claude auxiliary models in both connection paths',()=>{
  const qoder=JSON.parse(agentConfig('qoder','http://127.0.0.1:9527','antigravity/gemini'));expect(qoder).toMatchObject({provider:'OpenAI Compatible',api:'Responses',baseURL:'http://127.0.0.1:9527/v1',model:'antigravity/gemini'});
  const original=JSON.stringify({env:{ANTHROPIC_SMALL_FAST_MODEL:'old',CLAUDE_CODE_SUBAGENT_MODEL:'old-sub',KEEP:'yes'}});const config=JSON.parse(connectedConfig('claude',original,'http://127.0.0.1:9527','antigravity/gemini','key'));
- for(const name of ['ANTHROPIC_SMALL_FAST_MODEL','CLAUDE_CODE_SUBAGENT_MODEL']){expect(config.env[name]).toBe('antigravity/gemini');expect(agentConfig('claude','http://127.0.0.1:9527','antigravity/gemini')).toContain(`${name}='antigravity/gemini'`);}
- expect(config.env.KEEP).toBe('yes');
+ for(const name of ['ANTHROPIC_SMALL_FAST_MODEL']){expect(config.env[name]).toBe('antigravity/gemini');expect(agentConfig('claude','http://127.0.0.1:9527','antigravity/gemini')).toContain(`${name}='antigravity/gemini'`);}
+ expect(config.env.KEEP).toBe('yes');expect(config.env.ANTHROPIC_MODEL).toBe('');expect(config.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('');
 });
 
 it('reviews actual Claude routing without exposing keys and detects stale auxiliary settings',async()=>{
  const {paths,connections}=await setup();const status=(await connections.status())[1];const record=await connections.apply({target:'claude',revision:status.revision,origin:'http://127.0.0.1:9527',model:'qoder/test',sourceId:'s',keyId:randomUUID(),key:'private-key'});const valid=await connections.review(record.id);expect(valid.checks.every(c=>c.ok)).toBe(true);expect(valid.liveCallVerified).toBe(false);expect(valid.compatibility?.autoMode).toBe('unverified');expect(JSON.stringify(valid)).not.toContain('private-key');
- const config=JSON.parse(await readFile(paths.claude,'utf8'));config.env.ANTHROPIC_SMALL_FAST_MODEL='stale';await writeFile(paths.claude,JSON.stringify(config));const drift=await connections.review(record.id);expect(drift.checks.find(c=>c.name==='主模型与辅助模型一致')?.ok).toBe(false);expect(drift.checks.find(c=>c.name==='配置与接入备份一致')?.ok).toBe(false);
+ const config=JSON.parse(await readFile(paths.claude,'utf8'));config.env.ANTHROPIC_SMALL_FAST_MODEL='stale';await writeFile(paths.claude,JSON.stringify(config));const drift=await connections.review(record.id);expect(drift.checks.find(c=>c.name==='主模型可切换，子代理继承会话')?.ok).toBe(false);expect(drift.checks.find(c=>c.name==='配置与接入备份一致')?.ok).toBe(false);
 });
 
 it.each(['opus','sonnet','haiku','opusplan'])('keeps equivalent Claude model alias %s configured without a false alarm',async(alias)=>{
@@ -245,7 +245,7 @@ it('adds, switches and restores Qoder standalone providers while preserving unre
  const next=await connections.apply({target:'qoder',revision:preview.revision,replaceId:first.id,origin:'http://127.0.0.1:9527',model:'codex/second',sourceId:'source',keyId:randomUUID(),key:'second-key'});
  const doc=JSON.parse(await readFile(paths.qoder,'utf8'));expect(doc.hooks).toEqual({keep:true});expect(doc.providers.existing.apiKey).toBe('original-key');expect(doc.providers['token-flow']).toMatchObject({protocol:'openai-responses',baseUrl:'http://127.0.0.1:9527/v1',model:'codex/second',apiKey:'second-key'});
  await connections.restore(next.id);expect(await readFile(paths.qoder,'utf8')).toBe(original);
- expect(()=>connectedConfig('qoder','{"providers":{"token-flow":{}}}','http://127.0.0.1:9527','codex/model','key')).toThrow();
+ expect(JSON.parse(connectedConfig('qoder','{"providers":{"token-flow":{}}}','http://127.0.0.1:9527','codex/model','key')).providers['token-flow'].model).toBe('codex/model');
 });
 
 it('restores and switches Codex routing while preserving unrelated client edits',async()=>{
@@ -365,7 +365,7 @@ it('exports catalog display names without changing Qoder routing IDs and restore
   }else{
    const config=JSON.parse(text);
    if(target==='claude'){
-    expect(config.env.ANTHROPIC_MODEL).toBe(model);expect(config.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe(model);
+    expect(config.env.ANTHROPIC_MODEL).toBe('');expect(config.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('');
     expect(config.modelPicker.options).toEqual([{model,label:'qoder/Kimi-K3'}]);
    }else if(target==='pi')expect(config.providers['token-flow'].models[0]).toMatchObject({id:model,name:'qoder/Kimi-K3'});
    else if(target==='qoder')expect(config.providers['token-flow'].models).toEqual([{model,displayName:'qoder/Kimi-K3'}]);
@@ -404,6 +404,56 @@ it.each(['pi','deepseek'] as const)('imports %s models, rejects stale writes and
 
 it('refuses ambiguous or executable DeepSeek YAML without converting user plugins',()=>{
  for(const original of ['- id: llm-pi-ai\n- id: llm-pi-ai\n','- id: custom\n  config: !!js process.env.KEY\n'])expect(()=>connectedConfig('deepseek',original,'http://127.0.0.1:9527','qoder/test','key')).toThrow();
+});
+
+it.each([false,true])('connects DeepSeek in its editable desktop profile and preserves providers added in Harness settings (existing provider: %s)',async existing=>{
+ const {root,connections}=await setup();const home=join(root,'.dsh'),profile=join(home,'profiles/desktop/cordis.patch.yml');
+ expect(connections.paths.deepseek).toBe(profile);
+ const previousHome=process.env.DSH_HOME;process.env.DSH_HOME=home;
+ try{expect(agentPaths().deepseek).toBe(profile);}finally{if(previousHome===undefined)delete process.env.DSH_HOME;else process.env.DSH_HOME=previousHome;}
+ const yaml=await import('yaml');
+ const personal=existing?{personal:{apiKeyEnv:'PERSONAL_KEY'}}:{};
+ const original=existing?[{id:'llm-pi-ai',config:{providers:personal}}]:[];
+ await mkdir(join(profile,'..'),{recursive:true});await writeFile(profile,yaml.stringify(original));
+ const state=(await connections.status()).find(t=>t.id==='deepseek')!;
+ const record=await connections.apply({target:'deepseek',revision:state.revision,origin:'http://127.0.0.1:9527',model:'qoder/test',sourceId:'source',keyId:randomUUID(),key:'fixture-key'});
+ const entries=yaml.parse(await readFile(profile,'utf8'));
+ entries.find((entry:{id:string})=>entry.id==='llm-pi-ai').config.providers.manual={apiKeyEnv:'MANUAL_KEY'};
+ await writeFile(profile,yaml.stringify(entries));
+ expect((await connections.status()).find(t=>t.id==='deepseek')?.configurationState).toBe('configured');
+ await connections.restore(record.id);
+ expect(yaml.parse(await readFile(profile,'utf8'))).toEqual([{id:'llm-pi-ai',config:{providers:{...personal,manual:{apiKeyEnv:'MANUAL_KEY'}}}}]);
+ await expect(readFile(join(home,'cordis.patch.yml'))).rejects.toMatchObject({code:'ENOENT'});
+});
+
+it('restores legacy DeepSeek home patches before using the desktop profile, including after reopening',async()=>{
+ const {root}=await setup();const home=join(root,'.dsh'),legacy=join(home,'cordis.patch.yml'),profile=join(home,'profiles/desktop/cordis.patch.yml');
+ const old=new AgentConnections(root,{deepseek:legacy},async()=>[]);
+ const state=(await old.status()).find(t=>t.id==='deepseek')!;
+ const record=await old.apply({target:'deepseek',revision:state.revision,origin:'http://127.0.0.1:9527',model:'qoder/old',sourceId:'source',keyId:randomUUID(),key:'old-fixture-key'});
+ const backup=join(root,'agent-backups',`${record.id}.json`),journal=JSON.parse(await readFile(backup,'utf8'));
+ delete journal.deepseekScope;await writeFile(backup,JSON.stringify(journal));
+ await mkdir(join(profile,'..'),{recursive:true});const manual='- id: llm-pi-ai\n  config:\n    providers:\n      personal:\n        apiKeyEnv: PERSONAL_KEY\n';await writeFile(profile,manual);
+ const reopened=new AgentConnections(root,{deepseek:profile},async()=>[]);
+ expect((await reopened.status()).find(t=>t.id==='deepseek')).toMatchObject({path:legacy,configurationState:'configured'});
+ await expect(reopened.preview('deepseek','http://127.0.0.1:9527','qoder/new')).rejects.toThrow('恢复原配置');
+ await expect(reopened.apply({target:'deepseek',replaceId:record.id,revision:state.revision,origin:'http://127.0.0.1:9527',model:'qoder/new',sourceId:'source',keyId:randomUUID(),key:'unused-key'})).rejects.toThrow('恢复原配置');
+ await reopened.restore(record.id);
+ await expect(readFile(legacy)).rejects.toMatchObject({code:'ENOENT'});expect(await readFile(profile,'utf8')).toBe(manual);
+ const next=(await reopened.status()).find(t=>t.id==='deepseek')!;expect(next.path).toBe(profile);
+ const connected=await reopened.apply({target:'deepseek',revision:next.revision,origin:'http://127.0.0.1:9527',model:'qoder/new',sourceId:'source',keyId:randomUUID(),key:'new-fixture-key'});
+ const again=new AgentConnections(root,{deepseek:profile},async()=>[]);
+ expect((await again.status()).find(t=>t.id==='deepseek')).toMatchObject({path:profile,configurationState:'configured'});
+ await again.restore(connected.id);expect(await readFile(profile,'utf8')).toBe(manual);
+});
+
+it.each(['llm-pi-ai','agent-default-model'])('refuses a DeepSeek profile write shadowed by an unmanaged global %s override',async id=>{
+ const {root,connections}=await setup();const homePatch=join(root,'.dsh/cordis.patch.yml');
+ await mkdir(join(homePatch,'..'),{recursive:true});const original=JSON.stringify([{id,config:{fixture:'personal-setting'}}]);await writeFile(homePatch,original);
+ const state=(await connections.status()).find(t=>t.id==='deepseek')!;
+ await expect(connections.preview('deepseek','http://127.0.0.1:9527','qoder/test')).rejects.toThrow('全局补丁');
+ await expect(connections.apply({target:'deepseek',revision:state.revision,origin:'http://127.0.0.1:9527',model:'qoder/test',sourceId:'source',keyId:randomUUID(),key:'unused-key'})).rejects.toThrow('全局补丁');
+ expect(await readFile(homePatch,'utf8')).toBe(original);await expect(readFile(connections.paths.deepseek)).rejects.toMatchObject({code:'ENOENT'});
 });
 
 it('resolves an implicit official model when the original configuration omits it',async()=>{
@@ -445,4 +495,50 @@ it('cleans up isolated default-model resolution on failure and keeps the active 
   await expect(stat(resolver.mock.calls[0]![0])).rejects.toMatchObject({code:'ENOENT'});
   expect(await readFile(paths.codex,'utf8')).toBe(active);
  }finally{resolver.mockRestore();}
+});
+
+// A copied installation or the native provider editor can leave an unmanaged token-flow entry.
+it('reconnects Qoder after native API edits and preserves exact preimages',async()=>{
+ const {root,paths,connections}=await setup();await mkdir(join(paths.qoder,'..'),{recursive:true});
+ const original=JSON.stringify({hooks:{keep:true},providers:{'token-flow':{apiKey:'manual-key',model:'manual'},personal:{apiKey:'keep-key'}}});
+ await writeFile(paths.qoder,original);
+ const first=await connections.apply({target:'qoder',revision:(await connections.status()).find(t=>t.id==='qoder')!.revision,origin:'http://127.0.0.1:9527',model:'workbuddy/one',sourceId:'source',keyId:randomUUID(),key:'first-key'});
+ expect((await connections.review(first.id)).checks.every(c=>c.ok)).toBe(true);
+ const changed=JSON.parse(await readFile(paths.qoder,'utf8'));changed.providers['token-flow'].apiKey='edited-key';changed.providers['token-flow'].model='edited';changed.theme='dark';
+ const edited=JSON.stringify(changed);await writeFile(paths.qoder,edited);
+ const preview=await connections.preview('qoder','http://127.0.0.1:9527','workbuddy/two');
+ const second=await connections.apply({target:'qoder',revision:preview.revision,replaceId:preview.replaceId,origin:'http://127.0.0.1:9527',model:'workbuddy/two',sourceId:'source',keyId:randomUUID(),key:'second-key'});
+ const journal=JSON.parse(await readFile(join(root,'agent-backups',second.id+'.json'),'utf8'));
+ expect(journal.previousConfig).toBe(edited);
+ expect(JSON.parse(await readFile(paths.qoder,'utf8'))).toMatchObject({hooks:{keep:true},theme:'dark',providers:{personal:{apiKey:'keep-key'},'token-flow':{model:'workbuddy/two',apiKey:'second-key'}}});
+ await connections.restore(second.id);
+ expect(JSON.parse(await readFile(paths.qoder,'utf8'))).toMatchObject({theme:'dark',providers:{'token-flow':{apiKey:'manual-key',model:'manual'}}});
+});
+
+it('keeps Qoder stale revisions and malformed files protected while allowing model add/remove cycles',async()=>{
+ const {paths,connections}=await setup();await mkdir(join(paths.qoder,'..'),{recursive:true});
+ const origin='http://127.0.0.1:9527',sourceId='a'.repeat(24);
+ await writeFile(paths.qoder,'{"providers":{"token-flow":{"apiKey":"manual"}},"hooks":{"keep":true}}');
+ for(const models of [['workbuddy/one'],['workbuddy/one','qoder/two'],['qoder/two'],['workbuddy/one']]){
+  const selections=models.map(model=>({model,sourceId}));
+  const p=await connections.preview('qoder',origin,models[0],false,selections);
+  await connections.apply({target:'qoder',origin,model:models[0],sourceId,revision:p.revision,replaceId:p.replaceId,selections,keyId:randomUUID(),key:'fixture'});
+  const written=JSON.parse(await readFile(paths.qoder,'utf8'));
+  expect(written.providers['token-flow'].models.map((m:{model:string})=>m.model)).toEqual(models);
+  expect(written.hooks).toEqual({keep:true});
+ }
+ const p=await connections.preview('qoder',origin,'workbuddy/one');
+ const damaged='{"providers":';await writeFile(paths.qoder,damaged);
+ await expect(connections.apply({target:'qoder',origin,model:'workbuddy/one',sourceId,revision:p.revision,replaceId:p.replaceId,keyId:randomUUID(),key:'fixture'})).rejects.toThrow('配置已变更');
+ expect(await readFile(paths.qoder,'utf8')).toBe(damaged);
+ await expect(connections.preview('qoder',origin,'workbuddy/one')).rejects.toThrow();
+ expect(await readFile(paths.qoder,'utf8')).toBe(damaged);
+});
+
+it('neutralizes conflicting Claude cloud routing and restores it after local gateway use',async()=>{
+ const {paths,connections}=await setup();const original={env:{CLAUDE_CODE_USE_BEDROCK:'1',CLAUDE_CODE_USE_VERTEX:'1',CLAUDE_CODE_USE_FOUNDRY:'1',ANTHROPIC_PROFILE:'custom',ANTHROPIC_MODEL:'stale',CLAUDE_CODE_OAUTH_TOKEN:'old-oauth'},apiKeyHelper:'old-helper',forceLoginGatewayUrl:'https://original.example',forceLoginMethod:'console',forceLoginOrgUUID:'old-org'};await writeFile(paths.claude,JSON.stringify(original));
+ const record=await connections.apply({target:'claude',revision:(await connections.status())[1].revision,origin:'http://127.0.0.1:9527',model:'claude/first',sourceId:'a'.repeat(24),keyId:randomUUID(),key:'fixture-key',selections:[{model:'claude/first',sourceId:'a'.repeat(24)},{model:'claude/second',sourceId:'a'.repeat(24)}]});
+ const doc=JSON.parse(await readFile(paths.claude,'utf8'));for(const k of ['CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY'])expect(doc.env[k]).toBe('0');expect(doc.apiKeyHelper).toBeUndefined();expect(doc.forceLoginGatewayUrl).toBeUndefined();doc.model='claude/second';await writeFile(paths.claude,JSON.stringify(doc));
+ expect((await connections.review(record.id)).checks.every(c=>c.ok)).toBe(true);expect(doc.env.ANTHROPIC_MODEL).toBe('');expect(doc.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('');
+ await connections.restore(record.id);expect(JSON.parse(await readFile(paths.claude,'utf8'))).toEqual(original);
 });

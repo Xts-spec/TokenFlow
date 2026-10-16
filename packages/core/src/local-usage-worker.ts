@@ -7,6 +7,8 @@ import {createHash} from 'node:crypto';
 import {zstdDecompressSync} from 'node:zlib';
 import {z} from 'zod';
 import {LocalUsageParser,mergeLocalUsageRows,recentLocalUsageRows,type LocalUsageRow,type UsageCoverage} from './local-usage.js';
+import {enrichAccountRows,readAccountEvidence,type AttributionRecord} from './usage-attribution.js';
+import {enrichNativeLoginRows,readNativeLoginIntervals,type NativeLoginInterval} from './native-usage-logins.js';
 import {codexRouteEvidence,gatewayResponseEvidence,routeChannel,type RouteEvidence} from './local-usage-evidence.js';
 
 type Entry={stamp:string;target:string;rows:LocalUsageRow[]};
@@ -14,7 +16,9 @@ const cache=new Map<string,Entry>();
 const path=join(workerData.root,'local-usage-index.json');
 const digest=(s:string)=>createHash('sha256').update(s).digest('hex');
 const count=z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const cachedRow=z.object({day:z.string().regex(/^\d{4}-\d{2}-\d{2}$/),target:z.enum(['codex','claude','pi','deepseek','workbuddy','qoder']),keyId:z.string().max(100),keyName:z.string().max(100),sourceId:z.literal(''),model:z.string().max(300),requests:count,failed:count,unmeasured:count,inputTokens:count,cachedTokens:count,cacheBaseTokens:count,outputTokens:count,durationMs:count,last:z.string().max(60),origin:z.literal('native'),channel:z.enum(['official','api','unknown']),provider:z.string().max(80),nativeAccountId:z.string().regex(/^[a-f0-9]{64}$/).optional(),sampleId:z.string().regex(/^[a-f0-9]{64}$/).optional(),responseHash:z.string().regex(/^[a-f0-9]{64}$/).optional(),cacheWriteTokens:count.optional(),reasoningTokens:count.optional()});
+const cachedRow=z.object({day:z.string().regex(/^\d{4}-\d{2}-\d{2}$/),target:z.enum(['codex','claude','pi','deepseek','workbuddy','qoder']),keyId:z.string().max(100),keyName:z.string().max(100),sourceId:z.literal(''),model:z.string().max(300),requests:count,failed:count,unmeasured:count,inputTokens:count,cachedTokens:count,cacheBaseTokens:count,outputTokens:count,durationMs:count,last:z.string().max(60),origin:z.literal('native'),channel:z.enum(['official','api','unknown']),provider:z.string().max(80),nativeAccountEvidence:z.enum(['otel','conflict','login-snapshot']).optional(),nativeOrganizationId:z.string().regex(/^[a-f0-9]{64}$/).optional(),nativeEmailHash:z.string().regex(/^[a-f0-9]{64}$/).optional(),nativeThreadId:z.string().regex(/^[a-f0-9]{64}$/).optional(),nativeAccountId:z.string().regex(/^[a-f0-9]{64}$/).optional(),sampleId:z.string().regex(/^[a-f0-9]{64}$/).optional(),responseHash:z.string().regex(/^[a-f0-9]{64}$/).optional(),cacheWriteTokens:count.optional(),reasoningTokens:count.optional()});
+let accountEvidence:AttributionRecord[]=await readAccountEvidence(workerData.root);
+let loginIntervals:NativeLoginInterval[]=await readNativeLoginIntervals(workerData.root);
 let busy=false;let gatewayEvidence=await gatewayResponseEvidence(workerData.root);let routesByThread=new Map<string,RouteEvidence[]>();
 async function files(root:string):Promise<{path:string;stamp:string;size:number}[]>{
  const result:{path:string;stamp:string;size:number}[]=[];
@@ -35,24 +39,24 @@ async function parseFile(target:string,file:{path:string;size:number}){
  else{const input=createReadStream(file.path);const lines=createInterface({input,crlfDelay:Infinity});try{for await(const line of lines)accept(line);}finally{lines.close();input.destroy();}}
  return parser.rows();
 }
-function publish(coverage:UsageCoverage[],scanning:boolean){parentPort?.postMessage({rows:mergeLocalUsageRows([...cache.values()].flatMap(e=>e.rows)),recent:recentLocalUsageRows([...cache.values()].flatMap(e=>e.rows)),coverage,scanning,updatedAt:new Date().toISOString()});}
+function publish(coverage:UsageCoverage[],scanning:boolean){for(const entry of cache.values())entry.rows=enrichAccountRows(enrichNativeLoginRows(entry.rows,loginIntervals),accountEvidence);const rows=[...cache.values()].flatMap(e=>e.rows);parentPort?.postMessage({rows:mergeLocalUsageRows(rows),recent:recentLocalUsageRows(rows),coverage,scanning,updatedAt:new Date().toISOString()});}
 async function scan(){
  if(busy)return;busy=true;const coverage:UsageCoverage[]=[];const seen=new Set<string>();
  try{
-  gatewayEvidence=await gatewayResponseEvidence(workerData.root);routesByThread=new Map();
+  accountEvidence=await readAccountEvidence(workerData.root);loginIntervals=await readNativeLoginIntervals(workerData.root);gatewayEvidence=await gatewayResponseEvidence(workerData.root);routesByThread=new Map();
   const codexRoots=workerData.sources.codex as string[];for(const route of await codexRouteEvidence(dirname(codexRoots[0]),workerData.gatewayPorts??[])){const list=routesByThread.get(route.threadId)??[];list.push(route);routesByThread.set(route.threadId,list);}
   for(const entry of cache.values())entry.rows=entry.rows.filter(row=>!row.responseHash||!gatewayEvidence.hashes.has(row.responseHash));
   for(const[target,roots]of Object.entries(workerData.sources as Record<string,string[]>)){
    const found=(await Promise.all(roots.map(files))).flat();const status:UsageCoverage={target,files:found.length,indexed:0,skipped:0,status:found.length?'scanning':'unavailable'};coverage.push(status);
    let changed=0;for(const f of found){const id=digest(f.path);seen.add(id);const old=cache.get(id);if(old?.stamp===f.stamp){status.indexed++;continue;}
-    try{const rows=await parseFile(target,f);const after=await lstat(f.path);cache.set(id,{stamp:after.size===f.size?f.stamp:'changed-during-scan',target,rows});status.indexed++;}catch{status.skipped++;}
+    try{let rows=await parseFile(target,f);const proofs=new Map((old?.rows??[]).filter(row=>!!row.nativeAccountEvidence).map(row=>[row.sampleId,row]));rows=rows.map(row=>{const previous=proofs.get(row.sampleId);return previous&&!row.nativeAccountId&&row.channel!=='api'&&row.inputTokens===previous.inputTokens&&row.outputTokens===previous.outputTokens&&row.cachedTokens===previous.cachedTokens&&(row.cacheWriteTokens??0)===(previous.cacheWriteTokens??0)?{...row,channel:previous.channel,keyName:previous.keyName,nativeAccountId:previous.nativeAccountId,nativeEmailHash:previous.nativeEmailHash,nativeOrganizationId:previous.nativeOrganizationId,nativeAccountEvidence:previous.nativeAccountEvidence}:row;});const after=await lstat(f.path);cache.set(id,{stamp:after.size===f.size?f.stamp:'changed-during-scan',target,rows});status.indexed++;}catch{status.skipped++;}
     if(++changed%10===0)publish(coverage,true);
    }status.status='ready';publish(coverage,true);
   }
   for(const id of cache.keys())if(!seen.has(id))cache.delete(id);
-  const tmp=`${path}.tmp`;await writeFile(tmp,JSON.stringify({version:8,files:Object.fromEntries(cache)}),{mode:0o600});await rename(tmp,path);publish(coverage,false);
+  const tmp=`${path}.tmp`;await writeFile(tmp,JSON.stringify({version:10,files:Object.fromEntries(cache)}),{mode:0o600});await rename(tmp,path);publish(coverage,false);
  }catch{parentPort?.postMessage({rows:mergeLocalUsageRows([...cache.values()].flatMap(e=>e.rows)),recent:recentLocalUsageRows([...cache.values()].flatMap(e=>e.rows)),coverage,scanning:false,warning:'部分本机用量暂时无法读取，已保留上次统计。'});}
  finally{busy=false;}
 }
-try{const stat=await lstat(path);if(stat.size<=64*1024*1024){const saved=JSON.parse(await readFile(path,'utf8'));if([7,8].includes(saved.version))for(const[id,e]of Object.entries(saved.files??{})){const v=e as Entry;if(saved.version===7&&v.target==='codex')continue;const parsed=z.array(cachedRow).safeParse(v.rows);if(parsed.success&&typeof v.stamp==='string'&&typeof v.target==='string'&&/^[a-f0-9]{64}$/.test(id))cache.set(id,{stamp:v.stamp,target:v.target,rows:parsed.data});}}}catch{/* First scan rebuilds missing metadata. */}
+try{const stat=await lstat(path);if(stat.size<=64*1024*1024){const saved=JSON.parse(await readFile(path,'utf8'));if([7,8,9,10].includes(saved.version))for(const[id,e]of Object.entries(saved.files??{})){const v=e as Entry;if(saved.version<9&&v.target==='codex'||saved.version<10&&v.target==='claude')continue;const parsed=z.array(cachedRow).safeParse(v.rows);if(parsed.success&&typeof v.stamp==='string'&&typeof v.target==='string'&&/^[a-f0-9]{64}$/.test(id))cache.set(id,{stamp:v.stamp,target:v.target,rows:parsed.data});}}}catch{/* First scan rebuilds missing metadata. */}
 publish([],true);parentPort?.on('message',()=>void scan());void scan();

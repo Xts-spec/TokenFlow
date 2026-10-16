@@ -14,6 +14,15 @@ export function providerLoginOverlay(replacements, patchDir) {
   };
   replacements[resolve('upstream/CLIProxyAPI/internal/auth/zcode/cli_polling.go')] = resolve('patches/cliproxy/zcode_cli_polling.go');
   patch('internal/api/handlers/management/auth_files_provider_oauth.go', text => {
+    // The retired "doubao" adapter was MarsCode/Trae, not the Doubao product.
+    for (const name of ['RequestDoubaoToken','ImportDoubaoLocalToken']) {
+      const start=text.indexOf(`func (h *Handler) ${name}(`);
+      const next=text.indexOf('\nfunc ',start+1);
+      if(start<0||next<0)throw Error('Retired provider handler moved: '+name);
+      text=text.slice(0,start)+`func (h *Handler) ${name}(c *gin.Context) { c.JSON(http.StatusGone,gin.H{"error":"Legacy MarsCode adapter removed; Trae is a separate provider"}) }\n`+text.slice(next);
+    }
+    text=text.replace('\n\t"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/doubao"','');
+
     const start = text.indexOf('func (h *Handler) RequestZCodeToken(');
     const end = text.indexOf('func (h *Handler) ImportZCodeLocalToken(', start);
     let section = text.slice(start, end);

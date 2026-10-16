@@ -31,3 +31,15 @@ it('uses disjoint cache buckets while keeping inclusive input and reasoning insi
 it('deduplicates Responses added/done/final tool items and measures the first reasoning output',()=>{
  let now=1;const o=new ResponseObserver(()=>now);o.inspect({type:'response.output_item.added',item:{type:'function_call',id:'fc1',name:'read'}});o.inspect({type:'response.output_item.done',item:{type:'function_call',id:'fc1',call_id:'call1',name:'read'}});o.inspect({type:'response.reasoning_summary_text.delta',delta:'NOT_STORED'});now=101;o.inspect({type:'response.completed',response:{id:'r1',output:[{type:'function_call',id:'fc1',call_id:'call1',name:'read'}]}});expect(o.result()).toMatchObject({tools:[{id:'call1',name:'read'}],toolsCount:1,firstOutputAt:1,generationMs:100});
 });
+
+it('persists safe failure categories so a restart does not erase the reason for a 502',async()=>{
+ const traces=await GatewayTraces.open(root);
+ traces.record({...call(),status:504,error:{code:'upstream_idle_timeout',message:'上游长时间未返回数据。'}},requestTrace({}));
+ await traces.close();const reopened=await GatewayTraces.open(root);
+ expect(reopened.list()[0]).toMatchObject({error:{code:'upstream_idle_timeout'}});await reopened.close();
+});
+
+it('retains sanitized streaming failure codes in observed responses',()=>{
+ const o=new ResponseObserver();o.inspect({type:'error',error:{code:'workbuddy_output_failed',message:'secret payload'}});
+ expect(o.result().error).toMatchObject({code:'workbuddy_output_failed'});expect(JSON.stringify(o.result())).not.toContain('secret');
+});

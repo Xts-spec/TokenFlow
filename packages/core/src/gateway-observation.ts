@@ -1,3 +1,4 @@
+import {upstreamError} from './upstream-errors.js';
 /** Disjoint provider accounting normalized to inclusive input for the existing gateway budget. */
 const n=(v:unknown)=>typeof v==='number'&&Number.isSafeInteger(v)&&v>=0?v:null;
 export function providerUsage(raw:unknown){
@@ -10,12 +11,14 @@ export function providerUsage(raw:unknown){
  return {inputTokens:input,cachedTokens:read,cacheWriteTokens:write,outputTokens:n(u.output_tokens??u.completion_tokens),reasoningTokens:n(u.output_tokens_details?.reasoning_tokens)??n(u.completion_tokens_details?.reasoning_tokens)};
 }
 export type ObservedTool={id:string;name:string};
-export type ResponseObservation={tools:ObservedTool[];toolsCount?:number;firstOutputAt?:number;generationMs?:number;responseId?:string};
+export type ResponseObservation={tools:ObservedTool[];error?:{code:string;message:string};toolsCount?:number;firstOutputAt?:number;generationMs?:number;responseId?:string};
 /** Only tool identities/timing are retained; never assistant text, reasoning, or arguments. */
 export class ResponseObserver{
+ private error?:{code:string;message:string};
  private tools=new Map<string,ObservedTool>();private indices=new Map<string,string>();private first?:number;private responseId?:string;
  constructor(private now=()=>Date.now()){}
  inspect(e:any){
+  if(e.type==='error'||e.type==='response.failed'||e.error){const safe=upstreamError(502,JSON.stringify({error:e.error??e.response?.error}));this.error={code:safe.code??safe.type,message:safe.message};}
   if(typeof e.response?.id==='string')this.responseId=e.response.id;
   if(typeof e.id==='string'&&(e.object==='chat.completion'||e.object==='response'))this.responseId=e.id;
   const tool=(id:unknown,name:unknown,key?:string)=>{
@@ -36,5 +39,5 @@ export class ResponseObserver{
   const active=e.type==='response.output_text.delta'||e.type==='response.reasoning_text.delta'||e.type==='response.reasoning_summary_text.delta'||e.type==='response.function_call_arguments.delta'||e.type==='content_block_delta'||e.choices?.some((c:any)=>c.delta?.content||c.delta?.reasoning_content||c.delta?.reasoning||c.delta?.tool_calls?.length);
   if(active&&this.first===undefined)this.first=this.now();
  }
- result():ResponseObservation{return {tools:[...this.tools.values()].slice(0,64),toolsCount:this.tools.size,...(this.first===undefined?{}:{firstOutputAt:this.first,generationMs:Math.max(0,this.now()-this.first)}),...(this.responseId?{responseId:this.responseId}:{})};}
+ result():ResponseObservation{return {...(this.error?{error:this.error}:{}),tools:[...this.tools.values()].slice(0,64),toolsCount:this.tools.size,...(this.first===undefined?{}:{firstOutputAt:this.first,generationMs:Math.max(0,this.now()-this.first)}),...(this.responseId?{responseId:this.responseId}:{})};}
 }

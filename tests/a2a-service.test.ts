@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join,resolve } from 'node:path';
 import { createServer } from 'node:net';
 import {PiTerminalLifecycle} from '../packages/core/src/pi-terminal-lifecycle.js';
+import {ClaudeTerminalLifecycle} from '../packages/core/src/claude-terminal-lifecycle.js';
 import { QoderLifecycle } from '../packages/core/src/agent-lifecycle.js';
 import { createDesktopService } from '../packages/core/src/service.js';
 it('connects and restores a local Agent through admin APIs without exposing keys or original config',async()=>{
@@ -37,7 +38,8 @@ it('connects and restores a local Agent through admin APIs without exposing keys
     expect((await service.app.inject({method:'POST',url:'/api/a2a/restart',headers,payload})).statusCode).toBe(200);
     expect(restart).toHaveBeenLastCalledWith(target);
    }
-   expect((await service.app.inject({method:'POST',url:'/api/a2a/restart',headers,payload:{target:'claude',client:'terminal'}})).statusCode).toBe(400);
+   const claudeRestart=vi.spyOn(ClaudeTerminalLifecycle.prototype,'restart').mockResolvedValue({message:'Claude Code 已打开'});
+   try{expect((await service.app.inject({method:'POST',url:'/api/a2a/restart',headers,payload:{target:'claude',client:'terminal'}})).statusCode).toBe(200);expect(claudeRestart).toHaveBeenCalledWith(undefined);}finally{claudeRestart.mockRestore();}
    const piRestart=vi.spyOn(PiTerminalLifecycle.prototype,'restart').mockResolvedValue({message:'Pi 已重新打开'});try{expect((await service.app.inject({method:'POST',url:'/api/a2a/restart',headers,payload:{target:'pi'}})).statusCode).toBe(200);}finally{piRestart.mockRestore();}
    expect((await service.app.inject({url:'/api/a2a/program-updates',headers:{host:headers.host}})).statusCode).toBe(401);
    expect((await service.app.inject({url:'/api/a2a/terminal-sessions',headers:{host:headers.host}})).statusCode).toBe(401);
@@ -57,7 +59,7 @@ it('connects and restores a local Agent through admin APIs without exposing keys
   const record=response.json();
   expect((await service.app.inject({method:'POST',url:'/api/maintenance/run',headers,payload:{prompt:`请 review 刚完成的 ${record.target} 接入（记录 ${record.id}），仅做只读检查。`,interfaceAgent:'workbuddy',chain:{target:'claude',sourceId,model:'codex/shared-model',connectionId:record.id}}})).statusCode).toBe(200);
   await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().status).toBe('completed');
-  const care=(await service.app.inject({url:'/api/maintenance',headers})).json();expect(care.engine).toBe('pi');expect(care.messages.some((m:{role:string;text:string})=>m.role==='tool'&&m.text.includes('主模型与辅助模型一致'))).toBe(true);expect(JSON.stringify(care)).not.toContain('tfl_');
+  const care=(await service.app.inject({url:'/api/maintenance',headers})).json();expect(care.engine).toBe('pi');expect(care.messages.some((m:{role:string;text:string})=>m.role==='tool'&&m.text.includes('主模型可切换，子代理继承会话'))).toBe(true);expect(JSON.stringify(care)).not.toContain('tfl_');
   expect(care.chain).toMatchObject({target:'claude',sourceId,model:'codex/shared-model'});
   const inspection=JSON.parse(care.messages.find((m:{text:string})=>m.text.startsWith('只读预检: ')).text.slice('只读预检: '.length));
   expect(inspection.targets.map((t:{id:string})=>t.id)).toEqual(['claude']);expect(inspection.chain.sourceAvailable).toBe(true);expect(inspection.chain.matchesInstalled).toBe(true);expect(inspection.chain.source.id).toBe(sourceId);
@@ -204,7 +206,7 @@ it('performs the confirmed Codex stop, backup, change and relaunch in a single a
  }finally{restart.mockRestore();backup.mockRestore();migration.mockRestore();await service.app.close();await rm(root,{recursive:true,force:true});}
 });
 
-it.each(['/api/a2a/restore','/api/a2a/codex-migration/restore'])('restores configuration through %s without reading or backing up conversations',async route=>{
+it.each(['/api/a2a/restore','/api/a2a/codex-migration/restore'])('never removes the provider through %s until persisted routes have been restored',async route=>{
  const root=await mkdtemp(join(await realpath(tmpdir()),'config-only-restore-'));
  await mkdir(join(root,'codex'));await mkdir(join(root,'cliproxy'));
  await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'codex.json',provider:'codex',status:'active',models:['shared-model']}]));
@@ -222,14 +224,17 @@ it.each(['/api/a2a/restore','/api/a2a/codex-migration/restore'])('restores confi
   history=vi.spyOn(CodexThreadMigration.prototype,'restore').mockRejectedValue(new Error('history unavailable'));
   context=vi.spyOn(CodexContext.prototype,'prepareOfficial').mockRejectedValue(new Error('cannot back up history'));
   const current=await state();
-  // History work still requires explicit opt-in; a failed attempt retains the
-  // gateway configuration so the user can retry with configuration only.
+  // A failed compatibility pass or route migration keeps the provider definition.
   const optional=await service.app.inject({method:'POST',url:route,headers,payload:{...(route==='/api/a2a/restore'?{id:current.connection.id,revision:current.revision}:{}),restoreHistory:true}});
   expect(optional.statusCode).toBe(500);expect((await state()).connection.id).toBe(current.connection.id);
   context.mockClear();history.mockClear();
-  const restored=await service.app.inject({method:'POST',url:route,headers,payload:route==='/api/a2a/restore'?{id:current.connection.id,revision:current.revision}:{}});
-  expect(restored.statusCode,restored.body).toBe(200);expect(await readFile(path,'utf8')).toBe(original);
-  expect(history).not.toHaveBeenCalled();expect(context).not.toHaveBeenCalled();expect((await state()).connection).toBeNull();
+  const payload={...(route==='/api/a2a/restore'?{id:current.connection.id,revision:current.revision}:{}),restoreHistory:false};
+  const failed=await service.app.inject({method:'POST',url:route,headers,payload});
+  expect(failed.statusCode).toBe(500);expect((await state()).connection.id).toBe(current.connection.id);
+  expect(await readFile(path,'utf8')).toContain('token_flow');expect(context).not.toHaveBeenCalled();expect(history).toHaveBeenCalled();
+  history.mockResolvedValue({migrated:1});
+  const restored=await service.app.inject({method:'POST',url:route,headers,payload});
+  expect(restored.statusCode,restored.body).toBe(200);expect(await readFile(path,'utf8')).toBe(original);expect((await state()).connection).toBeNull();
  }finally{history?.mockRestore();context?.mockRestore();await service.app.close();await rm(root,{recursive:true,force:true});}
 });
 
@@ -247,3 +252,48 @@ it('records the real switch error when the client only sees an internal failure'
   expect(JSON.stringify(failures)).not.toContain('tfl_');expect(JSON.stringify(failures)).not.toContain('raw-token');expect(JSON.stringify(failures)).not.toContain('at hidden');
  }finally{restore.mockRestore();await service.app.close();await rm(root,{recursive:true,force:true});}
 });
+
+it('repairs disconnected gateway conversations using the currently selected official model',async()=>{
+ const root=await mkdtemp(join(await realpath(tmpdir()),'disconnected-repair-'));
+ const configPath=join(root,'codex/config.toml');await mkdir(join(root,'codex'));await writeFile(configPath,'model_provider = "openai"\nmodel = "official-selected"\n');
+ const restore=vi.spyOn(CodexThreadMigration.prototype,'restore').mockImplementation(async model=>{expect(typeof model).toBe('function');expect(await (model as ()=>Promise<string>)()).toBe('official-selected');return {migrated:2};});
+ const service=await createDesktopService({root,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:configPath},agentProcesses:async()=>[]});
+ try{const response=await service.app.inject({method:'POST',url:'/api/a2a/codex-migration/restore',headers:{host:'127.0.0.1:9527',authorization:'Bearer admin'},payload:{restoreHistory:true}});expect(response.statusCode,response.body).toBe(200);expect(response.json()).toMatchObject({migrated:2});expect(await readFile(configPath,'utf8')).toContain('official-selected');}
+ finally{restore.mockRestore();await service.app.close();await rm(root,{recursive:true,force:true});}
+});
+
+it('applies retained models while their source is unavailable without moving them to another account',async()=>{
+ const root=await mkdtemp(join(await realpath(tmpdir()),'a2a-optional-cleanup-'));
+ const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
+ await mkdir(join(root,'cliproxy'));await mkdir(join(root,'claude'));
+ const accounts=[{name:'codex.json',provider:'codex',status:'active',models:['retained-model','new-model']}];
+ await writeFile(join(root,'cliproxy','fixture-accounts.json'),JSON.stringify(accounts));
+ await writeFile(join(root,'claude','settings.json'),'{}');
+ const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin-token',localKey:'internal-key',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{qoder:join(root,'qoder/settings.json'),codex:join(root,'codex/config.toml'),claude:join(root,'claude/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async()=>[]});
+ const headers={host:'127.0.0.1:9527',authorization:'Bearer admin-token'};
+ try{
+  await service.proxy.start();const sourceId=service.proxy.snapshot().accounts[0].id;
+  const apply=async(selections:Array<{sourceId:string;model:string}>)=>{
+   const state=(await service.app.inject({url:'/api/a2a',headers})).json();const target=state.targets.find((item:{id:string})=>item.id==='claude');
+   return service.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload:{target:'claude',...selections[0],selections,revision:target.revision,replaceId:target.connection?.id}});
+  };
+  const original={sourceId,model:'codex/retained-model'};
+  expect((await apply([original])).statusCode).toBe(200);
+  await fetch(`http://127.0.0.1:${port}/fixture`,{method:'POST',body:JSON.stringify({accounts:accounts.map(account=>({...account,unavailable:true}))})});
+  await service.proxy.refreshAccounts();
+  const exported=await service.app.inject({method:'POST',url:'/api/gateway-keys',headers,payload:{name:'offline selection',models:[original.model],modelSources:{[original.model]:sourceId},agents:['openai'],tokenLimit:null}});
+  expect(exported.statusCode,exported.body).toBe(200);
+  const expanded=await apply([original,{sourceId,model:'codex/new-model'}]);
+  expect(expanded.statusCode,expanded.body).toBe(200);
+  await fetch(`http://127.0.0.1:${port}/fixture`,{method:'POST',body:JSON.stringify({accounts:[]})});await service.proxy.refreshAccounts();
+  const keptKey=await service.app.inject({method:'PUT',url:`/api/gateway-keys/${exported.json().key.id}/models`,headers,payload:{selections:[original]}});
+  expect(keptKey.statusCode,keptKey.body).toBe(200);expect(keptKey.json().modelSources).toEqual({[original.model]:sourceId});
+  const retained=await apply([original]);expect(retained.statusCode,retained.body).toBe(200);expect(retained.json().selections).toEqual([original]);
+  const state=(await service.app.inject({url:'/api/a2a',headers})).json();expect(state.targets.find((item:{id:string})=>item.id==='claude').connection.selections).toEqual([original]);
+  const saved=JSON.parse(await readFile(join(root,'claude/settings.json'),'utf8'));
+  const unavailable=await service.app.inject({method:'POST',url:'/v1/messages',headers:{host:headers.host,authorization:`Bearer ${saved.env.ANTHROPIC_AUTH_TOKEN}`},payload:{model:original.model,messages:[{role:'user',content:'hello'}],max_tokens:10}});
+  expect(unavailable.statusCode).toBe(503);
+  const forged=await apply([{sourceId:'f'.repeat(24),model:original.model}]);expect(forged.statusCode).toBe(409);
+  const unknown=await apply([{sourceId,model:'codex/never-authorized'}]);expect(unknown.statusCode).toBe(409);
+ }finally{await service.app.close();await rm(root,{recursive:true,force:true});}
+},30000);

@@ -8,12 +8,11 @@ import { xai } from './xai.js';
 import { qoder } from './qoder.js';
 import { workbuddy, workbuddyOverseas } from './workbuddy.js';
 import { zcode } from './zcode.js';
-import { doubao } from './doubao.js';
 import { trae } from './trae.js';
 import type { LoginProvider, LoginProviderId } from './types.js';
 
 export const loginProviders: Readonly<Record<LoginProviderId, LoginProvider>> = {
-  codex, claude, antigravity, kimi, xai, qoder, workbuddy, 'workbuddy-overseas':workbuddyOverseas, zcode, doubao, trae,
+  codex, claude, antigravity, kimi, xai, qoder, workbuddy, 'workbuddy-overseas':workbuddyOverseas, zcode, trae,
 };
 export const loginProviderIds = Object.keys(loginProviders) as [LoginProviderId, ...LoginProviderId[]];
 export const loginProviderSchema = z.enum(loginProviderIds);

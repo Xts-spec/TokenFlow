@@ -4,10 +4,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LocalAgentSnapshot } from '../../../packages/core/src/cliproxy';
 import type { AgentConnections } from '../../../packages/core/src/agent-connections';
 import { requestJSON } from './request';
+import { readForSession,invalidateSessionReads } from './session-read';
 import { sourceOptions } from './source-options';
 
-export type LoginProvider='codex'|'claude'|'antigravity'|'cursor';
-export const loginNames:Record<LoginProvider,string>={codex:'Codex',claude:'Claude Code',antigravity:'Antigravity',cursor:'Cursor'};
+export type LoginProvider='codex'|'claude'|'antigravity'|'workbuddy'|'workbuddy-ai'|'qoder'|'qoder-ide'|'cursor';
+export const loginNames:Record<LoginProvider,string>={codex:'Codex',claude:'Claude Code',antigravity:'Antigravity',workbuddy:'WorkBuddy','workbuddy-ai':'WorkBuddyAI',qoder:'Qoder','qoder-ide':'Qoder IDE',cursor:'Cursor'};
 export const clientOptions={workbuddy:[['workbuddy','WorkBuddy'],['workbuddy-ai','WorkBuddyAI']],qoder:[['qoder','Qoder'],['qoder-ide','Qoder IDE']]} as const;
 type Status={readOnly?:boolean;displayName?:string;loginState?:'signed-in'|'signed-out'|'unreadable';readError?:string;unavailableReason?:string;message?:string;organizationId?:string|null;domain?:string;enterpriseId?:string;revision:string;email?:string|null;accountId?:string|null;model?:string|null;pids:number[];backup:{state:string}|null;gatewayConnected:boolean;
  accounts:{organizationId?:string|null;domain?:string;enterpriseId?:string;id:string;email?:string|null;accountId?:string|null;switchable:boolean;reason:string}[]};
@@ -19,16 +20,17 @@ const usable=(provider:LoginProvider,models:string[])=>provider==='codex'?models
 
 // Mutations invalidate cached snapshots even when their page is not mounted.
 export function notifyNativeLoginChanged(){
+ invalidateSessionReads('/api/native-accounts/');invalidateSessionReads('/api/codex-accounts');invalidateSessionReads('agent-targets');
  window.dispatchEvent(new Event('tokenflow:native-login-changed'));
 }
 
 /** The client's own login (not token-flow): which pooled account it is signed in as, and switching between them. */
 export function useNativeLogin(provider:LoginProvider,local:LocalAgentSnapshot,enabled=true){
- const desktop=false||false||false||false;
+ const desktop=provider==='workbuddy'||provider==='workbuddy-ai'||provider==='qoder'||provider==='qoder-ide';
  const [status,setStatus]=useState<Status>();const [error,setError]=useState('');const requestVersion=useRef(0);
- const refresh=useCallback(async(force=false,reload=true)=>{const version=++requestVersion.current;try{const next=await requestJSON<Status>(base(provider)+(force&&(desktop||provider==='cursor')?'?refresh=1':''));if(version!==requestVersion.current)return;setStatus(next);setError('');}catch(e){if(version!==requestVersion.current)return;setStatus(undefined);setError(e instanceof Error&&/invalid_enum_value|Invalid enum value/.test(e.message)?'请重新打开新版 TokenFlow':'暂时无法读取本机登录');}},[provider,desktop]);
+ const refresh=useCallback(async(force=false,reload=true)=>{const version=++requestVersion.current;try{const next=await readForSession(base(provider),()=>requestJSON<Status>(base(provider)+(force&&(desktop||provider==='cursor')?'?refresh=1':'')),reload);if(version!==requestVersion.current)return;setStatus(next);setError('');}catch(e){if(version!==requestVersion.current)return;setStatus(undefined);setError(e instanceof Error&&/invalid_enum_value|Invalid enum value/.test(e.message)?'请重新打开新版 TokenFlow':'暂时无法读取本机登录');}},[provider,desktop]);
  const sourceAccounts=sourceOptions(local);
- const pool=false?'workbuddy':false?'qoder':provider;
+ const pool=provider==='workbuddy-ai'?'workbuddy':provider==='qoder-ide'?'qoder':provider;
  const pooled=local.accounts.filter(a=>a.provider===pool&&!a.isDuplicate&&(!a.disabled||provider==='cursor')).map(a=>({...a,models:a.models??[],remaining:sourceAccounts.find(s=>s.id===a.id)?.remaining??null}));
  useEffect(()=>{setStatus(undefined);if(!enabled)return;void refresh(false,false);const reload=()=>void refresh();window.addEventListener('tokenflow:native-login-changed',reload);return()=>{requestVersion.current++;window.removeEventListener('tokenflow:native-login-changed',reload);};},[refresh,enabled]);
  const matches=(credential:Status['accounts'][number]|undefined)=>hasNativeLogin({status,error})&&!!status&&!!credential&&(desktop?desktopIdentityMatches(provider,status,credential):provider==='claude'?!!status.accountId&&status.accountId===credential.accountId&&status.organizationId===credential.organizationId:provider==='codex'?!!status.accountId&&credential.accountId===status.accountId&&(!credential.email||!status.email||credential.email===status.email):!!status.email&&(provider==='cursor'?credential.email?.toLowerCase()===status.email.toLowerCase():credential.email===status.email));
@@ -40,7 +42,7 @@ export function useNativeLogin(provider:LoginProvider,local:LocalAgentSnapshot,e
  });
  const current=accounts.find(a=>a.current);
  const nativeCurrent=pooled.find(a=>matches(status?.accounts.find(c=>c.id===a.id)));
- const nativeLabel=hasNativeLogin({status,error})?((false||false)?status?.email||status?.displayName:'')||nativeCurrent?.label||status?.email||status?.displayName||(status?.accountId?`${loginNames[provider]} 账号 ${status.accountId.slice(0,8)}`:''):'';
+ const nativeLabel=hasNativeLogin({status,error})?((provider==='qoder'||provider==='qoder-ide')?status?.email||status?.displayName:'')||nativeCurrent?.label||status?.email||status?.displayName||(status?.accountId?`${loginNames[provider]} 账号 ${status.accountId.slice(0,8)}`:''):'';
 
  // A client routed through TokenFlow ignores its own login, so switching first restores its original config.
  const releaseGateway=async()=>{

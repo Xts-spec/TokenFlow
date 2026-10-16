@@ -80,7 +80,10 @@ func TestQoderSelectedModelReachesEveryNativeModelField(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, path := range []string{"model_config.key", "chat_context.extra.modelConfig.key", "business.model_key"} {
+			if gjson.GetBytes(body, "business.model_key").Exists() {
+				t.Fatal("redundant business model key must be absent")
+			}
+			for _, path := range []string{"model_config.key", "chat_context.extra.modelConfig.key"} {
 				if got := gjson.GetBytes(body, path).String(); got != key {
 					t.Errorf("%s = %q, want %q", path, got, key)
 				}

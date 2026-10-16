@@ -1,6 +1,6 @@
 import {CredentialHistory} from './credential-history.js';
 import {credentialIdentity,credentialFingerprint,compareCredentials,credentialPreference,credentialSubject} from './credential-identity.js';
-import {workbuddyLoginTarget} from './workbuddy-region.js';
+import {desktopCredentialSchema,desktopPoolProvider,workbuddyLoginDomain,workbuddyLoginIssue,workbuddyLoginTarget,type DesktopProvider} from './desktop-accounts.js';
 import { retryQuotaCall, QuotaTransportError, transientQuotaStatus } from './quota/retry.js';
 import {qoderAccountingReader} from './qoder-accounting.js';
 import {accountLabel} from './account-label.js';
@@ -17,7 +17,10 @@ import { join } from 'node:path';
 import { createServer } from 'node:net';
 import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import { safeEnvironment } from './browser/host.js';
+import { safeEnvironment } from './process-environment.js';
+import {createNetworkProxy,type NetworkSnapshot} from './network-proxy.js';
+import {checkNetwork,type NetworkCheckReport} from './network-check.js';
+import {safeFailure} from './login/diagnostics.js';
 import { LoginController, loginProviderCatalog, isLoginProvider, routeModelToProvider, type LoginOptions, type LoginProviderId } from './login/index.js';
 import { quotaProviders, QuotaHTTPError, type AccountQuota, type QuotaAccount, type QuotaRequest, type QuotaResponse } from './quota/index.js';
 
@@ -49,7 +52,7 @@ function modelImageCapabilities(model:z.infer<typeof modelSchema>,provider:strin
  return {capabilities:{text:true,tools:true,images:!['qoder','cursor'].includes(provider)&&modalities.some(value=>value.toLowerCase()==='image')}};
 }
 export type LocalModel = {id: string; displayName?: string; provider?: LoginProviderId | 'cursor' | 'api';textOnly?:boolean;capabilities?:{text:boolean;tools:boolean;images:boolean}};
-export type CLIProxyOptions = LoginOptions & {secrets?:{get:(name:string)=>Promise<string>;set:(name:string,value:string)=>Promise<void>};apiConfig?:()=>string;apiModelIDs?:()=>string[]};
+export type CLIProxyOptions = LoginOptions & {outboundProxyURL?:string;networkSnapshot?:()=>NetworkSnapshot;secrets?:{get:(name:string)=>Promise<string>;set:(name:string,value:string)=>Promise<void>};apiConfig?:()=>string;apiModelIDs?:()=>string[]};
 
 export class CLIProxyManager {
   readonly cursor:CursorProvider;
@@ -84,6 +87,16 @@ export class CLIProxyManager {
   private models: LocalModel[] = [];
   private apiModels=new Set<string>();
   private configurationTask:Promise<void>=Promise.resolve();
+  private network?:Awaited<ReturnType<typeof createNetworkProxy>>;
+  private networkCheck?:NetworkCheckReport;
+  private networkCheckTask?:Promise<NetworkCheckReport>;
+  private networkCheckAbort?:AbortController;
+  async checkNetwork(){
+    if(this.networkCheckTask)return this.networkCheckTask;
+    this.networkCheckAbort=new AbortController();
+    this.networkCheckTask=checkNetwork({port:this.port,key:this.key,managementKey:this.managementKey,signal:this.networkCheckAbort.signal,log:message=>this.log(message)}).then(report=>{this.networkCheck=report;return report;}).finally(()=>{this.networkCheckTask=undefined;this.networkCheckAbort=undefined;});
+    return this.networkCheckTask;
+  }
   accountBaseURL(id:string){const info=this.quotaTargets.get(id)?.account;return info?.provider==='workbuddy'&&['www.workbuddy.ai','https://www.workbuddy.ai'].includes(info.domain??'')?'https://www.workbuddy.ai':undefined;}
   private publishAPIModels(ids:Iterable<string>){
     const configured=new Set(this.options.apiModelIDs?.()??[]);
@@ -110,7 +123,7 @@ export class CLIProxyManager {
     const cursor=this.cursor.snapshot();
     const accounts=this.accounts.map(account=>{const ids=this.credentialGroups.get(account.id);return !account.isDuplicate&&ids?.length?{...account,models:[...new Set(this.accounts.filter(a=>ids.includes(a.id)&&!a.disabled&&(!a.unavailable||a.retryable)).flatMap(a=>a.models??[]))]}:account;});
     return structuredClone({state: this.state, loginState: this.login_.state, port: this.port,
-      logs: this.recent, accounts: [...accounts,...cursor.accounts], models: [...this.models,...(this.state==='running'?cursor.models:[])], accountError: this.accountError, lastError: this.lastError,
+      logs: this.recent,...(this.networkCheck?{networkCheck:this.networkCheck}:{}),...(this.options.networkSnapshot||this.network?{network:this.options.networkSnapshot?.()??this.network!.snapshot()}:{}), accounts: [...accounts,...cursor.accounts], models: [...this.models,...(this.state==='running'?cursor.models:[])], accountError: this.accountError, lastError: this.lastError,
       quotas: {...this.quotas,...cursor.quotas}, quotaBusy: this.quotaBusy, providers: [...loginProviderCatalog(),cursorCatalog], login: this.cursorLoginSelected?cursor.login:this.login_.snapshot()});
   }
   /** 内部 sidecar 地址和密钥；不含 Cursor SDK 模型，不进 snapshot / 日志。 */
@@ -145,7 +158,8 @@ export class CLIProxyManager {
     await chmod(dir, 0o700);
     // Upstream management stays on loopback. Neither key is returned to the renderer.
     const yaml = `host: "127.0.0.1"\nport: ${this.port}\nauth-dir: ${JSON.stringify(join(dir, 'auth'))}\napi-keys:\n  - ${JSON.stringify(this.key)}\nremote-management:\n  allow-remote: false\n  secret-key: ${JSON.stringify(this.managementKey)}\n  disable-control-panel: true\ndebug: false\nlogging-to-file: false\nrequest-log: false\nrequest-retry: 0\noauth-model-alias: ${JSON.stringify(this.aliases)}\n`;
-    await writeFile(this.configPath+'.tmp', yaml+(this.options.apiConfig?.()??''), {mode: 0o600});
+    const outboundProxy=this.options.outboundProxyURL??this.network?.url;
+    await writeFile(this.configPath+'.tmp', yaml+(outboundProxy?`proxy-url: ${JSON.stringify(outboundProxy)}\n`:'')+(this.options.apiConfig?.()??''), {mode: 0o600});
     await rename(this.configPath+'.tmp',this.configPath);
     await chmod(this.configPath, 0o600);
   }
@@ -186,6 +200,7 @@ export class CLIProxyManager {
     this.providerRefreshTimes.clear();
     this.state = 'starting'; this.lastError = undefined; this.requests = new AbortController();
     try {
+      if(!this.options.outboundProxyURL&&!this.network)this.network=await createNetworkProxy();
       await this.configure();
       await new Promise<void>((resolve, reject) => {
         const server = createServer();
@@ -434,9 +449,12 @@ export class CLIProxyManager {
       if(refreshUsage)void (this.quotaTask ?? Promise.resolve()).then(() => {
         if (this.state === 'running' && this.accounts.some(a => !a.disabled && (!providerScope||a.provider===providerScope) && (!this.quotas[a.id] || Date.now() - Date.parse(this.quotas[a.id].observedAt) > 300000))) return this.refreshQuota(providerScope);
       }).catch(() => undefined);
-    } catch {
+    } catch (error) {
       if(!providerScope)this.models = [];
-      this.accountError = '账号或模型目录暂未同步完成，网关会自动重试。';
+      const failure=safeFailure(error);
+      const message=`账号或模型读取失败：${failure.reason}（${failure.code}）。网关会自动重试。`;
+      if(this.accountError!==message)this.log(message);
+      this.accountError = message;
       throw new Error(this.accountError);
     }
     return this.snapshot();
@@ -489,6 +507,23 @@ export class CLIProxyManager {
     if(account?.provider!=='workbuddy'||!name||name.includes('/')||name.includes('\\'))throw new Error('请选择有效的 WorkBuddy 账号');
     return JSON.parse(await readConfig(join(this.root,'cliproxy','auth',name))??'null') as unknown;
   }
+  async desktopNativeAccounts(provider:DesktopProvider){
+    const pool=desktopPoolProvider(provider);
+    const rows=await Promise.all(this.accounts.filter(a=>a.provider===pool&&!a.disabled).map(async a=>{
+      try{const raw=await this.nativeCredentialFile(pool,a.id),p=desktopCredentialSchema.safeParse(raw);
+        if(pool==='workbuddy'&&workbuddyLoginTarget((raw as {domain?:string})?.domain)!==provider)return null;
+        const reason=p.success?(pool==='workbuddy'?workbuddyLoginIssue(p.data.domain,provider):''):'登录凭据不完整或已过期，请刷新账号或重新授权';
+        return {id:a.id,accountId:p.success?p.data.uid:null,email:p.success?p.data.email:null,domain:p.success&&pool==='workbuddy'?workbuddyLoginDomain(p.data.domain):undefined,enterpriseId:p.success?p.data.enterprise_id??'':undefined,switchable:p.success&&!reason,reason};
+      }catch{return {id:a.id,switchable:false,reason:'授权文件暂不可读取'};}
+    }));return rows.filter((row):row is NonNullable<typeof row>=>row!==null);
+  }
+  async desktopCredential(provider:DesktopProvider,id:string){
+    const pool=desktopPoolProvider(provider);
+    if(!this.accounts.some(a=>a.id===id&&a.provider===pool&&!a.disabled))throw nativeConflict('请选择有效的官方账号。');
+    const raw=await this.nativeCredentialFile(pool,id);
+    if(pool==='workbuddy'){const issue=workbuddyLoginIssue((raw as {domain?:string})?.domain,provider);if(issue)throw nativeConflict(issue);}
+    return raw;
+  }
   async nativeAccounts(provider:NativeProvider,includeInactive=false) {
     return Promise.all(this.accounts.filter(a=>a.provider===provider&&(includeInactive||!a.disabled)).map(async account=>{
       try{const raw=await this.nativeCredentialFile(provider,account.id),parsed=nativeCredentialSchema.safeParse(raw);
@@ -496,7 +531,7 @@ export class CLIProxyManager {
       }catch{return {id:account.id,email:null,switchable:false,reason:'授权文件暂不可读取'};}
     }));
   }
-  private async nativeCredentialFile(provider:NativeProvider,id:string){
+  private async nativeCredentialFile(provider:NativeProvider|DesktopProvider,id:string){
     id=this.preferredCredential(id);
     const account=this.accounts.find(a=>a.id===id),name=this.names.get(id);
     if(account?.provider!==provider||!name||name.includes('/')||name.includes('\\'))throw nativeConflict('请选择对应客户端的有效账号。');
@@ -606,12 +641,13 @@ export class CLIProxyManager {
       }
     }));
     if(providerScope==='cursor')await this.cursor.refresh();
-    this.log(`额度已刷新（${targets.length} 个账号）`);
+    const success=targets.filter(account=>this.quotas[account.id]?.status==='ok').length;
+    if(providerScope!=='cursor')this.log(`${providerScope} 额度查询：${success} 成功，${targets.length-success} 失败，${targets.length} 个可查询账号${targets.length?'':'（没有可查询账号，未发起额度请求）'}`);
     return this.snapshot();
   }
   // 登录层入口：所有 Provider 共用同一个会话控制器。
   async login(provider: LoginProviderId | 'cursor') {this.cursorLoginSelected=provider==='cursor';if(provider==='cursor'){if(this.login_.isPending())throw new Error('请先完成当前授权');await this.cursor.beginLogin();}else{if(['starting','waiting_for_browser'].includes(this.cursor.snapshot().login?.status??''))throw new Error('请先完成 Cursor 授权');await this.login_.login(provider);}return this.snapshot();}
-  async importLocal(provider: 'doubao' | 'trae' | 'workbuddy' | 'zcode' | 'cursor', onlyNew=false) {
+  async importLocal(provider: 'trae' | 'workbuddy' | 'zcode' | 'cursor', onlyNew=false) {
     if(provider==='cursor'){await this.cursor.importLocal();return this.snapshot();}
     if (this.state !== 'running') await this.start();
     // Startup must never replace a pool credential refreshed independently of the native app.
@@ -624,7 +660,7 @@ export class CLIProxyManager {
   async openLogin(id: string) {if(this.cursor.snapshot().login?.id===id){await this.cursor.openLogin(id);return this.snapshot();}await this.login_.open(id); return this.snapshot();}
   async submitCallback(id: string, value: string) {await this.login_.submitCallback(id, value); return this.snapshot();}
   async cancelLogin(id: string) {if(this.cursor.snapshot().login?.id===id){this.cursor.cancelLogin(id);return this.snapshot();}await this.login_.cancel(id); return this.snapshot();}
-  async shutdown() {this.closing = true;await this.cursor.close(); this.login_.close(); await this.stop(); await this.refreshTask?.catch(() => undefined); await this.quotaTask?.catch(() => undefined);await Promise.allSettled([...this.quotaProviderTasks.values()]);}
+  async shutdown() {this.closing = true;this.networkCheckAbort?.abort();try{await this.cursor.close(); this.login_.close(); await this.stop(); await this.refreshTask?.catch(() => undefined); await this.quotaTask?.catch(() => undefined);await Promise.allSettled([...this.quotaProviderTasks.values()]);await this.networkCheckTask;}finally{await this.network?.close();this.network=undefined;}}
 }
 
 export type LocalAgentSnapshot = ReturnType<CLIProxyManager['snapshot']> & {apiSources?:import('./api-sources.js').ApiSource[]};

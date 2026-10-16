@@ -2,7 +2,9 @@ package cliproxy
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -103,6 +105,13 @@ func TestOfficialCatalogManagementRefreshPreservesExclusionsAndAliases(t *testin
 	}
 }
 
+func TestOfficialCatalogQoderEmptyCLIMustNotExposeIDE(t *testing.T) {
+	models, ok := parseOfficialCatalog("qoder", []byte(`{"cli":[],"chat":[{"key":"chat-only"}],"ide":[{"key":"ide-only"}]}`), nil)
+	if !ok || len(models) != 0 {
+		t.Fatalf("CLI empty permission list must remain empty: %v %d", ok, len(models))
+	}
+}
+
 func TestOfficialCatalogQoderResponseCodec(t *testing.T) {
 	for _, text := range []string{`{"cli":[{"key":"new","display_name":"New"}]}`, `{"cli":[]}`, `{"cli":[{"key":"测试"}]}`} {
 		encoded := helps.QoderEncodeBody([]byte(text))
@@ -148,7 +157,7 @@ func TestOfficialCatalogLiveRead(t *testing.T) {
 		for _, m := range models {
 			safe = append(safe, map[string]any{"id": m.ID, "name": m.DisplayName, "context": m.ContextLength, "output": m.MaxCompletionTokens})
 		}
-		report = append(report, map[string]any{"provider": provider, "accountFile": f.Name(), "official": ok, "models": safe})
+		report = append(report, map[string]any{"provider": provider, "accountId": fmt.Sprintf("%x", sha256.Sum256([]byte(f.Name())))[:12], "official": ok, "models": safe})
 		t.Logf("%s official=%v models=%d", provider, ok, len(safe))
 	}
 	if out := os.Getenv("TOKEN_FLOW_CATALOG_REPORT"); out != "" {
@@ -191,7 +200,7 @@ func TestOfficialCatalogAuthoritativeAndFallback(t *testing.T) {
 	}
 	a.Metadata["access_token"] = "different-account-token"
 	got = s.officialAccountModels(context.Background(), a, fallback)
-	if len(got) != 1 || got[0].ID != "stale-table-model" {
+	if len(got) != 0 {
 		t.Fatal("credential change reused previous account permission cache")
 	}
 }
@@ -202,8 +211,8 @@ func TestOfficialCatalogParsers(t *testing.T) {
 		count          int
 		valid          bool
 	}{
-		{"qoder", `{"cli":[{"key":"smodel","display_name":"Step-5-Preview"},{"key":"removed","enable":false}],"ide":[{"key":"smodel"},{"key":"ide-new"}]}`, 2, true},
-		{"antigravity", `{"models":{"new-model":{"displayName":"New"}},"webSearchModelIds":["new-model"]}`, 1, true},
+		{"qoder", `{"cli":[{"key":"smodel","display_name":"Step-5-Preview"},{"key":"removed","enable":false}],"ide":[{"key":"smodel"},{"key":"ide-new"}]}`, 1, true},
+		{"antigravity", `{"models":{"new-model":{"displayName":"New"}},"webSearchModelIds":["new-model"],"agentModelSorts":[{"groups":[{"modelIds":["new-model"]}]}]}`, 1, true},
 		{"codex", `{"models":[{"slug":"gpt-next","display_name":"GPT Next","context_window":100000},{"slug":"internal-review","visibility":"hide"}]}`, 1, true},
 		{"claude", `{"data":[{"id":"claude-next","display_name":"Claude Next"}]}`, 1, true},
 		{"kimi", `{"data":[{"id":"kimi-next"}]}`, 1, true},
@@ -235,8 +244,8 @@ func TestOfficialCatalogAntigravityProjectAndDeprecatedModels(t *testing.T) {
 	s := &Service{cfg: &config.Config{}}
 	a := &coreauth.Auth{ID: t.Name(), Provider: "antigravity", Metadata: map[string]any{"access_token": "fixture", "base_url": server.URL, "project_id": "fixture-project"}}
 	models, ok := s.fetchOfficialAccountModels(context.Background(), a, nil)
-	if !ok || len(models) != 2 {
-		t.Fatalf("expected current and public command model only, got %v (%v)", models, ok)
+	if !ok || len(models) != 1 {
+		t.Fatalf("expected only selectable conversation model, got %v (%v)", models, ok)
 	}
 	for _, m := range models {
 		if m.ID == "old" {
@@ -252,7 +261,7 @@ func TestOfficialCatalogAntigravityFailureDoesNotInventAvailableModels(t *testin
 			w.WriteHeader(503)
 			return
 		}
-		w.Write([]byte(`{"models":{"current":{"displayName":"Current"}}}`))
+		w.Write([]byte(`{"models":{"current":{"displayName":"Current"}},"agentModelSorts":[{"groups":[{"modelIds":["current"]}]}]}`))
 	}))
 	defer server.Close()
 	s := &Service{cfg: &config.Config{}}
@@ -283,11 +292,205 @@ func TestOfficialCatalogAntigravityUsesInferenceTier(t *testing.T) {
 		if r.URL.Host != "daily-cloudcode-pa.googleapis.com" {
 			t.Fatalf("catalog/inference tier mismatch: %s", r.URL.Host)
 		}
-		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"models":{}}`))}, nil
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"models":{},"agentModelSorts":[]}`))}, nil
 	})
 	s := &Service{cfg: &config.Config{}}
 	_, ok := s.fetchOfficialAccountModels(context.Background(), &coreauth.Auth{Provider: "antigravity", Metadata: map[string]any{"access_token": "fixture"}}, nil)
 	if !ok {
 		t.Fatal("expected successful discovery on inference tier")
+	}
+}
+
+func TestOfficialCatalogNeverPublishesUnverifiedTables(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(503) }))
+	defer server.Close()
+	for _, provider := range []string{"workbuddy", "qoder", "codex", "kimi", "xai", "zcode", "claude", "doubao", "trae"} {
+		t.Run(provider, func(t *testing.T) {
+			s := &Service{cfg: &config.Config{}}
+			a := &coreauth.Auth{ID: t.Name(), Provider: provider, Metadata: map[string]any{"access_token": "fixture", "uid": "fixture", "base_url": server.URL}}
+			if got := s.officialAccountModels(context.Background(), a, []*ModelInfo{{ID: "obsolete"}}); len(got) != 0 {
+				t.Fatal("failed live discovery exposed old static table")
+			}
+		})
+	}
+}
+func TestOfficialCatalogEmptyCLIAllowlistIsAuthoritative(t *testing.T) {
+	models, ok := parseOfficialCatalog("workbuddy", []byte(`{"data":{"models":[{"id":"other-client-only"}],"agents":[{"name":"cli","models":[]}]}}`), nil)
+	if !ok || len(models) != 0 {
+		t.Fatal("empty CLI permission list broadened to every product model")
+	}
+}
+
+func TestOfficialCatalogExpiresStalePermissions(t *testing.T) {
+	fail := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail {
+			w.WriteHeader(503)
+			return
+		}
+		w.Write([]byte(`{"data":[{"id":"verified"}]}`))
+	}))
+	defer server.Close()
+	s := &Service{cfg: &config.Config{}}
+	a := &coreauth.Auth{ID: t.Name(), Provider: "kimi", Metadata: map[string]any{"access_token": "fixture", "base_url": server.URL}}
+	if got := s.officialAccountModels(context.Background(), a, nil); len(got) != 1 {
+		t.Fatal("live model missing")
+	}
+	if s.officialCatalogStatus(a)["status"] != "live" {
+		t.Fatal("missing provenance")
+	}
+	fail = true
+	s.officialCatalog[a.ID].checked = time.Time{}
+	if got := s.officialAccountModels(context.Background(), a, nil); len(got) != 1 || s.officialCatalogStatus(a)["status"] != "stale" {
+		t.Fatal("brief outage lost last verified catalog")
+	}
+	s.officialCatalog[a.ID].successful = time.Now().Add(-16 * time.Minute)
+	if got := s.officialAccountModels(context.Background(), a, []*ModelInfo{{ID: "old"}}); len(got) != 0 || s.officialCatalogStatus(a)["status"] != "unavailable" {
+		t.Fatal("stale catalog survived expiry")
+	}
+}
+
+func TestOfficialCatalogXAIOAuthUsesChatAccountEndpoint(t *testing.T) {
+	previous := http.DefaultTransport
+	defer func() { http.DefaultTransport = previous }()
+	http.DefaultTransport = officialCatalogTransportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host != "cli-chat-proxy.grok.com" || r.URL.Path != "/v1/models" {
+			t.Fatalf("OAuth directory routed to a different account product: %s", r.URL)
+		}
+		if r.Header.Get("X-XAI-Token-Auth") != "xai-grok-cli" {
+			t.Fatal("missing OAuth client identity")
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"data":[{"id":"grok-current"}]}`))}, nil
+	})
+	s := &Service{cfg: &config.Config{}}
+	_, ok := s.fetchOfficialAccountModels(context.Background(), &coreauth.Auth{Provider: "xai", Metadata: map[string]any{"access_token": "fixture", "auth_kind": "oauth", "base_url": "https://api.x.ai/v1"}}, nil)
+	if !ok {
+		t.Fatal("OAuth catalog unavailable")
+	}
+}
+
+func TestOfficialCatalogCacheIdentityIncludesAPIMode(t *testing.T) {
+	a := &coreauth.Auth{ID: t.Name(), Provider: "xai", Metadata: map[string]any{"access_token": "fixture", "auth_kind": "oauth"}}
+	previous := officialCatalogFingerprint(a)
+	a.Metadata["using_api"] = true
+	if officialCatalogFingerprint(a) == previous {
+		t.Fatal("API/OAuth mode reused permissions")
+	}
+	previous = officialCatalogFingerprint(a)
+	a.Attributes = map[string]string{"using_api": "false"}
+	if officialCatalogFingerprint(a) == previous {
+		t.Fatal("attribute override reused permissions")
+	}
+}
+
+func TestOfficialCatalogAntigravityPickerIsAuthoritative(t *testing.T) {
+	for _, tc := range []struct {
+		picker string
+		valid  bool
+		count  int
+	}{
+		{`,"agentModelSorts":[{"groups":[{"modelIds":["current","old","internal"]}]}]`, true, 1},
+		{`,"agentModelSorts":[]`, true, 0},
+		{``, false, 0},
+		{`,"agentModelSorts":[{"groups":"invalid"}]`, false, 0},
+	} {
+		raw := []byte(`{"models":{"current":{"displayName":"Current"},"aux":{"displayName":"Auxiliary"},"old":{"displayName":"Old"},"internal":{"displayName":"Internal","isInternal":true}},"deprecatedModelIds":{"old":{}},"commandModelIds":["aux"],"imageGenerationModelIds":["aux"]` + tc.picker + `}`)
+		got, ok := parseOfficialCatalog("antigravity", raw, nil)
+		if ok != tc.valid || len(got) != tc.count {
+			t.Fatalf("picker=%s valid=%v count=%d", tc.picker, ok, len(got))
+		}
+		if len(got) > 0 && got[0].ID != "current" {
+			t.Fatal("non-picker model published")
+		}
+	}
+}
+
+func TestOfficialCatalogWorkBuddyUsesOfficialCloudConfig(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v3/config" {
+			w.WriteHeader(500)
+			w.Write([]byte("<html>500 Internal Server Error</html>"))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"code":0,"data":{"models":[{"id":"current-chat"},{"id":"internal-summary"}],"agents":[{"name":"cli","models":["current-chat"]}]}}`))
+	}))
+	defer server.Close()
+	s := &Service{cfg: &config.Config{}}
+	a := &coreauth.Auth{ID: t.Name(), Provider: "workbuddy", Metadata: map[string]any{"access_token": "fixture", "base_url": server.URL, "domain": "www.workbuddy.ai"}}
+	got, ok := s.fetchOfficialAccountModels(context.Background(), a, nil)
+	if !ok || len(got) != 1 || got[0].ID != "current-chat" {
+		t.Fatalf("official conversation config not loaded: ok=%v models=%v", ok, got)
+	}
+}
+
+func TestOfficialCatalogTraeConversationVisibility(t *testing.T) {
+	raw := []byte(`{"config_info_list":[{"config_name":"Dola-Seed-2.0-Code","config_switch":true,"display_config":{"display_name":"Dola","multimodal":true},"context_window_tokens":{"dev":128000}},{"config_name":"summary","config_switch":true,"display_config":{}},{"config_name":"hidden-auto","config_switch":true,"is_invisible_to_user":true,"display_config":{"display_name":"Auto helper"}},{"config_name":"disabled","config_switch":false,"display_config":{"display_name":"Disabled"}},{"config_name":"byok","config_switch":true,"display_config":{"display_name":"Mine","is_custom_model":true}}]}`)
+	models, ok := parseOfficialCatalog("trae", raw, nil)
+	if !ok || len(models) != 1 || models[0].ID != "Dola-Seed-2.0-Code" || models[0].ContextLength != 128000 {
+		t.Fatalf("unexpected conversation catalog: ok=%v models=%+v", ok, models)
+	}
+}
+func TestOfficialCatalogZCodeUsesCodingPlanPicker(t *testing.T) {
+	raw := []byte(`{"revision":23,"config":{"providerConfigRules":{"providerRules":[{"providerId":"account:zai-individual-coding-plan","config":{"builtinModelIds":["GLM-5.3","GLM-5.3-Flash"]}},{"providerId":"account:zai-team-coding-plan","config":{"builtinModelIds":["GLM-5.3"]}},{"providerId":"account:zai-start-plan","config":{"builtinModelIds":["GLM-5.2"]}},{"providerId":"account:bigmodel-individual-coding-plan","config":{"builtinModelIds":["other-family"]}}]}}}`)
+	ids, ok := zcodeCodingPicker(raw, "zai")
+	if !ok || len(ids) != 2 || !ids["glm-5.3"] || ids["glm-5.2"] || ids["other-family"] {
+		t.Fatalf("wrong conversation scope: %v", ids)
+	}
+	if _, ok := zcodeCodingPicker([]byte(`{"config":{}}`), "zai"); ok {
+		t.Fatal("missing config was accepted")
+	}
+}
+
+func TestOfficialCatalogZCodeSeparatesLoginAndAPICredentials(t *testing.T) {
+	previous := http.DefaultTransport
+	defer func() { http.DefaultTransport = previous }()
+	calls := 0
+	http.DefaultTransport = officialCatalogTransportFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		raw := ""
+		switch r.URL.Host {
+		case "zcode.z.ai":
+			if r.URL.Path != "/api/v1/client/configs" || r.Header.Get("Authorization") != "Bearer login-fixture" || r.URL.Query().Get("platform") == "" {
+				t.Fatal("wrong native discovery identity")
+			}
+			raw = `{"code":0,"data":{"configs":{"builtin_provider_config_json":"https://cdn-zcode.z.ai/zcode/config/current.json"}}}`
+		case "cdn-zcode.z.ai":
+			if r.Header.Get("Authorization") != "" {
+				t.Fatal("account credential sent to CDN")
+			}
+			raw = `{"config":{"providerConfigRules":{"providerRules":[{"providerId":"account:zai-individual-coding-plan","config":{"builtinModelIds":["GLM-current"]}}]}}}`
+		case "api.z.ai":
+			if r.Header.Get("Authorization") != "Bearer api-fixture" {
+				t.Fatal("wrong inference account credential")
+			}
+			raw = `{"data":[{"id":"glm-current"},{"id":"api-only"}]}`
+		default:
+			t.Fatalf("unexpected host %s", r.URL.Host)
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(raw))}, nil
+	})
+	s := &Service{cfg: &config.Config{}}
+	got, ok := s.fetchOfficialAccountModels(context.Background(), &coreauth.Auth{Provider: "zcode", Metadata: map[string]any{"access_token": "api-fixture", "jwt": "login-fixture", "provider": "zai"}}, nil)
+	if !ok || calls != 3 || len(got) != 1 || got[0].ID != "glm-current" {
+		t.Fatalf("unexpected result ok=%v calls=%d count=%d", ok, calls, len(got))
+	}
+}
+
+func TestOfficialCatalogRetiredDoubaoMakesNoUpstreamRequest(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Write([]byte(`{"data":[{"id":"wrong-product"}]}`))
+	}))
+	defer server.Close()
+	s := &Service{cfg: &config.Config{}}
+	a := &coreauth.Auth{Provider: "doubao", Metadata: map[string]any{"access_token": "fixture", "base_url": server.URL}}
+	got, ok := s.fetchOfficialAccountModels(context.Background(), a, nil)
+	if ok || len(got) != 0 || calls != 0 {
+		t.Fatal("retired adapter still reaches upstream")
+	}
+	if s.officialCatalogStatus(a)["reason"] != "legacy_adapter_removed" {
+		t.Fatal("missing retirement reason")
 	}
 }

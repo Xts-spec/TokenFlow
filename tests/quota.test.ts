@@ -137,7 +137,7 @@ describe('quota layer', () => {
       ['item-1', '日常代码补全', 20, 200, 1000],
     ]);
   });
-  it('reports ZCode and Doubao status correctly', async () => {
+  it('reports ZCode and Trae status separately', async () => {
     const {call, calls} = responder({
       'https://api.z.ai/api/monitor/usage/quota/limit': json({success: true, data: {level: 'PRO', limits: [{type: 'TOKENS_LIMIT', percentage: 25, usage: 1000, currentValue: 250, nextResetTime: 1790427600000}]}}),
     });
@@ -147,9 +147,6 @@ describe('quota layer', () => {
     expect(zcodeReport.windows[0]).toMatchObject({usedPercent: 25, used: 250, limit: 1000});
     expect(zcodeReport.windows[0].resetsAt).toBe(new Date(1790427600000).toISOString());
 
-    const doubaoReport = await quotaProviders.doubao.fetch(call, {provider: 'doubao', planType: 'MarsCode 专业版'});
-    expect(doubaoReport.plan).toBe('MarsCode 专业版');
-    expect(doubaoReport.note).toContain('动态流控');
 
   });
   it('does not turn a ZCode authentication error into a ready account', async () => {

@@ -527,7 +527,7 @@ it('edits exported model permissions in place and preserves credentials, metadat
  // Removing an offline model must not force regeneration or re-authorize the retained source.
  const removed=await edit([{model:ma,sourceId:a.id}]);expect(removed.statusCode,removed.body).toBe(200);expect(removed.json().usedTokens).toBe(20);expect(removed.json().modelSources).toEqual({[ma]:a.id});
  expect((await call(mb)).statusCode).toBe(403);expect((await call(ma)).statusCode).toBe(200);
- expect([400,409]).toContain((await edit([{model:ma,sourceId:a.id},{model:mb,sourceId:b.id}])).statusCode);
+ const reapplied=await edit([{model:ma,sourceId:a.id},{model:mb,sourceId:b.id}]);expect(reapplied.statusCode,reapplied.body).toBe(200);expect((await call(mb)).statusCode).toBe(503);
  const after=JSON.parse(await readFile(join(root,'gateway-keys.json'),'utf8'))[0];expect(after.digest).toBe(before.digest);expect(after.usedTokens).toBe(30);expect(after.sourceId).toBeUndefined();
  expect(await secrets.get(`gateway-key-${key.id}`)).toBe(apiKey);
  const revoked=await edit([]);expect(revoked.statusCode,revoked.body).toBe(200);expect(revoked.json().models).toEqual([]);expect(revoked.json().usedTokens).toBe(30);

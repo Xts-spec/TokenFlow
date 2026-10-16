@@ -66,7 +66,7 @@
 .tfUsageOverview{min-width:0;width:100%;padding-top:0}
 .tfUsageOverview>header h2{font-size:25px;font-weight:550;letter-spacing:-.7px}
 .tfUsageOverview .tfOverviewMetrics{padding:8px 0 16px;margin-bottom:12px;gap:16px;border:0}
-.tfOverviewMetrics>div{padding:0;text-align:left;border:0}
+.tfOverviewMetrics>div{padding:0;text-align:center;border:0}
 .tfOverviewMetrics dd{font-size:23px;font-weight:500;letter-spacing:-.5px}
 .tfOverviewMetrics dt{font-size:11px}
 .tfUsageOverview :is(.tfTokenActivity,.tfBreakdown){min-width:0;max-width:100%;background:transparent;border:0;border-radius:0;padding:0;box-shadow:none}
@@ -77,7 +77,7 @@
 .tfHeatmap button{width:var(--heatmap-cell);height:var(--heatmap-cell);border-radius:3px}
 .tfHeatmapMonths{width:calc(var(--heatmap-weeks,53) * (var(--heatmap-cell) + var(--heatmap-gap)) - var(--heatmap-gap));margin-left:0;margin-right:0;gap:8px;font-size:10px}
 .tfHeatmapTooltip{z-index:120;max-width:calc(100vw - 24px);white-space:normal}
-.tfUsageOverview .tfBreakTabs{padding:0;gap:20px;border:0;margin-bottom:8px}
+:is(.tfUsageOverview .tfBreakTabs,.tfKeyBreakTabs){padding:0;gap:20px;border:0;margin-bottom:8px}
 .tfBreakTabs button{padding:8px 0;border-radius:0;background:transparent;color:var(--muted);font-size:12px}
 .tfBreakTabs button[aria-selected=true]{background:transparent;color:var(--text)}
 .tfBreakdown ul{gap:28px}
@@ -87,6 +87,9 @@
 .tfBreakValue{min-width:0}
 .tfBreakValue b{font-size:18px;font-weight:500}
 .tfStackedTokens{display:block;width:100%;max-width:100%;height:12px;overflow:hidden;border-radius:3px}
+.tfTokenComposition{transform-origin:0 0;transform:scaleX(var(--token-scale));transition:transform 240ms cubic-bezier(.2,.7,.2,1)}
+.tfBreakdown li:hover .tfTokenComposition{transform:scaleX(1);transition-delay:500ms}
+@media(prefers-reduced-motion:reduce){.tfTokenComposition{transition:none}}
 .tfBreakParts{gap:8px 20px;line-height:1.7}
 .tfBreakScale{padding:0 0 4px}
 .tfOverviewPaths{gap:12px 28px;padding:20px 0 0}
@@ -132,8 +135,6 @@ a:hover{text-decoration:underline}
 .tfCredentialFace{position:relative;padding-bottom:64px}
 .tfApiSourceBody .tfApiCardFoot,.tfCredentialBack>.tfApiCardFoot{position:absolute;bottom:20px;right:24px;margin:0;padding:0;border:0;justify-content:flex-end}
 .tfApiCardFoot .tfFlipAction{min-width:86px;justify-content:flex-end;font-size:11px;transition:transform .18s cubic-bezier(.25,1,.5,1),color .18s;transform-origin:right center}
-.tfApiCardFoot .tfFlipAction:hover{transform:scale(1.045)}
-.tfApiCardFoot .tfFlipAction:active{transform:scale(.98)}
 .tfHeatmap button{animation:tfCellReveal .3s cubic-bezier(.22,1,.36,1) both;animation-delay:var(--cell-delay,0ms)}
 @keyframes tfCellReveal{from{opacity:0;transform:translateY(3px) scale(.85)}to{opacity:1;transform:translateY(0) scale(1)}}
 :root[data-theme=dark] .tfHeatmap .level0{background:#282d35!important}
@@ -207,8 +208,12 @@ a:hover{text-decoration:underline}
 .tfBrand img{width:20px;height:20px;flex-shrink:0}
 .tfTile .tfProviderIcon,.tfTile .tfMonochromeMark{width:20px!important;height:20px!important}
 .tfPanelHead>.tfProviderIcon,.tfPanelHead>.tfMonochromeMark{width:30px!important;height:30px!important}
-.tf :is(button,summary){transition:transform .16s cubic-bezier(.25,1,.5,1)}
-.tf button:hover:not(:disabled):not(.tfCardFlipSurface):not(.tfRailArrow):not(.tfKeyCardMain){transform:scale(1.025)}
+/* Controls keep their geometry; only API and CLI cards lift on hover. */
+:root :is(.tf,.tfDialog,.tfPicker) :is(button,summary){transition:color .16s ease,background-color .16s ease,border-color .16s ease}
+:root :is(.tf,.tfDialog,.tfPicker) button:active:not(:disabled):not(.tfRailArrow){transform:none}
+:root .tf .tfRailArrow:active:not(:disabled){transform:translateY(-50%)}
+:root :is(.tf,.tfDialog,.tfPicker) button:hover:not(:disabled):not(.primary):not(.danger):not(:where(.tfHeatmap button)){color:var(--hover-text)}
+:root :is(.tf,.tfDialog,.tfPicker) button.primary:hover:not(:disabled){filter:brightness(1.06)}
 .tf .tfSide nav button{transform-origin:left center}
 .tf :is(button,summary):focus-visible,.tfColumnDivider:focus-visible,.tfSidebarDivider:focus-visible{outline:1px solid var(--muted);outline-offset:2px;box-shadow:none}
 .tf .tfKeyCardMain:focus-visible,.tf .tfCardFlipSurface:focus-visible{outline:0;box-shadow:none}
@@ -219,21 +224,15 @@ a:hover{text-decoration:underline}
 .tf .tfSide nav button.on{color:var(--text);background:var(--soft);box-shadow:none}
 .tf .tfKeyCard{border:0;box-shadow:none}
 .tf .tfKeyCardMain:hover{transform:none}
-@media(prefers-reduced-motion:reduce){.tf :is(button,summary,.tfKeyCard){transition:none}.tf button:hover:not(:disabled):not(.tfCardFlipSurface):not(.tfRailArrow):not(.tfKeyCardMain),.tf .tfKeyCard:hover{transform:none}}
-.tfHeatmap button.selected,.tfHeatmap button.selectedWeek{filter:brightness(.72)}
-.tfHeatmap button.hoverWeek{transform:scale(1.08)}
-.tfHeatmap button.hoverWeek{filter:none;scale:1.04}
-.tfHeatmap button:hover:not(:disabled){scale:1.04}
-.tfHeatmap button.selected,.tfHeatmap button.selectedWeek{filter:brightness(.72)}
-@media(prefers-reduced-motion:reduce){.tfHeatmap button.hoverWeek,.tfHeatmap button:hover:not(:disabled){scale:1;transform:none}}
+@media(prefers-reduced-motion:reduce){:root :is(.tf,.tfDialog,.tfPicker) :is(button,summary){transition:none}}
+/* Heatmap colour tracks usage; only hovering deepens a day or week. */
+:root .tf .tfHeatmap button,:root .tf .tfHeatmap button:hover:not(:disabled){transform:none;scale:1;transition:filter .15s ease}
+:root .tf .tfHeatmap button:hover:not(:disabled),:root .tf .tfHeatmap button.hoverWeek{filter:brightness(.78)}
 :root :is(.tf,.tfDialog,.tfPicker) :is(button,summary):focus-visible{outline:1px solid var(--muted);outline-offset:2px;box-shadow:none}
 :root :is(.tf,.tfDialog,.tfPicker) :is(input,textarea,select):focus{outline:1px solid var(--muted);box-shadow:none;border-color:var(--line)}
 :root :is(.tf,.tfDialog,.tfPicker) :is([aria-selected=true],.tfPickRow.on,.tfPickSource.hasSelection,.tfPickModel.on){border-color:var(--line);box-shadow:none}
 :root :is(.tfDialog,.tfPicker) .tfAgentPickerSearch:focus-within{border-color:var(--line);box-shadow:none}
-:root :is(.tfDialog,.tfPicker) button{transition:transform .16s cubic-bezier(.25,1,.5,1)}
-:root :is(.tfDialog,.tfPicker) button:hover:not(:disabled){transform:scale(1.025)}
 :root .tfKeyCardMain:focus-visible,:root .tfCardFlipSurface:focus-visible{outline:0;box-shadow:none}
-@media(prefers-reduced-motion:reduce){:root :is(.tfDialog,.tfPicker) button{transition:none}:root :is(.tfDialog,.tfPicker) button:hover:not(:disabled){transform:none}}
 @media(min-width:761px){
  .tf{grid-template-columns:var(--sidebar-width,280px) minmax(0,1fr)}
  .tfSidebarDivider{left:calc(var(--sidebar-width,280px) - 4px)}
@@ -293,7 +292,7 @@ a:hover{text-decoration:underline}
 
 /* Shared compact cards; preserve text control geometry. */
 /* The sticky title must meet the scrollport edge so content cannot show above it. */
-.tfDialog.tfKeyDetail{padding:0}
+.tfDialog.tfKeyDetail{padding:0;scroll-padding-block:var(--tf-dialog-header-offset,88px) 16px}
 :root .tfKeyCardMain h3{font-size:16px;line-height:1.4;font-weight:550}
 :root .tfKeyCardMain .tfKeyPurpose,:root .tfKeyPreview li{font-size:11px}
 :root .tfKeyCardMain .tfKeyTotal b{font-size:18px;font-weight:550}
@@ -312,17 +311,18 @@ a:hover{text-decoration:underline}
 :root[data-theme] .tfTraceList li.selected>button{background:var(--soft)}
 .tfTraceWorkspace{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;align-items:start}
 .tfTraceWorkspace.inspecting{grid-template-columns:minmax(0,1fr) minmax(250px,34%);gap:16px}
-.tfTraceInspector{min-width:0;max-height:460px;overflow:auto;border-left:1px solid var(--line);padding-left:16px;font-size:11px}
-.tfTraceInspector>header{display:flex;align-items:center;justify-content:space-between;gap:8px;position:sticky;top:0;background:var(--canvas);padding:0 0 8px}
+.tfTraceInspector{min-width:0;max-height:460px;overflow:auto;overscroll-behavior:contain;border-left:1px solid var(--line);padding-left:16px;font-size:11px}
+.tfTraceInspector>header{display:flex;align-items:center;justify-content:space-between;gap:8px;position:sticky;top:0;z-index:1;background:var(--canvas);padding:0 0 8px}
 .tfTraceInspector h4{font-size:12px;margin:0}
 .tfTraceInspector .tfTraceFacts{grid-template-columns:1fr;gap:12px;font-size:11px}
 .tfTraceDetail>p{overflow-wrap:anywhere;line-height:1.6}
-.tfTraceWorkspace.inspecting .tfTraceList li>button{gap:8px;padding:10px 2px;flex-wrap:wrap}
-.tfTraceWorkspace.inspecting .tfTraceNumbers{flex-basis:100%;margin-left:14px;text-align:left}
+.tfTraceList li>button,.tfTraceWorkspace.inspecting .tfTraceList li>button{display:grid;grid-template-columns:6px minmax(0,1fr) minmax(0,clamp(104px,32%,160px));gap:12px;align-items:center;min-width:0;padding:12px 2px}
+.tfTraceNumbers,.tfTraceWorkspace.inspecting .tfTraceNumbers{min-width:0;max-width:100%;margin-left:0;text-align:right}
+.tfTraceIdentity strong,.tfTraceIdentity small,.tfTraceNumbers b,.tfTraceNumbers small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tfTraceIdentity strong{font-weight:550}
 .tfTraceIdentity small{overflow-wrap:anywhere}
-@media(max-width:700px){.tfTraceWorkspace.inspecting{grid-template-columns:minmax(0,1fr)}.tfTraceInspector{border-left:0;border-top:1px solid var(--line);padding:12px 0}.tfTraceWorkspace.inspecting .tfTraceList{max-height:260px}}
-@media(prefers-reduced-motion:reduce){.tf .tfKeyCard{transition:none}.tf .tfKeyCard:hover{transform:none}}
+@media(max-width:700px){.tfTraceWorkspace.inspecting{grid-template-columns:minmax(0,1fr)}.tfTraceInspector{border-left:0;border-top:1px solid var(--line);padding:12px 0;max-height:none;overflow:visible}.tfKeyDetail .tfTraceInspector>header{top:var(--tf-dialog-header-offset,88px)}.tfTraceWorkspace.inspecting .tfTraceList{max-height:260px}}
+@media(prefers-reduced-motion:reduce){.tf .tfApiSourceCard,.tf .tfKeyCard{transition:none}.tf .tfApiSourceCard:hover,.tf .tfKeyCard:hover{transform:none}}
 
 :root[data-theme] .tfTraceInspector .tfTraceDetail{background:transparent;border:0;box-shadow:none}
 
@@ -330,6 +330,282 @@ a:hover{text-decoration:underline}
 
 .tfTraceOrigins{display:flex;gap:16px;margin:12px 0}.tfTraceOrigins .textButton{padding:4px 0;font-size:11px;color:var(--muted)}.tfTraceOrigins .textButton[aria-pressed=true]{color:var(--text)}
 
-/* Equal-width provider tabs fill the normal window; shrink only to a readable minimum. */
+/* Navigation stays still, with a single gentle surface highlight. */
+:root .tf .tfSide nav button,:root .tf .tfSide nav button:hover:not(:disabled),:root .tf .tfSide nav button:active{transform:none;scale:1;transition:background-color .15s ease,color .15s ease}
+:root .tf .tfSide nav button:hover:not(:disabled){background:color-mix(in srgb,var(--text) 6%,transparent)}
+:root .tf .tfSide nav button.on:hover:not(:disabled){background:color-mix(in srgb,var(--text) 6%,var(--soft))}
+.tfThinking{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-size:11px;line-height:20px;white-space:nowrap}
+.tfThinkingDots{display:inline-flex;align-items:center;gap:3px}
+.tfThinkingDots i{width:3px;height:3px;border-radius:50%;background:currentColor;animation:tfThinkingPulse 1.2s ease-in-out infinite}
+.tfThinkingDots i:nth-child(2){animation-delay:.16s}.tfThinkingDots i:nth-child(3){animation-delay:.32s}
+@keyframes tfThinkingPulse{0%,80%,100%{opacity:.3;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
+.tfLoadingSkeleton{width:100%;padding:16px 0;min-width:0}
+.tfSkeletonLine,.tfSkeletonBlock{position:relative;overflow:hidden;background:color-mix(in srgb,var(--text) 7%,var(--soft));border-radius:5px}
+.tfSkeletonLine::after,.tfSkeletonBlock::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--text) 5%,transparent),transparent);transform:translateX(-100%);animation:tfSkeletonSweep 1.6s ease-in-out infinite}
+.tfSkeletonLine{height:14px;width:100%}.tfSkeletonLine.heading{width:28%;height:20px;margin-bottom:24px}
+.tfSkeletonRows{display:grid;gap:20px}.tfSkeletonRows .tfSkeletonLine:nth-child(2){width:84%}.tfSkeletonRows .tfSkeletonLine:nth-child(4){width:64%}
+.tfSkeletonMetrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:20px;margin-bottom:24px}.tfSkeletonMetrics>div{height:56px}
+.tfSkeletonBlock.chart{height:150px;margin-bottom:28px}.tfSkeletonCards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-bottom:24px}.tfSkeletonBlock.card{height:180px}
+@keyframes tfSkeletonSweep{to{transform:translateX(100%)}}
+.tfLoadError{display:flex;align-items:center;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:12px;padding:12px 0}
+.tfRequestStatus{display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:0 0 12px}
+.tfRequestStatus:empty{display:none}
+@media(max-width:700px){.tfSkeletonCards{grid-template-columns:1fr}.tfSkeletonMetrics{gap:10px}}
+@media(prefers-reduced-motion:reduce){.tfThinkingDots i,.tfSkeletonLine::after,.tfSkeletonBlock::after{animation:none}.tfThinkingDots i{opacity:.65}:root .tf .tfSide nav button,:root .tf .tfHeatmap button{transition:none}}
+
+.tfUsageFoldSkeleton{display:block;width:180px;max-width:100%;height:16px;margin:4px 0}
+
+/* Confirmation gives way to the work itself, one migration phase at a time. */
+.tfMigrationProgress{display:flex;flex-direction:column;align-items:center;gap:20px;padding:26px 0 12px;text-align:center}
+.tfMigrationProgress>.tfThinking{font-size:15px;color:var(--text);gap:10px}
+.tfMigrationProgress .tfThinkingDots i{width:4px;height:4px}
+.tfMigrationStage{font-size:13px;line-height:1.7;min-height:22px}
+.tfMigrationProgress progress{appearance:none;width:min(280px,100%);height:4px;border:0;border-radius:4px;overflow:hidden;background:var(--soft);accent-color:var(--accent)}
+.tfMigrationProgress progress::-webkit-progress-bar{background:var(--soft);border-radius:4px}
+.tfMigrationProgress progress::-webkit-progress-value{background:var(--accent);border-radius:4px}
+.tfMigrationAdvice{font-size:11px;color:var(--muted);line-height:1.8;max-width:36em;animation:tfAdviceReveal .5s ease-out both;animation-delay:.35s}
+@keyframes tfAdviceReveal{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+/* Fixed card faces; scroll the complete credential face as one surface. */
+.tfApiSourceCard .tfCredentialInner{position:relative;height:270px}
+.tfApiSourceCard .tfCredentialFace{height:270px;min-height:270px}
+.tfApiSourceCard .tfApiSourceBody{position:relative;padding-bottom:54px}
+.tfApiSourceCard .tfCredentialBack{position:absolute;inset:0;overflow-y:auto;padding:18px;overscroll-behavior:contain}
+.tfApiSourceCard:not(.isFlipped) .tfCredentialBack{overflow:hidden}
+.tfApiSourceCard .tfCredentialModels ul{max-height:none;overflow:visible;scrollbar-gutter:auto}
+.tfApiSourceCard .tfCredentialModels{scroll-margin-top:8px;outline:none}
+.tfApiSourceCard .tfApiMoreModels{pointer-events:auto;align-self:flex-start;width:auto;min-height:24px;padding:2px 0;gap:5px;flex-shrink:0}
+.tfApiSourceCard .tfApiToday{position:absolute;bottom:18px;left:18px;right:18px;width:auto;margin:0}
+.tfApiSourceCard .tfApiSourceBody>.tfApiModelPreview{flex-shrink:0}
+/* One CLI detail shell, with metadata beside the name and quiet management actions. */
+.tfKeyIdentity{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0;flex:1}
+.tfKeyIdentity h2{min-width:0;overflow-wrap:anywhere}
+.tfKeyIdentity .tfKeyStatus,.tfKeyIdentity time{font-size:10px;white-space:nowrap;font-weight:400}
+.tfKeyIdentity time{font-family:inherit;color:var(--muted)}
+.tfKeyDetail .tfDialogHeaderActions{flex-shrink:0;gap:12px}
+.tfKeyDetail .tfDetailManage{display:flex;align-items:center;gap:14px}
+:root[data-theme] .tfKeyDetail .tfDeleteKey{color:color-mix(in srgb,var(--danger) 70%,var(--muted))}
+.tfKeyDescription{margin:0 0 18px}
+.tfKeyDescription .tfDialogLead{font-size:12px;color:var(--muted);line-height:1.7}
+.tfKeyEndpoints{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.tfKeyEndpoints>label{min-width:0}
+.tfKeyModelsTitle{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}
+.tfKeyModelsTitle h3{margin:0}.tfKeyModelsTitle small{font-size:10px}
+.tfKeyModelsTitle .tfOrder{width:auto;margin:0;min-height:26px;padding:3px 22px 3px 6px;font-size:10px;border:0;background-color:transparent}
+.tfKeyDeleteConfirm{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:12px 0;margin-bottom:12px;font-size:12px;border-bottom:1px solid var(--line)}
+:root .tfDialog .tfInlinePicker{position:static;inset:auto;display:flex;flex-direction:column;width:100%;height:auto;max-height:none;max-width:none;padding:0;margin:0;border:0;border-radius:0;box-shadow:none;overflow:visible;background:transparent;animation:none!important}
+.tfDialog .tfInlinePicker>header{padding:0 0 16px;gap:16px}
+.tfInlinePicker>header h3{font-size:12px;font-weight:500;color:var(--muted)}
+.tfPickerBack .uiIcon{transform:rotate(180deg)}
+.tfDialog .tfInlinePicker>.tfSearch{margin:0 0 12px}
+.tfDialog .tfInlinePicker .tfPickerOrder{padding:0 0 16px}
+.tfDialog .tfInlinePicker .tfPickBody{padding:0;flex:none;overflow:visible;max-height:none}
+.tfInlinePicker .tfPickSourceBody,.tfInlinePicker .tfPickOptions{overflow:visible;max-height:none}
+.tfDialog .tfInlinePicker .tfPickerFooter{position:sticky;bottom:-28px;z-index:3;margin-top:20px;padding:16px 0;background:var(--surface);border-top:1px solid var(--line)}
+.tfInlinePicker .tfPickerError{padding:12px 0}
+@media(max-width:700px){.tfKeyEndpoints{grid-template-columns:1fr}.tfKeyIdentity{flex:1 1 200px}.tfKeyDetail .tfDialogHeaderActions{margin-left:auto}.tfKeyDetail .tfDialogContent>header{gap:12px}.tfDialog .tfInlinePicker .tfPickerFooter{bottom:-20px;flex-wrap:wrap}.tfInlinePicker .tfPickerFooter>span{flex-basis:100%}.tfKeyModelsTitle{gap:8px}}
+@media(prefers-reduced-motion:reduce){.tfMigrationAdvice{animation:none}}
+
+.tfInlinePicker .tfPickSource{border:0;border-bottom:1px solid var(--line);border-radius:0;background:transparent}
+.tfInlinePicker .tfPickSource>summary{padding:12px 0}
+.tfInlinePicker .tfPickSourceBody{border-top:0;padding:8px 0 16px}
+.tfInlinePicker .tfPickSource>summary>.tfProviderIcon{width:24px;height:24px}
+
+.tfInlinePicker .tfPickSource:last-child{border-bottom:0}
+
+/* Key usage: two quiet rows, with the overview's shared token palette. */
+.tfUsageTokenParts,.tfUsageMetrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px;margin:0;padding:4px 0 16px}
+.tfUsageTokenParts>div,.tfUsageMetrics>div{display:grid;align-content:start;gap:10px;min-width:0}
+.tfUsageTokenParts dt,.tfUsageMetrics dt{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:12px;margin:0}
+.tfUsageTokenParts dt i{width:7px;height:7px;border-radius:50%;flex:none}
+.tfUsageTokenParts dd,.tfUsageMetrics dd{margin:0;font-size:23px;font-weight:600;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.tfUsageMetrics{padding-top:20px;border-top:1px solid var(--line)}
+.tfUsageMetrics dd{font-size:18px}
+.tfUsageMetrics dd small{font-size:12px;font-weight:400;color:var(--danger)}
+.tfKeyDetail .tfUsageStats{display:flex;flex-wrap:wrap;gap:16px 36px;margin:0 0 4px}
+.tfKeyDetail .tfUsageStats>div{display:flex;align-items:baseline;gap:10px}
+.tfKeyDetail .tfUsageStats dd{font-size:14px}
+.tfDailyBars{height:84px;gap:5px}
+.tfDailyBars>button{display:flex;align-items:flex-end;justify-content:stretch;flex:1;min-width:0;height:100%;padding:0;border:0;border-radius:3px;background:transparent;box-shadow:none}
+.tfDailyBars>button>i{width:100%;min-width:0;pointer-events:none}
+.tfDailyBars>button:hover{background:transparent}
+.tfDailyBars>button:hover>i,.tfDailyBars>button:focus-visible>i{filter:brightness(.78)}
+@media(max-width:600px){.tfUsageTokenParts,.tfUsageMetrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 16px}.tfUsageTokenParts dd{font-size:21px}.tfUsageMetrics dd{font-size:17px}}
+
+.tfDailyTooltip{transform:translate(-50%,-100%)}
+.tfKeyDetail .tfDailyBars>button,.tfKeyDetail .tfDailyBars>button:is(:hover,:focus,:active){background:transparent;box-shadow:none;min-height:0}
+.tfKeyDetail .tfDailyBars>button>i{flex:none}
+
+.tfKeyCard>.tfKeyActions{position:absolute;right:10px;top:10px;z-index:3}
+.tfKeyActions>.iconButton{background:transparent;border:0;color:var(--muted);padding:4px;min-height:28px;width:28px}
+.tfKeyActionMenu{position:fixed;inset:auto;margin:0;width:180px;padding:5px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--text);box-shadow:0 8px 28px #0003}
+.tfKeyActionMenu:popover-open{display:grid;gap:2px}
+.tfKeyActionMenu button{justify-content:flex-start;text-align:left;border:0;background:transparent;border-radius:6px;padding:8px 12px;font-size:12px}
+.tfKeyActionMenu button:hover{background:var(--soft)}
+.tfKeyActionMenu button.danger{color:var(--danger)}
+.tfKeyCardMain h3{padding-right:24px}
+.tfKeyCard.tfKeyHeld{opacity:.65;outline:2px solid var(--accent);cursor:grabbing;user-select:none}
+.tfKeyCard.tfKeyDropTarget{outline:2px solid var(--accent);outline-offset:3px}
+.tfKeyCardMain{user-select:none;touch-action:pan-y}
+.tfKeyDetail .tfInlineEdit{display:inline;padding:0;border:0;background:transparent;color:inherit;font:inherit;min-height:0;text-align:left;white-space:normal;cursor:text}
+.tfKeyDetail .tfInlineEdit:hover{background:transparent;color:inherit}
+.tfKeyCreateDialog .tfKeyCreate{display:grid;gap:20px;margin:0;padding:0;border:0;border-radius:0;background:transparent}
+.tfKeyCreateDialog .tfKeyCreate>h3{font-size:13px;font-weight:550;margin:0}
+.tfKeyCreateDialog .tfKeyCreate>footer{position:sticky;bottom:-20px;z-index:4;padding:16px 0 0;background:var(--surface)}
+.tfKeyCreateDialog .tfKeyCreate>footer .tfRow{margin-left:auto}
+.tfKeyCreateDialog .tfPickBody{min-height:0}
+.tfDialog.tfKeyCreateDialog{inset:0;margin:auto;width:min(900px,calc(100vw - 48px));height:auto;max-height:calc(100dvh - 80px);padding:0;border:1px solid var(--line);border-radius:14px;overflow:auto}
+.tfKeyCreateDialog .tfDialogContent{padding:24px}
+.tfKeyCreateDialog .tfDialogContent>header{top:-24px}
+.tfKeyCreateDialog .tfKeyCreate>footer{bottom:-24px;padding-bottom:12px}
+@media(max-width:600px){.tfDialog.tfKeyCreateDialog{width:calc(100vw - 24px);max-height:calc(100dvh - 40px)}.tfKeyCreateDialog .tfKeyFields{grid-template-columns:1fr}}
+.tfKeyCard.tfKeyHeld{pointer-events:none;z-index:8;transition:none}
+.tfKeyCreateDialog .tfKeyCreate>footer{bottom:0;padding:16px 0;background:var(--surface)}
+
+/* Authorization: state first, a short instruction, then the main action. */
+.tfLoginDialog .tfLogin{gap:18px}
+.tfLoginDialog .tfLoginHead{justify-content:flex-start;align-items:center;gap:12px}
+.tfLoginHead>div{display:grid;gap:6px;min-width:0}
+.tfLoginHead strong{display:block;line-height:1.5}
+.tfLoginHead .tfThinking{font-size:11px;color:var(--muted)}
+.tfLoginDialog .tfLoginMessage{margin:0;line-height:1.8;max-width:36em}
+.tfLoginDialog .tfLoginActions{gap:12px;margin:2px 0 0}
+.tfLoginDialog .tfAuthorizationDetails{padding-top:14px;border-top:1px solid var(--line);margin:0}
+.tfAuthorizationDetails summary{cursor:pointer;width:fit-content;font-size:11px;color:var(--muted)}
+.tfAuthorizationDetails[open] summary{margin-bottom:10px}
+.tfAuthorizationURL{display:block;min-width:0}
+.tfAuthorizationURL .inputAction{width:100%;min-width:0}
+.tfAuthorizationURL .inputAction input{flex:1;width:0;min-width:0}
+
+.tfKeyCreateDialog::backdrop{background:#08090a80;backdrop-filter:blur(3px)}
+.tfInlineAgentPicker{display:flex;flex-direction:column;min-width:0;gap:16px}
+.tfInlineAgentPicker .tfAgentPickerSearch{margin:0}
+.tfInlineAgentPicker .tfAgentPicked{padding:0;margin:0}
+.tfInlineAgentPicker .tfAgentPickerBrowser{margin:0;min-height:220px;height:340px;max-height:45dvh;flex:none}
+.tfInlineAgentPicker .tfAgentPickerSources{padding-bottom:0}
+.tfInlineAgentPicker .tfAgentPickerModelList{padding-bottom:8px}
+/* Disclosure and menu actions use a quiet fill, without a selected outer ring. */
+:root :is(.tf,.tfDialog,.tfPicker) :is(summary,.tfApiMoreModels,.tfPickerBack,.tfKeyActions>.iconButton):is(:focus,:focus-visible){outline:0;box-shadow:none}
+:root :is(.tf,.tfDialog,.tfPicker) summary:focus-visible{background:var(--soft)}
+:root .tfKeyActionMenu{outline:0;border:0;box-shadow:0 8px 28px #0003}
+:root .tfKeyActionMenu button{background:transparent;border:0;outline:0;box-shadow:none}
+:root .tfKeyActionMenu button:is(:hover,:focus-visible){background:var(--soft)}
+:root .tfAgentPickerSources button:is(:focus,:focus-visible){outline:0;box-shadow:none}
+:root .tfAgentPickerSources button:focus-visible{background:var(--soft)}
+@media(max-width:600px){.tfInlineAgentPicker .tfAgentPickerBrowser{grid-template-columns:112px minmax(0,1fr);gap:10px;height:320px}}
+
+/* Activity relies on spacing and quiet selection fills, without divider rules. */
+.tfPage.tfActivityPage{width:100%;max-width:800px;margin-inline:auto}
+.tfActivityPage :is(.tfPageHead,.tfPanel,.tfPanelHead,.tfLog li),.tfTrace,.tfTraceTimeline,.tfTraceList li+li,.tfTraceInspector{border:0}
+.tfActivityPage .tfTrace{padding-top:4px}
+.tfTraceTimeline{padding:12px 0;margin:4px 0 20px}
+.tfTraceInspector{padding-left:0}
+.tfTraceWorkspace.inspecting{gap:24px}
+.tfTraceList{display:grid;gap:6px;align-content:start}
+.tfTraceList li>button{border-radius:8px}
+@media(max-width:700px){.tfTraceWorkspace.inspecting{gap:16px}.tfTraceInspector{border:0}}
+
+/* Keep recovery actions beside the problem they resolve. */
+.tfAgentPicker footer .tfRemoveUnavailable{min-height:24px;padding:0;text-align:left;justify-content:flex-start;color:var(--muted)}
+.tfProblem>.textButton{margin-left:12px;padding:4px 0}
+
+/* A quiet round launcher reveals its label towards the left. */
+:root[data-theme] .tfRepairFab{width:128px;height:44px;min-height:44px;padding:0;display:block;border:0;border-radius:22px;background:color-mix(in srgb,var(--soft) 72%,transparent);color:var(--muted);box-shadow:none;opacity:.72;clip-path:inset(0 0 0 84px round 22px);transition:clip-path .24s cubic-bezier(.22,1,.36,1),opacity .16s ease,background-color .16s ease}
+:root[data-theme] .tfRepairFab:is(:hover,:focus-visible){clip-path:inset(0 round 22px);opacity:1;background:var(--soft);color:var(--text)}
+.tfRepairFab>.uiIcon{position:absolute;right:13px;top:13px}
+.tfRepairFabLabel{position:absolute;left:16px;top:0;height:44px;display:flex;align-items:center;font-size:12px;font-weight:500;white-space:nowrap;opacity:0;transform:translateX(10px);transition:transform .24s cubic-bezier(.22,1,.36,1),opacity .12s ease}
+.tfRepairFab:is(:hover,:focus-visible) .tfRepairFabLabel{opacity:1;transform:translateX(0)}
+:root[data-theme] .tfRepairFab.busy:after{position:absolute;right:5px;top:5px;width:6px;height:6px;box-shadow:none;background:var(--accent)}
+@media(prefers-reduced-motion:reduce){:root[data-theme] .tfRepairFab,.tfRepairFabLabel{transition:none}}
+
+/* Theme defaults must not erase the difference between active and inactive tabs. */
+.tfSwitchTabs{display:flex;align-items:center;flex-wrap:wrap;gap:20px;border:0}
+:root[data-theme] .tfSwitchTabs>button{min-height:32px;padding:6px 0;border:0;border-radius:0;background:transparent;box-shadow:none;color:var(--muted);font-size:12px;font-weight:500;transform:none;scale:1;transition:color .16s ease}
+:root[data-theme] .tfSwitchTabs>button:is([aria-selected=true],[aria-pressed=true]){color:var(--text);background:transparent;font-weight:600}
+:root[data-theme] .tfSwitchTabs>button:hover:not(:disabled){color:var(--hover-text);background:transparent;transform:none;scale:1}
+:root[data-theme] .tfSwitchTabs>button:focus-visible{outline:0;box-shadow:none;background:var(--soft)}
+.tfKeyEndpoint{display:grid;gap:12px;min-width:0}
+.tfKeyEndpoint>div[role=tabpanel]{min-width:0}
+
+/* Metadata stays plain text until the inline editor is opened. */
+:root[data-theme] .tfKeyDetail .tfInlineEdit,:root[data-theme] .tfKeyDetail .tfInlineEdit:is(:hover,:focus,:focus-visible){display:inline;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;outline:0;color:inherit;font:inherit;line-height:inherit;min-height:0;text-align:left;white-space:pre-wrap;overflow-wrap:anywhere;cursor:text;transform:none}
+
+/* Keep inline editors on the original text baseline; show a field only while editing. */
+.tfInlineField{display:inline-grid;max-width:100%;min-width:0;vertical-align:baseline}
+.tfInlineField>.tfInlineEdit,.tfInlineField>.tfInlineInput{grid-area:1/1}
+.tfInlineField>.tfInlineMinimum{grid-area:1/1;visibility:hidden;white-space:pre}
+:root[data-theme] .tfKeyDetail .tfInlineField>.tfInlineInput{width:100%;min-width:0;min-height:0;max-width:100%;padding:0;border:0;border-radius:2px;font:inherit;line-height:inherit;color:inherit;background:var(--soft);box-shadow:0 0 0 4px var(--soft);outline:1px solid var(--line);outline-offset:4px;box-sizing:border-box}
+:root[data-theme] .tfKeyDetail .tfInlineField>.tfInlineInput:focus-visible{outline:1px solid var(--accent);outline-offset:4px}
+.tfDialog.tfKeyRenameDialog{inset:0;margin:auto;width:min(400px,calc(100vw - 32px));height:fit-content;max-height:calc(100dvh - 80px);border:1px solid var(--line);border-radius:14px;overflow:auto}
+.tfKeyRenameDialog .tfDialogContent{min-height:0;padding:24px}
+.tfKeyRenameDialog .tfDialogContent>header{position:static;margin:0 0 20px;padding:0}
+.tfKeyRenameDialog .tfDialogContent>header h2{font-size:18px}
+.tfKeyRenameDialog form{display:grid;gap:16px}
+.tfKeyRenameDialog label{display:grid;gap:8px;font-size:12px}
+.tfKeyRenameDialog form>footer{display:flex;justify-content:flex-end;gap:10px;margin-top:4px}
+.tfKeyRenameDialog::backdrop{background:#08090a80;backdrop-filter:blur(3px)}
+
+/* Repair chat: model identity on the left, conversation actions on the right. */
+.tfRepair .tfRepairHead{align-items:flex-start;flex-wrap:nowrap;padding:20px 20px 12px;gap:12px;border:0}
+.tfRepair .tfRepairHead>.tfRepairIdentity{display:flex;flex-direction:column;align-items:flex-start;gap:4px;flex:1;min-width:0;margin:0}
+.tfRepair .tfRepairHead h2{font-size:16px;line-height:24px}
+:root[data-theme] .tfRepairHead .tfModelChip{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-height:24px;padding:0;font-size:11px;line-height:20px;color:var(--muted)}
+.tfRepairHead .tfModelChip>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tfRepairHead .tfModelChip>svg{flex-shrink:0;transform:rotate(90deg)}
+.tfRepair .tfRepairHead>.tfRepairHeadActions{display:flex;align-items:center;gap:4px;flex-shrink:0;margin:0}
+:root[data-theme] .tfRepairHeadActions>button{display:inline-flex;align-items:center;justify-content:center;gap:4px;min-height:28px;padding:4px 6px;border:0;background:transparent;color:var(--muted);box-shadow:none}
+:root[data-theme] .tfRepairHeadActions>button:hover:not(:disabled){background:var(--soft);color:var(--text)}
+.tfRepair .tfChat{padding:12px 20px 20px}
+.tfRepair .tfChatEmpty{width:100%;margin:auto 0;gap:20px;justify-items:stretch;text-align:left}
+.tfRepairQuestion{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.tfRepairQuestion h3{font-size:14px;line-height:24px;font-weight:500;color:var(--text);margin:0}
+.tfRepairScope{display:inline-flex;align-items:center;position:relative;max-width:100%;min-width:0}
+:root[data-theme] .tfRepairScope select{appearance:none;field-sizing:content;max-width:220px;width:auto;min-width:0;min-height:28px;padding:4px 20px 4px 0;border:0;outline:0;box-shadow:none;background:none;color:var(--text);font-size:13px;font-weight:600;cursor:pointer;text-overflow:ellipsis}
+.tfRepairScope>svg{transform:rotate(90deg);position:absolute;right:4px;pointer-events:none;color:var(--muted)}
+:root[data-theme] .tfRepairScope select:is(:hover,:focus-visible){color:var(--hover-text);background:var(--soft);outline:0;box-shadow:none}
+.tfRepairSuggestions{display:flex;flex-direction:column;gap:4px;align-items:stretch}
+:root[data-theme] .tfRepairSuggestions>button{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:36px;padding:8px 12px;border:0;background:transparent;box-shadow:none;color:var(--muted);text-align:left;font-size:12px;line-height:20px}
+:root[data-theme] .tfRepairSuggestions>button:is(:hover,:focus-visible){background:var(--soft);color:var(--text);outline:0}
+.tfRepairSuggestions>button>svg{flex-shrink:0;opacity:.5}
+.tfRepair .tfComposer{border:0;padding:12px 20px 20px}
+.tfRepairConversationScope{display:flex;align-items:center;gap:8px;padding:0 20px;color:var(--muted);font-size:11px}
+.tfRepairConversationScope .tfRepairScope select{font-size:11px;font-weight:500;color:var(--muted)}
+.tfRepairHistory{display:flex;flex-direction:column;gap:8px;min-width:0}
+.tfRepairHistory>header,.tfRepairHistoryBar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0 12px}
+.tfRepairHistory h3{font-size:13px;font-weight:600}
+.tfRepairHistory :is(.textButton,small),.tfRepairHistoryBar{font-size:11px;color:var(--muted)}
+:root[data-theme] .tfRepairHistoryItem{display:flex;flex-direction:column;align-items:flex-start;gap:6px;width:100%;min-height:56px;padding:12px;text-align:left;border:0;background:transparent;box-shadow:none}
+:root[data-theme] .tfRepairHistoryItem:is(:hover,:focus-visible){background:var(--soft);outline:0}
+.tfRepairHistoryItem strong{max-width:100%;font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tfRepairResume{display:flex;justify-content:flex-end;padding:12px 20px 20px}
+@media(max-width:480px){.tfRepair .tfRepairHead{padding:16px 16px 12px;gap:8px}.tfRepair .tfRepairHead>.tfRepairIdentity{flex:1 1 auto}.tfRepair .tfChat{padding:12px 16px 16px}.tfRepair .tfComposer{padding:12px 16px 16px}.tfRepair .tfRepairHeadActions>button{padding:4px}.tfRepairScope select{max-width:190px}}
+
+/* Account identity and its controls reuse the existing Codex row and badge. */
+.tfNativeLogin{display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;min-height:32px;font-size:12px;color:var(--muted)}
+.tfNativeLogin .textButton{font-size:12px;min-height:28px;padding:4px 0}
+.tfNativeLogin .tfNativeRefresh{display:inline-flex;align-items:center;justify-content:center;min-width:28px}
+.tfAccountsPage .tfSwitchTabs{margin-top:4px}
+.tfAccountsPage .tfAccountTop{height:auto;min-height:32px;flex-wrap:wrap;gap:8px 16px}
+.tfAccountsPage .tfAccountManage{margin-left:0;gap:16px}
+.tfAccountsPage .tfNativeLogin+.tfAccountManage{border-left:1px solid var(--line);padding-left:16px}
+.tfNativeAccountChip{display:inline-flex;align-items:center;gap:8px;padding:10px 12px;font-size:12px;max-width:100%;min-width:0}
+.tfNativeAccountChip>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tfNativeAccountChip>.tfUsing{flex-shrink:0}
+.tfAgentSectionHead>.tfNativeLogin{margin-left:auto}
+.tfPanel>.tfAgentSection{border:0}
+
+/* Keep provider navigation and local-client headers on a shared baseline. */
 .tfAccountsPage>.tfProviderTabs{flex-wrap:nowrap;gap:4px;overflow-x:auto;scrollbar-width:thin;padding:4px;scroll-padding-inline:4px}
 .tfAccountsPage>.tfProviderTabs>button{box-sizing:border-box;flex:1 0 76px;min-width:76px;min-height:68px;flex-direction:column;justify-content:center;padding:8px 4px;gap:6px;white-space:nowrap}
+.tfAccountsPage .tfNativeLogin+.tfAccountManage{border:0;padding-left:0}
+.tfAgentsPage>.tfPanel{margin-top:0;padding-top:12px}
+.tfAgentsPage .tfAgentTitle{flex-wrap:wrap;gap:8px 12px}
+.tfAgentsPage .tfAgentTitle>.tfSwitchTabs{gap:12px;margin-left:8px}
+.tfAgentsPage .tfAgentTitle>.tfSwitchTabs>button{font-size:11px;min-height:28px;padding-block:4px}
+.tfRequestStatus{justify-content:flex-start;max-width:880px;width:100%;margin-inline:auto;padding:0 16px 8px}
+.tfNotifications,.nativeMac .tfNotifications{inset:auto 16px 80px auto}
+
+/* Data skeletons and dialog feedback take precedence over the page operation indicator. */
+.tfOperationFeedback{position:fixed;inset:0;z-index:25;display:grid;place-items:center;pointer-events:none}
+.tfOperationFeedback>.tfThinking{padding:12px 16px;border:0;border-radius:8px;background:var(--canvas);font-size:13px}
+.tfMain:has(>.tfPage .tfLoadingSkeleton,>.tfPage .tfThinking)>.tfOperationFeedback,
+body:has(dialog[open]) .tfOperationFeedback{display:none}

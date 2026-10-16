@@ -1,15 +1,16 @@
 import {codexRuntimeClient,migrationBinary} from './codex-runtime.js';
-import {mkdir, readdir, readFile, writeFile, rename, copyFile, chmod, stat} from 'node:fs/promises';
+import {mkdir, readdir, readFile, writeFile, rename, copyFile, chmod, stat, rm} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {dirname,join,isAbsolute} from 'node:path';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
 import {RunnerCoreError} from './errors.js';
 import {safePath} from './agent-connections.js';
 
 const active=(entry:Entry)=>entry.state!=='restored'&&entry.state!=='deleted'&&entry.state!=='unavailable';
 const fail=(message:string,code='codex_migration_failed')=>new RunnerCoreError(message,{statusCode:409,code});
 type Route={id:string;provider:string;model:string;rollout:string;archived:boolean;source:string};
-type Entry=Route&{nextModel:string;returnModel?:string;rearchive?:boolean;state:'pending'|'migrated'|'restored'|'deleted'|'unavailable'};
+type HistoryBackup={journalId:string;file:string};
+type Entry=Route&{historyBackup?:HistoryBackup;nextModel:string;returnModel?:string;rearchive?:boolean;state:'pending'|'migrated'|'restored'|'deleted'|'unavailable'};
 type Journal={version:1;id:string;createdAt:string;databaseBackup?:string;state:'prepared'|'migrated'|'restored';entries:Entry[]};
 export type MigrationStatus={lifecyclePhase?:'idle'|'stopping'|'changing'|'opening';backups:number;remaining:number;restorable:number;unavailable?:number;phase:'idle'|'backup'|'migrating'|'restoring';done:number;total:number};
 export interface MigrationClient {pid?:number;resume(id:string,provider:string,model:string):Promise<void>;setArchived(id:string,archived:boolean):Promise<void>;close():Promise<void>}
@@ -51,6 +52,19 @@ export class CodexThreadMigration {
   try{if(!(await stat(row.rollout)).isFile())throw fail('旧对话记录不是文件，未迁移。');return true;}
   catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}
  }
+ private async backupFile(path:string){
+  await safePath(path);
+  try{return (await stat(path)).isFile();}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}
+ }
+ /** Reuse the first recovery baseline; live history is never replaced by it on a switch. */
+ private async historyBackup(row:Route,journals:Journal[]):Promise<HistoryBackup|undefined>{
+  for(const journal of journals)for(const [index,entry] of journal.entries.entries()){
+   if(entry.id!==row.id||entry.source!==row.source||entry.state==='deleted')continue;
+   const saved=entry.historyBackup??{journalId:journal.id,file:`${index}.jsonl`};
+   if(!/^[a-f0-9-]{36}$/.test(saved.journalId)||!/^\d+\.jsonl$/.test(saved.file))continue;
+   if(await this.backupFile(join(this.directory,saved.journalId,saved.file)))return saved;
+  }
+ }
  // Retain missing records, without replaying deleted history from an old backup.
  // If the live history becomes available later, retry its original journal.
  private async recoverAvailable(){
@@ -62,12 +76,25 @@ export class CodexThreadMigration {
  }
  private async idle(ownPid?:number){if((await this.processes()).some(pid=>pid!==ownPid))throw fail('请先保存工作并完全退出 Codex，再继续迁移旧对话。备份和现有记录会保留。','codex_exit_required');}
  async status():Promise<MigrationStatus>{const journals=await this.journals();return {...this.progress,backups:journals.length,remaining:journals.flatMap(j=>j.entries).filter(e=>e.state==='pending').length,restorable:journals.flatMap(j=>j.entries).filter(active).length,unavailable:journals.flatMap(j=>j.entries).filter(e=>e.state==='unavailable').length};}
+ /** Read routing metadata only: never send conversation contents or rollout paths to a model. */
+ async inspect(expected:{provider:string;model?:string;allowedModels?:string[]}){
+  const available=!!await this.database(),rows=await this.rows(),journals=await this.journals();
+  const groups=new Map<string,{provider:string;model:string;archived:boolean;count:number}>();
+  for(const row of rows){const key=JSON.stringify([row.provider,row.model,row.archived]);const group=groups.get(key)??{provider:row.provider,model:row.model,archived:row.archived,count:0};group.count++;groups.set(key,group);}
+  const relevant=rows.filter(row=>row.provider==='token_flow'||!row.archived&&['cli','vscode'].includes(row.source)&&!!row.model&&row.provider==='openai');
+  const mismatched=relevant.filter(row=>row.provider!==expected.provider||expected.provider==='token_flow'&&!(expected.allowedModels??[expected.model]).includes(row.model));
+  const fingerprint=createHash('sha256').update(JSON.stringify({rows:rows.map(({rollout:_,...row})=>row).sort((a,b)=>a.id.localeCompare(b.id)),journals})).digest('hex');
+  return {available,expected,total:rows.length,active:rows.filter(row=>!row.archived).length,archived:rows.filter(row=>row.archived).length,groups:[...groups.values()].slice(0,80),groupCount:groups.size,
+   mismatched:mismatched.length,samples:mismatched.slice(0,20).map(({id,provider,model,archived})=>({id,provider,model,archived})),fingerprint,
+   migrations:journals.slice(-12).reverse().map(j=>({id:j.id,createdAt:j.createdAt,state:j.state,total:j.entries.length,states:Object.fromEntries([...new Set(j.entries.map(e=>e.state))].map(state=>[state,j.entries.filter(e=>e.state===state).length]))})),
+   note:'只读路由元数据。官方账号按请求认证，旧对话来源字段不能证明计费账号；官方旧对话保留不同模型不一定异常。未发起模型请求，未验证实际回复。'};
+ }
  /** Complete a consistent local backup before the caller writes gateway config. */
  async prepare(model:string,allowedModels:string[]=[model]){
   await this.recoverAvailable();
   const journals=await this.journals(),owned=new Set(journals.flatMap(j=>j.entries.filter(e=>active(e)||e.state==='unavailable').map(e=>e.id)));
   const current=await this.rows();
-  const rows=current.filter(row=>(row.provider==='openai'&&!row.archived||row.provider==='token_flow')&&['vscode','cli'].includes(row.source)&&!!row.model&&!owned.has(row.id));
+  const rows=current.filter(row=>(row.provider==='openai'&&!row.archived&&['vscode','cli'].includes(row.source)||row.provider==='token_flow')&&!!row.model&&!owned.has(row.id));
   if(!rows.length&&!journals.some(j=>j.entries.some(active)))return;
   await this.idle();
   for(const journal of journals){
@@ -80,7 +107,7 @@ export class CodexThreadMigration {
  /** Also retain conversations created while the gateway was active. */
  async prepareOfficial(model:string){
   const owned=new Set((await this.journals()).flatMap(j=>j.entries.filter(e=>active(e)||e.state==='unavailable').map(e=>e.id)));
-  const rows=(await this.rows()).filter(row=>row.provider==='token_flow'&&['vscode','cli'].includes(row.source)&&!!row.model&&!owned.has(row.id));
+  const rows=(await this.rows()).filter(row=>row.provider==='token_flow'&&!!row.model&&!owned.has(row.id));
   if(!rows.length)return;
   if(!model||model.includes('/'))throw fail('请先选择一个官方 Codex 模型，再还原这些对话。');
   await this.idle();await this.backup(rows,model,true);
@@ -95,20 +122,30 @@ export class CodexThreadMigration {
   try{
    const {DatabaseSync,backup}=await import('node:sqlite');
    const files=(await readdir(this.home)).filter(name=>/^(?:state|thread_history)_\d+\.sqlite$/.test(name));
-   // An active migration already owns a consistent baseline. New threads need
-   // their own rollout and route records, not another copy of every database.
-   const baseline=(await this.journals()).find(j=>j.entries.some(active));
-   const baselineId=baseline?.databaseBackup??baseline?.id;
-   let reuse=false;
-   if(baselineId&&/^[a-f0-9-]{36}$/.test(baselineId)){
-    const path=join(this.directory,baselineId);await safePath(path);
-    const saved=await readdir(path);reuse=files.every(name=>saved.includes(name));
-    if(reuse)journal.databaseBackup=baselineId;
+   // Completed switches keep their immutable recovery baseline too. Each new
+   // manifest records this cycle's routes, without duplicating earlier history.
+   const previous=await this.journals();let reuse=false;
+   for(const baseline of previous){
+    const baselineId=baseline.databaseBackup??baseline.id;if(!/^[a-f0-9-]{36}$/.test(baselineId))continue;
+    const exists=await Promise.all(files.map(name=>this.backupFile(join(this.directory,baselineId,name))));
+    if(exists.every(Boolean)){journal.databaseBackup=baselineId;reuse=true;break;}
    }
    for(const name of reuse?[]:files){await this.idle();const path=join(this.home,name);await safePath(path);const db=new DatabaseSync(path,{readOnly:true});try{await backup(db,join(directory,name));await chmod(join(directory,name),0o600);}finally{db.close();}}
    const config=join(this.home,'config.toml');await safePath(config);try{await copyFile(config,join(directory,'config.toml'));await chmod(join(directory,'config.toml'),0o600);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
-   for(let i=0;i<rows.length;i++){const row=rows[i]!;if(row.rollout){if(!isAbsolute(row.rollout))throw fail('旧对话记录路径异常，未迁移。');await safePath(row.rollout);try{await copyFile(row.rollout,join(directory,`${i}.jsonl`),constants.COPYFILE_FICLONE);await chmod(join(directory,`${i}.jsonl`),0o600);}catch(error){const code=(error as NodeJS.ErrnoException).code;if(code!=='ENOENT')throw fail(`旧对话记录无法备份${code?`（${code}）`:''}，登录配置未修改。`);}}this.progress.done=i+1;}
+   for(let i=0;i<rows.length;i++){
+    const row=rows[i]!;
+    // Reusing recovery data must not bypass validation before config changes.
+    await this.hasHistory(row);
+    const saved=await this.historyBackup(row,previous);
+    if(saved)journal.entries[i]!.historyBackup=saved;
+    else if(row.rollout){if(!isAbsolute(row.rollout))throw fail('旧对话记录路径异常，未迁移。');await safePath(row.rollout);try{await copyFile(row.rollout,join(directory,`${i}.jsonl`),constants.COPYFILE_FICLONE);await chmod(join(directory,`${i}.jsonl`),0o600);}catch(error){const code=(error as NodeJS.ErrnoException).code;if(code!=='ENOENT')throw fail(`旧对话记录无法备份${code?`（${code}）`:''}，登录配置未修改。`);}}
+    this.progress.done=i+1;
+   }
    await this.idle();await this.save(journal);
+  }catch(error){
+   // No live history or configuration has changed before this manifest exists.
+   if(!await this.backupFile(join(directory,'manifest.json')))await rm(directory,{recursive:true,force:true});
+   throw error;
   }finally{this.progress={phase:'idle',done:0,total:0};}
  }
  async migrate(model:string,allowedModels:string[]=[model]){return this.execute(false,model,allowedModels);}
@@ -116,7 +153,7 @@ export class CodexThreadMigration {
   await this.recoverAvailable();
   const journals=await this.journals(),entries=journals.flatMap(j=>j.entries.filter(active)),rows=await this.rows();
   const unavailable=new Set(journals.flatMap(j=>j.entries.filter(e=>e.state==='unavailable').map(e=>e.id)));
-  const hasThreads=rows.some(row=>!unavailable.has(row.id)&&(entries.some(entry=>entry.id===row.id)||row.provider==='token_flow'&&!!row.model&&['vscode','cli'].includes(row.source)));
+  const hasThreads=rows.some(row=>!unavailable.has(row.id)&&(entries.some(entry=>entry.id===row.id)||row.provider==='token_flow'&&!!row.model));
   if(!entries.length&&!hasThreads)return {migrated:0};
   const selected=hasThreads?(typeof model==='function'?await model():model):undefined;
   await this.prepareOfficial(selected??'');return this.execute(true,selected);
@@ -126,7 +163,7 @@ export class CodexThreadMigration {
   if(!entries.length)return {migrated:0};
   if(!restore){
    const rows=new Map((await this.rows()).map(row=>[row.id,row]));
-   if(entries.every(entry=>{const row=rows.get(entry.id);return entry.state==='migrated'&&!entry.rearchive&&row?.provider==='token_flow'&&['vscode','cli'].includes(row.source)&&allowedModels.includes(row.model);}))return {migrated:0};
+   if(entries.every(entry=>{const row=rows.get(entry.id);return entry.state==='migrated'&&!entry.rearchive&&row?.provider==='token_flow'&&row.source===entry.source&&allowedModels.includes(row.model);}))return {migrated:0};
   }
   await this.idle();
   if(!await this.database())throw fail('找不到旧对话数据库，备份已保留，请检查 Codex 数据目录后重试。');
@@ -135,12 +172,12 @@ export class CodexThreadMigration {
    const getClient=async()=>client??=await this.clientFactory(this.home);
    for(const journal of journals){for(const entry of journal.entries){if(!entries.includes(entry))continue;await this.idle(client?.pid);
     let row=(await this.rows()).find(row=>row.id===entry.id);
-    if(row&&!['vscode','cli'].includes(row.source))throw fail('旧对话来源已被其他程序修改，未覆盖；请检查后重试。');
+    if(row&&row.source!==entry.source)throw fail('旧对话来源已被其他程序修改，未覆盖；请检查后重试。');
     if(row&&!await this.hasHistory(row)){entry.state='unavailable';await this.save(journal);continue;}
     // Finish an interrupted archive round-trip before deciding whether routing is done.
     if(row&&entry.rearchive){if(!row.archived)await (await getClient()).setArchived(entry.id,true);entry.rearchive=false;await this.save(journal);row=(await this.rows()).find(row=>row.id===entry.id);}
     if(!row){entry.state='deleted';await this.save(journal);continue;}
-    if(!['vscode','cli'].includes(row.source))throw fail('旧对话来源已被其他程序修改，未覆盖；请检查后重试。');
+    if(row.source!==entry.source)throw fail('旧对话来源已被其他程序修改，未覆盖；请检查后重试。');
     if(!restore&&row.provider==='token_flow'&&allowedModels.includes(row.model)){entry.state='migrated';entry.nextModel=row.model;await this.save(journal);continue;}
     if(restore&&model){entry.returnModel=model;await this.save(journal);}
     const restoredModel=entry.returnModel??(entry.provider==='token_flow'?'':entry.model),restoredProvider=entry.provider==='token_flow'?'openai':entry.provider;

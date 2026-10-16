@@ -35,8 +35,25 @@ it('rejects a second change during migration without restarting over it',async()
  const lifecycle=new CodexSwitchLifecycle(async()=>[],async()=>{},launch,'darwin',async()=>{});
  const first=lifecycle.change(()=>pending);await expect(lifecycle.change(async()=>{})).rejects.toThrow('正在切换');release();await first;expect(launch).toHaveBeenCalledOnce();
 });
-it('uses exact Windows process IDs and force closes only after waiting',async()=>{
- let alive=true;const run=vi.fn(async(_file:string,args:string[])=>{if(args.includes('/F'))alive=false;});
- await new CodexSwitchLifecycle(async()=>alive?[123]:[],run,async()=>({message:''}),'win32',async()=>{}).change(async()=>{});
- expect(run.mock.calls).toEqual([['taskkill',['/PID','123','/T']],['taskkill',['/PID','123','/T','/F']]]);
+it('uses the verified Windows lifecycle, never taskkill or the generic launcher',async()=>{
+ const events:string[]=[];const run=vi.fn(async()=>{}),launch=vi.fn(async()=>({message:''}));
+ const windows={stop:vi.fn(async()=>{events.push('stop verified');}),open:vi.fn(async()=>{events.push('open same installation');})};
+ await new CodexSwitchLifecycle(async()=>[],run,launch,'win32',async()=>{},windows).change(async()=>{events.push('change');});
+ expect(events).toEqual(['stop verified','change','open same installation']);expect(run).not.toHaveBeenCalled();expect(launch).not.toHaveBeenCalled();
+});
+it.each(['unidentified process','tray still running'])('does not change configuration or launch after Windows stop fails: %s',async reason=>{
+ const work=vi.fn(),run=vi.fn(async()=>{}),launch=vi.fn(async()=>({message:''}));
+ const windows={stop:vi.fn(async()=>{throw Error(reason);}),open:vi.fn(async()=>{})};
+ await expect(new CodexSwitchLifecycle(async()=>[],run,launch,'win32',async()=>{},windows).change(work)).rejects.toThrow(reason);
+ expect(work).not.toHaveBeenCalled();expect(run).not.toHaveBeenCalled();expect(windows.open).not.toHaveBeenCalled();
+});
+it('does not migrate or forcibly close a remaining Windows Codex CLI',async()=>{
+ const work=vi.fn(),run=vi.fn(async()=>{}),windows={stop:vi.fn(async()=>{}),open:vi.fn(async()=>{})};
+ await expect(new CodexSwitchLifecycle(async()=>[123],run,undefined,'win32',async()=>{},windows).change(work)).rejects.toThrow('CLI');
+ expect(work).not.toHaveBeenCalled();expect(run).not.toHaveBeenCalled();expect(windows.open).not.toHaveBeenCalled();
+});
+it('keeps Windows stopped on migration failure and does not launch a different installation',async()=>{
+ const windows={stop:vi.fn(async()=>{}),open:vi.fn(async()=>{})};
+ await expect(new CodexSwitchLifecycle(async()=>[],undefined,undefined,'win32',async()=>{},windows).change(async()=>{throw Error('migration failed');})).rejects.toThrow('migration failed');
+ expect(windows.open).not.toHaveBeenCalled();
 });

@@ -3,6 +3,13 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SwitchJournal, sanitizeSwitchMessage } from '../packages/core/src/switch-journal.js';
+it('retains completed switches without reporting them as failures',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'switch-success-')),file=join(root,'journal.json');
+ try{const journal=new SwitchJournal(file);await journal.record({action:'official-switch',target:'codex',message:'saved',outcome:'completed',sourceId:'a'.repeat(24),model:'codex/test'});await journal.record({action:'official-switch',target:'codex',message:'failed'});
+  expect(journal.history('codex')).toHaveLength(2);expect(journal.list()).toHaveLength(1);
+  const loaded=new SwitchJournal(file);await loaded.load();expect(loaded.history('codex').find(r=>r.outcome==='completed')?.model).toBe('codex/test');
+ }finally{await rm(root,{recursive:true,force:true});}
+});
 
 it('stores only a sanitized switch failure and reloads it', async () => {
   const root = await mkdtemp(join(tmpdir(), 'switch-journal-'));

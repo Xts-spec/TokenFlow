@@ -120,5 +120,30 @@ try{
   assert.ok(JSON.stringify(calls.at(-1).body.input).includes('GATEWAY_BORN_MARKER'));
   assert.ok(JSON.stringify(calls.at(-1).body.input).includes('REPLY_6_MARKER'));
   console.log(JSON.stringify({gatewayBornThreadRestored:true,historyPreserved:true,implicitOfficialResume:true}));
+  // Exercise changing the allowed model set and new project histories over
+  // several full provider round trips, with the installed runtime each time.
+  const threads=[thread,fresh.thread.id];
+  for(let cycle=0;cycle<3;cycle++){
+   const added=`qoder/model-${cycle}`,fallback=`workbuddy/model-${cycle}`;
+   await migration.prepare(added,[added,fallback]);
+   const connected=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin,model:added,sourceId:'a'.repeat(24),selections:[{model:added,sourceId:'a'.repeat(24)},{model:fallback,sourceId:'a'.repeat(24)}],keyId:randomUUID(),key:'gateway-synthetic-key'});
+   await migration.migrate(added,[added,fallback]);
+   const project=join(root,`new-project-${cycle}`);await mkdir(project);
+   client=await start();const created=await client.rpc('thread/start',{cwd:project,approvalPolicy:'never',sandbox:'read-only'});
+   threads.push(created.thread.id);await client.turn(created.thread.id,added,`NEW_PROJECT_${cycle}`);await client.stop();
+   // Removing the current model moves its existing conversations to a valid
+   // selection. New histories are discovered, not just the initial batch.
+   await migration.prepare(fallback,[fallback]);
+   const replaced=await connections.apply({replaceId:connected.id,target:'codex',revision:(await connections.status())[0].revision,origin,model:fallback,sourceId:'a'.repeat(24),selections:[{model:fallback,sourceId:'a'.repeat(24)}],keyId:randomUUID(),key:'gateway-synthetic-key'});
+   await migration.migrate(fallback,[fallback]);
+   client=await start();
+   for(const id of threads){const resumed=await client.rpc('thread/resume',{threadId:id});assert.equal(resumed.thread.modelProvider,'token_flow');assert.equal(resumed.model,fallback);await client.turn(id,fallback,`AFTER_MODEL_DELETE_${cycle}`);}
+   await client.stop();await migration.restore('native-fixture');await connections.restore(replaced.id);
+   client=await start();
+   for(const id of threads){const resumed=await client.rpc('thread/resume',{threadId:id});assert.equal(resumed.thread.modelProvider,'openai');await client.turn(id,'native-fixture',`ROUNDTRIP_${cycle}`);assert.ok(JSON.stringify(calls.at(-1).body.input).includes(`AFTER_MODEL_DELETE_${cycle}`));}
+   await client.stop();
+  }
+  console.log(JSON.stringify({repeatedSwitchCycles:3,modelAdditionAndRemoval:true,newProjectThreads:3,continuedThreads:threads.length,historyPreserved:true}));
+
  }
 }finally{child?.kill();await liveService?.app.close();server.closeAllConnections();await new Promise(r=>server.close(r));await rm(root,{recursive:true,force:true});}

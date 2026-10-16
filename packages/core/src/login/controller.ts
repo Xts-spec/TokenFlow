@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { loginProviders, loginProviderSchema } from './registry.js';
 import { listenForCallback, validateCallbackURL } from './callback-flow.js';
 import type { InternalLogin, LoginHost, LoginProviderId, LoginSession } from './types.js';
+import {loginFailure,loginStageLabels} from './diagnostics.js';
 
 const pendingStates = new Set(['starting', 'waiting_for_browser', 'verifying']);
 const statusSchema = z.object({status: z.enum(['ok', 'wait', 'error']), error: z.string().optional()});
@@ -19,7 +20,7 @@ export class LoginController {
   snapshot(): LoginSession | undefined {
     const login = this.session;
     return login ? {id: login.id, provider: login.provider, flow: login.flow, status: login.status, message: login.message,
-      url: login.url, userCode: login.userCode, expiresAt: login.expiresAt} : undefined;
+      url: login.url, userCode: login.userCode, expiresAt: login.expiresAt,diagnostic:login.diagnostic} : undefined;
   }
   get state() {return this.session?.status ?? 'idle';}
   isPending() {return !!this.session && pendingStates.has(this.session.status);}
@@ -51,6 +52,7 @@ export class LoginController {
     if (this.isPending()) throw new Error('已有授权正在进行，请完成或取消后重试。');
     const login: InternalLogin = {id: randomUUID(), provider: provider.id, flow: provider.flow, status: 'starting', message: '正在启动服务并生成官方授权链接。'};
     this.session = login;
+    this.host.log(`${provider.id} [${login.id.slice(0,8)}] 开始授权（${provider.flow==='callback'?'本机回调':'网页授权轮询'}）`);
     try {
       await this.host.start();
       const raw = await this.host.request(provider.route);
@@ -69,6 +71,7 @@ export class LoginController {
       const servers = await listenForCallback(provider, url => this.submitCallback(login.id, url));
       if (this.session !== login || !this.isPending()) {for (const server of servers) server.close(); return this.snapshot();}
       this.callbackServers = servers;
+      this.host.log(`${provider.id} [${login.id.slice(0,8)}] 授权链接已生成；${provider.callback?`回调监听 localhost:${provider.callback.port} 已就绪`:'等待官方网页授权，后台轮询结果，不使用本机回调端口'}`);
       this.schedulePoll(login);
       await this.open(login.id);
     } catch (error) {
@@ -102,20 +105,31 @@ export class LoginController {
     try {
       const response = statusSchema.parse(await this.host.request(`/get-auth-status?state=${encodeURIComponent(login.state!)}`));
       if (this.session !== login || !this.isPending()) return;
+      login.diagnostic=undefined;login.lastPollIssue=undefined;
       if (response.status === 'error') {
-        // 不透出原始 token 交换错误（可能含密钥或回调参数）。
-        this.finish('failed', '授权未完成或凭据交换失败。请重新连接，并检查网络或回调端口。'); return;
+        login.diagnostic=loginFailure(response.error,login.flow==='device'?'device_poll':login.callbackSubmitted?'token_exchange':'callback');
+        const diagnostic=login.diagnostic;
+        this.finish('failed', `[${login.id.slice(0,8)}] ${loginStageLabels[diagnostic.stage]}失败：${diagnostic.reason}（${diagnostic.code}）。${login.flow==='callback'?login.callbackSubmitted?'本机回调已收到，请检查后台出站网络或重新授权。':'尚未确认本机回调，请检查浏览器最终页面和回调端口。':'请检查后台出站网络及官方网页授权结果。'}`); return;
       }
       if (response.status === 'ok') {
         login.status = 'verifying'; login.message = '授权成功，正在读取已保存账号与模型列表。';
-        await this.host.refreshAccounts();
+        this.host.log(`${login.provider} [${login.id.slice(0,8)}] 上游确认授权完成，凭据已保存；开始读取账号与模型`);
+        let loaded=true;
+        try{await this.host.refreshAccounts();}catch{loaded=false;}
         if (this.session !== login || !this.isPending()) return;
         const expected = loginProviders[login.provider].accountProvider;
-        if (!this.host.accounts().some(account => account.provider === expected)) throw new Error('账号尚未加载');
+        if(!loaded||!this.host.accounts().some(account => account.provider === expected)){
+          login.diagnostic={stage:'loading_accounts',code:'account_sync_pending',reason:'授权已完成，但账号或模型读取未完成'};
+          this.finish('completed','账号凭据已保存，但账号或模型读取暂未完成。请刷新，无需重复登录。');return;
+        }
         this.finish('completed', this.host.modelCount() ? '账号已保存，模型列表已自动刷新。请选择模型并探测能力。' : '账号已保存，但模型列表为空。请刷新列表或检查账号可用权限。');
         return;
       }
-    } catch {if (this.session === login && this.isPending()) login.message = '正在等待 Local Agent 确认授权结果，可稍后重试或取消。';}
+    } catch(error) {if (this.session === login && this.isPending()) {
+      login.diagnostic=loginFailure(error,'local_gateway');
+      login.message='暂时无法读取本机网关的授权状态；这不代表网页授权失败。请稍后重试或查看网关诊断。';
+      if(login.lastPollIssue!==login.diagnostic.code){login.lastPollIssue=login.diagnostic.code;this.host.log(`${login.provider} [${login.id.slice(0,8)}] 本机授权状态读取失败（${login.diagnostic.code}），等待重试`);}
+    }}
     this.schedulePoll(login);
   }
   async submitCallback(id: string, value: string) {
@@ -127,6 +141,7 @@ export class LoginController {
     try {
       await this.host.request('/oauth-callback', 'POST', {provider: provider.callback!.upstream, redirect_url: url.href});
       login.status = 'verifying'; login.message = '回调已提交，正在等待凭据交换。';
+      this.host.log(`${login.provider} [${login.id.slice(0,8)}] 浏览器回调已校验并交给网关；等待凭据交换与保存`);
     } catch (error) {login.callbackSubmitted = false; throw error;}
     return this.snapshot();
   }

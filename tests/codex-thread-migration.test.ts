@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {mkdtemp,mkdir,writeFile,readFile,readdir,rm,realpath,stat} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,readdir,rm,realpath,stat,symlink} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {DatabaseSync} from 'node:sqlite';
@@ -150,3 +150,87 @@ it('adds a new conversation backup without another full database snapshot during
  let databases=0;for(const dir of dirs)databases+=(await readdir(join(f.root,'codex-thread-backups',dir))).filter(n=>n.endsWith('.sqlite')).length;
  expect(databases).toBe(1);await f.migration.restore();expect(f.db.prepare("select model_provider from threads where id='new'").get()?.model_provider).toBe('openai');expect(await readFile(file,'utf8')).toBe('new history');
 }finally{await f.close();}});
+it('reconciles gateway child threads and survives repeated switch, create, archive and delete cycles',async()=>{const f=await fixture();try{
+ const insert=async(id:string,source:string,archived=0)=>{const path=join(f.home,`${id}.jsonl`);await writeFile(path,`history ${id}`);f.db.prepare('insert into threads values (?,?,?,?,?,?)').run(id,'token_flow','qoder/a',path,source,archived);};
+ await f.migration.prepare('qoder/a');await f.migration.migrate('qoder/a');
+ await insert('guardian','{"subagent":{"other":"guardian"}}');await insert('child','{"subagent":{"thread_spawn":{"parent_thread_id":"old"}}}',1);await insert('new-project','vscode');
+ f.db.prepare("delete from threads where id='cli'").run();
+ await f.reopen().restore('native');
+ expect(f.db.prepare("select count(*) as n from threads where model_provider='token_flow'").get()?.n).toBe(0);
+ expect(f.db.prepare("select archived from threads where id='child'").get()?.archived).toBe(1);
+ for(let cycle=0;cycle<3;cycle++){await f.reopen().prepare('qoder/b');await f.reopen().migrate('qoder/b');await insert(`born-${cycle}`,'vscode');await f.reopen().restore('native');}
+ expect(f.db.prepare("select count(*) as n from threads where model_provider='token_flow'").get()?.n).toBe(0);
+ expect(f.db.prepare("select id from threads where id='cli'").get()).toBeUndefined();expect(await readFile(join(f.home,'new-project.jsonl'),'utf8')).toBe('history new-project');
+}finally{await f.close();}});
+
+it('inspects routing metadata without resuming threads or exposing their paths/content',async()=>{
+ const f=await fixture();try{
+  const before=await readFile(join(f.home,'config.toml'),'utf8');
+  const result=await f.migration.inspect({provider:'token_flow',model:'qoder/test',allowedModels:['qoder/test']});
+  expect(result.available).toBe(true);expect(result.mismatched).toBe(2);expect(result.total).toBe(7);
+  expect(JSON.stringify(result)).not.toContain('rollout');expect(JSON.stringify(result)).not.toContain(f.root);
+  expect((await f.migration.status()).backups).toBe(0);
+  expect(await readFile(join(f.home,'config.toml'),'utf8')).toBe(before);
+  expect((await f.migration.inspect({provider:'openai',model:'different-native-model'})).mismatched).toBe(0);
+ }finally{f.db.close();await rm(f.root,{recursive:true,force:true});}
+});
+
+async function backupFiles(root:string){
+ const files:string[]=[];for(const directory of await readdir(join(root,'codex-thread-backups')))for(const name of await readdir(join(root,'codex-thread-backups',directory)))files.push(`${directory}/${name}`);return files;
+}
+it('reuses immutable history and database baselines across complete switch cycles, retaining each current official model',async()=>{
+ const f=await fixture();try{
+  await f.migration.prepare('gateway');await f.migration.migrate('gateway');await f.migration.restore();
+  const initial=await backupFiles(f.root),baseline=initial.find(path=>path.endsWith('/0.jsonl'))!;
+  const original=await readFile(join(f.root,'codex-thread-backups',baseline),'utf8');
+  for(let cycle=0;cycle<3;cycle++){
+   f.db.prepare("update threads set model=? where id='old'").run(`official-${cycle}`);
+   await writeFile(join(f.home,'old.jsonl'),`latest turns ${cycle}`);
+   await f.reopen().prepare(`gateway-${cycle}`);await f.reopen().migrate(`gateway-${cycle}`);await f.reopen().restore();
+   expect(f.db.prepare("select model from threads where id='old'").get()?.model).toBe(`official-${cycle}`);
+   expect(await readFile(join(f.home,'old.jsonl'),'utf8')).toBe(`latest turns ${cycle}`);
+  }
+  const files=await backupFiles(f.root);expect(files.filter(name=>name.endsWith('.jsonl'))).toHaveLength(2);expect(files.filter(name=>name.endsWith('.sqlite'))).toHaveLength(1);
+  expect(await readFile(join(f.root,'codex-thread-backups',baseline),'utf8')).toBe(original);
+ }finally{await f.close();}
+});
+it('appends only a newly seen thread after returning to official, sharing the earlier database baseline',async()=>{
+ const f=await fixture();try{
+  await f.migration.prepare('gateway');await f.migration.migrate('gateway');await f.migration.restore();
+  const path=join(f.home,'later.jsonl');await writeFile(path,'later official conversation');f.db.prepare('insert into threads values (?,?,?,?,?,?)').run('later','openai','latest-official',path,'vscode',0);
+  await f.reopen().prepare('gateway');await f.reopen().migrate('gateway');await f.reopen().restore();
+  const files=await backupFiles(f.root);expect(files.filter(name=>name.endsWith('.jsonl'))).toHaveLength(3);expect(files.filter(name=>name.endsWith('.sqlite'))).toHaveLength(1);
+  expect(f.db.prepare("select model from threads where id='later'").get()?.model).toBe('latest-official');
+ }finally{await f.close();}
+});
+it('creates a fresh baseline when an earlier history backup has been removed instead of publishing a broken reference',async()=>{
+ const f=await fixture();try{
+  await f.migration.prepare('gateway');await f.migration.migrate('gateway');await f.migration.restore();
+  const previous=(await readdir(join(f.root,'codex-thread-backups')))[0]!;await rm(join(f.root,'codex-thread-backups',previous,'0.jsonl'));
+  await writeFile(join(f.home,'old.jsonl'),'newer live history');await f.reopen().prepare('gateway');
+  const latest=(await readdir(join(f.root,'codex-thread-backups'))).find(id=>id!==previous)!;
+  expect(await readFile(join(f.root,'codex-thread-backups',latest,'0.jsonl'),'utf8')).toBe('newer live history');
+  const manifest=JSON.parse(await readFile(join(f.root,'codex-thread-backups',latest,'manifest.json'),'utf8'));
+  expect(manifest.entries.find((entry:any)=>entry.id==='old').historyBackup).toBeUndefined();
+  expect(manifest.entries.find((entry:any)=>entry.id==='cli').historyBackup).toMatchObject({journalId:previous,file:'1.jsonl'});
+ }finally{await f.close();}
+});
+it('does not leave an unpublished duplicate backup directory when live history is invalid',async()=>{
+ const f=await fixture();try{
+  await rm(join(f.home,'old.jsonl'));await mkdir(join(f.home,'old.jsonl'));
+  await expect(f.migration.prepare('gateway')).rejects.toThrow();
+  expect(await readdir(join(f.root,'codex-thread-backups'))).toEqual([]);expect(f.calls()).toBe(0);
+  expect(f.db.prepare("select model_provider from threads where id='old'").get()?.model_provider).toBe('openai');
+ }finally{await f.close();}
+});
+it.each(['directory','relative','symlink'])('validates live history before reusing a baseline when the path becomes %s',async(kind)=>{
+ const f=await fixture();try{
+  await f.migration.prepare('gateway');await f.migration.migrate('gateway');await f.migration.restore();
+  const previous=await readdir(join(f.root,'codex-thread-backups'));
+  if(kind==='relative')f.db.prepare("update threads set rollout_path='relative.jsonl' where id='old'").run();
+  else{await rm(join(f.home,'old.jsonl'));if(kind==='directory')await mkdir(join(f.home,'old.jsonl'));else await symlink(join(f.home,'cli.jsonl'),join(f.home,'old.jsonl'));}
+  await expect(f.reopen().prepare('next-gateway')).rejects.toThrow();
+  expect(await readdir(join(f.root,'codex-thread-backups'))).toEqual(previous);
+  expect(f.db.prepare("select model_provider from threads where id='old'").get()?.model_provider).toBe('openai');
+ }finally{await f.close();}
+});

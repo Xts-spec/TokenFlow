@@ -18,3 +18,9 @@ it('propagates cancellation to upstream and clears the deadline',async()=>{
  const reader=response.body!.getReader();const failure=expect(reader.read()).rejects.toThrow();idle.abort();await failure;
  await vi.advanceTimersByTimeAsync(0);expect(cancelled).toHaveBeenCalledOnce();expect(vi.getTimerCount()).toBe(0);
 });
+
+it('distinguishes an upstream deadline from client cancellation',async()=>{
+ vi.useFakeTimers();const idle=upstreamIdle(100);await vi.advanceTimersByTimeAsync(101);
+ expect(idle.timedOut).toBe(true);idle.abort();expect(idle.timedOut).toBe(true);
+ const cancelled=upstreamIdle(100);cancelled.abort();expect(cancelled.timedOut).toBe(false);
+});

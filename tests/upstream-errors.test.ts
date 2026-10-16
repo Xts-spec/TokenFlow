@@ -10,3 +10,8 @@ it('keeps safe WorkBuddy field paths while discarding provider text and arbitrar
  const result=upstreamError(400,JSON.stringify({error:{code:'workbuddy_invalid_request',fields:['tools.2.name','reasoning.summary','private-token','input.secret'],message:'private request contents'}}));
  expect(result.message).toContain('tools.2.name');expect(result.message).toContain('reasoning.summary');expect(result.message).not.toMatch(/private|secret/);
 });
+
+it.each(['workbuddy_sdk_failed','workbuddy_output_failed','workbuddy_timeout','a2a_parallel_tools_violated'])('retains safe category %s without upstream payload',code=>{
+ expect(upstreamError(502,JSON.stringify({error:{code,message:'private payload'}}))).toMatchObject({code});
+ expect(upstreamError(502,JSON.stringify({error:{code,message:'private payload'}})).message).not.toContain('private');
+});

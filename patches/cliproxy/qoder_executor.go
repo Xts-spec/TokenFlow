@@ -3,6 +3,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -115,6 +116,24 @@ func (e *QoderExecutor) executeNativeStream(ctx context.Context, auth *cliproxya
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	resp, errDo := httpClient.Do(httpReq)
+	// Do returns EOF when the peer closes before sending response headers. No
+	// output has reached the caller yet; retry this inference once on the same
+	// source. Never replay a response body that has already begun streaming.
+	if errors.Is(errDo, io.EOF) && ctx.Err() == nil {
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+		retry := httpReq.Clone(ctx)
+		retry.Body, errDo = httpReq.GetBody()
+		if errDo == nil {
+			resp, errDo = httpClient.Do(retry)
+		}
+	}
+
 	if errDo != nil {
 		return nil, errDo
 	}

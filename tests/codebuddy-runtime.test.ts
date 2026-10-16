@@ -238,4 +238,7 @@ it('passes the account endpoint to CLI initialization instead of relying on the 
  sdk.query.mockImplementation(()=>(async function*(){yield {type:'result',subtype:'success',is_error:false,result:'ok'};})());
  await runOfficialSDK({token:'fixture',region:'international',endpoint:'https://www.workbuddy.ai',model:'test',prompt:'Reply ok',tools:[],signal:new AbortController().signal,cwd:'/tmp',configDir:'/tmp'});
  expect(sdk.query.mock.calls[0]![0].options).toMatchObject({environment:'external',endpoint:'https://www.workbuddy.ai'});
+ // The CLI CLOUD provider runs before its OPTIONS provider. This early identity
+ // is required for the first remote config request, not just later inference.
+ expect(JSON.parse(sdk.query.mock.calls[0]![0].options.env.ACC_PRODUCT_CONFIG_V3)).toEqual({endpoint:'https://www.workbuddy.ai'});
 });

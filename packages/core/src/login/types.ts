@@ -1,4 +1,4 @@
-export type LoginProviderId = 'codex' | 'claude' | 'antigravity' | 'kimi' | 'xai' | 'qoder' | 'workbuddy' | 'workbuddy-overseas' | 'zcode' | 'doubao' | 'trae';
+export type LoginProviderId = 'codex' | 'claude' | 'antigravity' | 'kimi' | 'xai' | 'qoder' | 'workbuddy' | 'workbuddy-overseas' | 'zcode' | 'trae';
 export type LoginFlowKind = 'callback' | 'device';
 
 /** 上游 `*-auth-url` 接口经过校验后的启动结果。 */
@@ -27,8 +27,9 @@ export type LoginProvider = {
 export type LoginSession = {
   id: string; provider: LoginProviderId; flow: LoginFlowKind; status: string; message: string;
   url?: string; userCode?: string; expiresAt?: string;
+  diagnostic?:{stage:import('./diagnostics.js').LoginStage;code:string;reason:string;httpStatus?:number};
 };
-export type InternalLogin = LoginSession & {state?: string; callbackSubmitted?: boolean};
+export type InternalLogin = LoginSession & {state?: string; callbackSubmitted?: boolean;lastPollIssue?:string};
 
 export type LoginOptions = {openExternal?: (url: string) => Promise<void>; pollIntervalMs?: number; loginTimeoutMs?: number};
 

@@ -14,6 +14,7 @@ assert.ok(['qoder','workbuddy','antigravity','zcode'].includes(provider),'Choose
 const model=process.argv[4]??(provider==='qoder'?'qoder/kmodel_latest':'workbuddy/glm-5.1');
 const authDir=process.argv[5]??join(homedir(),'Library/Application Support/desktop-browser-agent/cliproxy/auth');
 const claudeCLI=process.argv[6]??'claude';
+const concurrency=Number(process.env.PROBE_CONCURRENCY??'1');assert.ok(Number.isInteger(concurrency)&&concurrency>=1&&concurrency<=4,'Probe concurrency must be between 1 and 4');
 const target=process.env.PROBE_TARGET==='workbuddy'?'workbuddy':'claude';
 const autoMode=process.env.PROBE_AUTO==='1';
 assert.ok(!autoMode||target==='claude','Auto Mode probe requires Claude Code');
@@ -80,7 +81,8 @@ service=await createDesktopService({root,proxyPort:port,binary:resolve(`sidecars
  const reviewed=await waitCare('status');console.log(JSON.stringify({check:'real Pi repair tool round trip',status:reviewed.status,toolExecuted:reviewed.messages.some((m:{role:string;text:string})=>m.role==='tool'&&m.text.startsWith('inspect_gateway:'))}));assert.equal(reviewed.status,'completed');
  }
  nativeCalls.length=0;
- const marker=`probe-${randomUUID()}`;const probeFile=join(root,'workspace/probe.txt');await writeFile(probeFile,marker);
+ await Promise.all(Array.from({length:concurrency},async(_,clientIndex)=>{
+ const marker=`probe-${randomUUID()}`;const probeFile=join(root,`workspace/probe-${clientIndex}.txt`);await writeFile(probeFile,marker);
  const env={...(target==='workbuddy'?{ELECTRON_RUN_AS_NODE:'1',CODEBUDDY_FORCE_LITE_WB_BUNDLE:'1'}:{}),...(process.env.PROBE_ENTRYPOINT?{CLAUDE_CODE_ENTRYPOINT:process.env.PROBE_ENTRYPOINT}:{}),CLAUDE_CODE_MAX_OUTPUT_TOKENS:process.env.PROBE_FULL_TOOLS==='1'?'32000':'4096',PATH:process.env.PATH,HOME:process.env.HOME,LANG:process.env.LANG,TMPDIR:process.env.TMPDIR,CLAUDE_CONFIG_DIR:autoMode?undefined:join(root,'claude'),WORKBUDDY_CONFIG_DIR:join(root,'workbuddy'),CODEBUDDY_CONFIG_DIR:join(root,'workbuddy'),CODEBUDDY_API_KEY:'',CODEBUDDY_GIT_REPO_SCAN_DISABLED:'1',CODEBUDDY_DISABLE_AUTO_MEMORY:'1',ANTHROPIC_BASE_URL:`http://${host}`,ANTHROPIC_AUTH_TOKEN:apiKey,ANTHROPIC_API_KEY:'',CLAUDE_CODE_OAUTH_TOKEN:'',DISABLE_TELEMETRY:'1',DISABLE_AUTOUPDATER:'1',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1'};
  // Auto Mode uses the installed client's feature eligibility; all model routing
  // is overridden for this child only. No permission allowlist bypass is used.
@@ -97,11 +99,12 @@ service=await createDesktopService({root,proxyPort:port,binary:resolve(`sidecars
  const wroteMarker=await readFile(autoFile,'utf8').then(value=>value===marker,()=>false);
  const classifierRequests=nativeCalls.filter(c=>c.classifier).length;
  const passed=result.code===0&&wroteMarker&&classifierRequests>0&&nativeCalls.some(c=>c.toolResult);
- console.log(JSON.stringify({check:'native Claude Auto Mode + Bash execution + tool result',provider,model,exitCode:result.code,passed,wroteMarker,classifierRequests,toolResultForwarded:nativeCalls.some(c=>c.toolResult)}));
+ console.log(JSON.stringify({check:'native Claude Auto Mode + Bash execution + tool result',provider,model,clientIndex,concurrency,exitCode:result.code,passed,wroteMarker,classifierRequests,toolResultForwarded:nativeCalls.some(c=>c.toolResult)}));
  assert.ok(passed,'Auto Mode did not complete approval and execute the isolated test command.');
  }else{
  const passed=result.code===0&&result.stdout.includes(marker)&&nativeCalls.filter(c=>c.stream).length>=2&&nativeCalls.some(c=>c.toolResult)&&nativeCalls.every(c=>c.stream);
- console.log(JSON.stringify({check:`native ${target} streaming + Read tool + follow-up`,provider,model,exitCode:result.code,passed,returnedFileContents:result.stdout.includes(marker),streamRequests:nativeCalls.filter(c=>c.stream).length,toolResultForwarded:nativeCalls.some(c=>c.toolResult),malformedResponse:/malformed|no_events|StreamNoEvents/.test(result.stdout+result.stderr)}));
+ console.log(JSON.stringify({check:`native ${target} streaming + Read tool + follow-up`,provider,model,clientIndex,concurrency,exitCode:result.code,passed,returnedFileContents:result.stdout.includes(marker),streamRequests:nativeCalls.filter(c=>c.stream).length,toolResultForwarded:nativeCalls.some(c=>c.toolResult),malformedResponse:/malformed|no_events|StreamNoEvents/.test(result.stdout+result.stderr)}));
  assert.ok(passed,'Native target did not return the isolated file marker.');
  }
+ }));
 }finally{globalThis.fetch=nativeFetch;try{await service?.app.close();}finally{await rm(root,{recursive:true,force:true});}}

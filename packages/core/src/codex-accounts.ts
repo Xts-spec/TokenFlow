@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { parse, stringify } from 'smol-toml';
 import { z } from 'zod';
 import { agentProcesses, readConfig, safePath, officialCodexModel } from './agent-connections.js';
+import type {NativeUsageLogin} from './native-usage-logins.js';
 
 const conflict=(message:string)=>Object.assign(new Error(message),{statusCode:409});
 const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -54,7 +55,15 @@ export class CodexAccounts {
     try{await writeFile(temp,value,{mode:0o600,flag:'wx'});await rename(temp,path);}finally{await rm(temp,{force:true});}
   }
   private save(value:Journal){return this.write(this.backupPath,JSON.stringify(value));}
-
+  async usageLogin():Promise<NativeUsageLogin|null>{
+    const files=await this.files(),base=parse(files.config??'');
+    const profile=typeof base.profile==='string'?(base.profiles as Record<string,Record<string,unknown>>|undefined)?.[base.profile]:undefined;
+    if(base.profile&&!profile)return null;
+    const config={...base,...profile},auth=JSON.parse(files.auth??'{}'),accountId=identity(files.auth);
+    const mail=email(files.auth);
+    if((config.cli_auth_credentials_store??'file')!=='file'||(config.model_provider??'openai')!=='openai'||config.openai_base_url||config.model_providers&&typeof config.model_providers==='object'&&'openai' in config.model_providers||auth.auth_mode&&auth.auth_mode!=='chatgpt'||auth.OPENAI_API_KEY||!auth.tokens?.access_token||!accountId||!mail)return null;
+    return {provider:'codex',accountId,email:mail};
+  }
   async status(){
     const files=await this.files();let config:Record<string,unknown>;
     try{config=parse(files.config??'');}catch{throw conflict('Codex 配置格式无效，未修改。');}

@@ -3,12 +3,12 @@ import type {UsageRow} from './usage-ledger.js';
 import {dayOf} from './usage-ledger.js';
 
 export type UsageChannel='official'|'api'|'unknown';
-export type LocalUsageRow=UsageRow&{origin:'native';channel:UsageChannel;provider:string;nativeAccountId?:string;sampleId?:string;responseHash?:string};
+export type LocalUsageRow=UsageRow&{origin:'native';channel:UsageChannel;provider:string;nativeAccountId?:string;nativeOrganizationId?:string;nativeAccountLabel?:string;nativeEmailHash?:string;nativeAccountEvidence?:'otel'|'conflict'|'login-snapshot';nativeThreadId?:string;sampleId?:string;responseHash?:string};
 export type UsageCoverage={target:string;files:number;indexed:number;skipped:number;status:'ready'|'scanning'|'unavailable'};
 export type LocalUsageSnapshot={rows:LocalUsageRow[];recent?:LocalUsageRow[];coverage:UsageCoverage[];scanning:boolean;updatedAt?:string;warning?:string};
 export const nativeIdentity=(provider:string,id:string)=>createHash('sha256').update(`${provider}:${id}`).digest('hex');
 const number=(v:unknown)=>typeof v==='number'&&Number.isFinite(v)&&v>=0?Math.min(Number.MAX_SAFE_INTEGER,Math.round(v)):0;
-const gatewayModel=(v:unknown)=>typeof v==='string'&&/^(?:token-flow[/: ·]|(?:custom-local:)?(?:api-[a-f0-9]{24}\/|(?:codex|workbuddy|qoder|zcode)\/))/i.test(v);
+const gatewayModel=(v:unknown)=>typeof v==='string'&&/^(?:token-flow[/: ·]|(?:custom-local:)?(?:api-[a-f0-9]{24}\/|(?:codex|claude|workbuddy|qoder|zcode)\/))/i.test(v);
 type Sample={id:string;timestamp:string;model:string;provider:string;channel:UsageChannel;account?:string;input:number;read:number;write:number;output:number;reasoning:number;cacheKnown:boolean;responseId?:string};
 
 export function authChannel(meta:any):UsageChannel{
@@ -79,20 +79,28 @@ export class LocalUsageParser{
  }
  rows():LocalUsageRow[]{
   const samples=this.target==='codex'&&!this.hasCodexRecords?this.legacy:[...this.samples.values()];const rows=new Map<string,LocalUsageRow>();
-  for(const s of samples){const identity=s.account?nativeIdentity(s.provider,s.account):'';const day=dayOf(s.timestamp);const sampleId=nativeIdentity(this.target,`${s.responseId??s.id}${s.responseId?'':':'+s.timestamp}`);const key=sampleId;const row=rows.get(key)??{day,target:this.target,keyId:`native:${identity||this.target}`,keyName:s.channel==='official'?'官方登录':s.channel==='api'?'API Key':'本机记录 · 渠道未标注',sourceId:'',model:s.model,requests:0,failed:0,unmeasured:0,inputTokens:0,cachedTokens:0,cacheBaseTokens:0,outputTokens:0,durationMs:0,last:s.timestamp,origin:'native',channel:s.channel,provider:s.provider,sampleId,...(s.responseId?{responseHash:nativeIdentity('response',s.responseId)}:{}),...(identity?{nativeAccountId:identity}:{})};
+  for(const s of samples){const identity=s.account?nativeIdentity(s.provider,s.account):'';const day=dayOf(s.timestamp);const sampleId=nativeIdentity(this.target,`${s.responseId??s.id}${s.responseId?'':':'+s.timestamp}`);const key=sampleId;const row=rows.get(key)??{day,target:this.target,keyId:`native:${identity||this.target}`,keyName:s.channel==='official'?'官方登录':s.channel==='api'?'API Key':'本机记录 · 渠道未标注',sourceId:'',model:s.model,requests:0,failed:0,unmeasured:0,inputTokens:0,cachedTokens:0,cacheBaseTokens:0,outputTokens:0,durationMs:0,last:s.timestamp,origin:'native',channel:s.channel,provider:s.provider,sampleId,...(this.target==='codex'&&this.threadId?{nativeThreadId:nativeIdentity('thread',this.threadId)}:{}),...(s.responseId?{responseHash:nativeIdentity('response',s.responseId)}:{}),...(identity?{nativeAccountId:identity}:{})};
    row.requests++;row.inputTokens+=s.input;row.outputTokens+=s.output;row.cachedTokens+=s.read;if(s.cacheKnown)row.cacheBaseTokens+=s.input;row.cacheWriteTokens=(row.cacheWriteTokens??0)+s.write;row.reasoningTokens=(row.reasoningTokens??0)+s.reasoning;if(s.timestamp>row.last)row.last=s.timestamp;rows.set(key,row);
   }return [...rows.values()];
  }
 }
 /** Forks and exported copies may retain response IDs: count each billed response once across files. */
+function uniqueSamples(input:LocalUsageRow[]){
+ const blocked=new Set<string>();const samples=new Map<string,LocalUsageRow>(),identities=new Map<string,Map<string,LocalUsageRow>>();
+ for(const r of input){
+  const id=r.sampleId??JSON.stringify(r),old=samples.get(id);if(r.nativeAccountEvidence==='conflict')blocked.add(id);if(!old||r.inputTokens+r.outputTokens>=old.inputTokens+old.outputTokens)samples.set(id,r);
+  if(r.nativeAccountId){const known=identities.get(id)??new Map<string,LocalUsageRow>(),key=`${r.nativeAccountId}:${r.nativeEmailHash??''}:${r.nativeOrganizationId??''}`,previous=known.get(key);if(!previous||previous.nativeAccountEvidence==='login-snapshot'||r.nativeAccountEvidence!=='login-snapshot')known.set(key,r);identities.set(id,known);}
+ }
+ for(const[id,known]of identities){const row=samples.get(id)!;const verified=[...known.values()].filter(r=>r.nativeAccountEvidence!=='login-snapshot'),proofs=verified.length?verified:[...known.values()];if(proofs.length===1&&!blocked.has(id)){const account=proofs[0];samples.set(id,{...row,nativeAccountId:account.nativeAccountId,channel:account.channel,keyName:account.keyName,nativeAccountEvidence:account.nativeAccountEvidence,nativeEmailHash:account.nativeEmailHash,nativeOrganizationId:account.nativeOrganizationId});}else{const {nativeAccountId,nativeEmailHash,nativeOrganizationId,nativeAccountLabel,nativeAccountEvidence,...unconfirmed}=row;samples.set(id,{...unconfirmed,nativeAccountEvidence:'conflict',sourceId:'',keyId:`native:${row.target}`});}}
+ return samples;
+}
 export function mergeLocalUsageRows(input:LocalUsageRow[]):LocalUsageRow[]{
- const samples=new Map<string,LocalUsageRow>();for(const r of input){const id=r.sampleId??JSON.stringify(r);const old=samples.get(id);if(!old||r.inputTokens+r.outputTokens>=old.inputTokens+old.outputTokens)samples.set(id,r);}
- const groups=new Map<string,LocalUsageRow>();for(const r of samples.values()){const key=[r.day,r.target,r.model,r.provider,r.channel,r.nativeAccountId??''].join('|');const old=groups.get(key);if(!old){const {sampleId,responseHash,...copy}=r;groups.set(key,{...copy});continue;}for(const k of ['requests','failed','unmeasured','inputTokens','cachedTokens','cacheBaseTokens','outputTokens','durationMs','cacheWriteTokens','reasoningTokens'] as const)old[k]=(old[k]??0)+(r[k]??0);if(r.last>old.last)old.last=r.last;}return [...groups.values()];
+ const samples=uniqueSamples(input);
+ const groups=new Map<string,LocalUsageRow>();for(const r of samples.values()){const key=[r.day,r.target,r.model,r.provider,r.channel,r.nativeAccountId??'',r.nativeEmailHash??'',r.nativeOrganizationId??'',r.nativeAccountEvidence??''].join('|');const old=groups.get(key);if(!old){const {sampleId,responseHash,...copy}=r;groups.set(key,{...copy});continue;}for(const k of ['requests','failed','unmeasured','inputTokens','cachedTokens','cacheBaseTokens','outputTokens','durationMs','cacheWriteTokens','reasoningTokens'] as const)old[k]=(old[k]??0)+(r[k]??0);if(r.last>old.last)old.last=r.last;}return [...groups.values()];
 }
 
 /** Only distinct usage samples become activity records; daily aggregates are not requests. */
 export function recentLocalUsageRows(input:LocalUsageRow[],limit=1000):LocalUsageRow[]{
- const samples=new Map<string,LocalUsageRow>();
- for(const row of input){if(!row.sampleId)continue;const old=samples.get(row.sampleId);if(!old||row.inputTokens+row.outputTokens>=old.inputTokens+old.outputTokens)samples.set(row.sampleId,row);}
+ const samples=uniqueSamples(input.filter(row=>!!row.sampleId));
  return [...samples.values()].sort((a,b)=>b.last.localeCompare(a.last)).slice(0,limit);
 }

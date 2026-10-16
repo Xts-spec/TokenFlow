@@ -69,8 +69,10 @@ async function runSDKAttempt(input){
   });
  });
  const mcp=definitions.length?createSdkMcpServer({name:'token_flow',tools:definitions}):undefined;
- const env=Object.fromEntries(Object.keys(process.env).filter(k=>/^(CODEBUDDY|ANTHROPIC|OPENAI|WORKBUDDY)_/.test(k)).map(k=>[k,undefined]));
- Object.assign(env,{CODEBUDDY_AUTH_TOKEN:input.token,CODEBUDDY_INTERNET_ENVIRONMENT:input.region==='china'?'internal':'public',CODEBUDDY_CONFIG_DIR:input.configDir,...(process.versions.electron?{ELECTRON_RUN_AS_NODE:'1'}:{})});
+ const env=Object.fromEntries(Object.keys(process.env).filter(k=>/^(CODEBUDDY|ANTHROPIC|OPENAI|WORKBUDDY|ACC_PRODUCT)_/.test(k)).map(k=>[k,undefined]));
+ // CLI cloud discovery precedes the late --endpoint option. Set its early
+ // authoritative endpoint too, so an overseas token never discovers another region.
+ Object.assign(env,{ACC_PRODUCT_CONFIG_V3:JSON.stringify({endpoint:input.endpoint??(input.region==='china'?'https://copilot.tencent.com':'https://www.codebuddy.ai')}),CODEBUDDY_AUTH_TOKEN:input.token,CODEBUDDY_INTERNET_ENVIRONMENT:input.region==='china'?'internal':'public',CODEBUDDY_CONFIG_DIR:input.configDir,...(process.versions.electron?{ELECTRON_RUN_AS_NODE:'1'}:{})});
  let q,child;
  const abortController=new AbortController();const cancel=()=>{abortController.abort();child??=q?.transport?.process;q?.transport?.close();};input.signal.addEventListener('abort',cancel,{once:true});if(input.signal.aborted)cancel();
  // Model events, not CLI status/keepalive traffic, reset this watchdog.

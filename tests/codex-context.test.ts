@@ -1,3 +1,4 @@
+import {DatabaseSync} from 'node:sqlite';
 import {it,expect,afterEach} from 'vitest';
 import {mkdtemp,mkdir,writeFile,readFile,readdir,rm,realpath} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -134,3 +135,69 @@ it('normalizes Codex agent_message items and strips encrypted_content blocks for
  expect(parsed.prompt).not.toContain('gAAAAABsecret');
 });
 
+it('rebases paginated history cutoffs when compatibility rewrites shrink their source',async()=>{
+ const f=await fixture();const id='00000000-0000-0000-0000-000000000001';
+ const source=join(f.file,'..',`rollout-2026-10-12T00-00-00-${id}.jsonl`);
+ const rows=[{ordinal:0,type:'session_meta',payload:{id,model_provider:'token_flow'}},{ordinal:1,type:'response_item',payload:{type:'reasoning',id:'rs_chatcmpl_test',encrypted_content:'',summary:[{type:'summary_text',text:'中文 summary'}]}}];
+ const before=rows.map(r=>JSON.stringify(r)+'\n').join('');await writeFile(source,before);
+ const child={ordinal:0,type:'session_meta',payload:{id:'fork',history_base:{thread_id:id,end_ordinal_exclusive:2,end_byte_offset:Buffer.byteLength(before)}}};
+ await writeFile(f.file,JSON.stringify(child)+'\n');
+ await f.migration.prepareOfficial([],async()=>[]);
+ const current=await readFile(source,'utf8');expect(Buffer.byteLength(current)).toBeLessThan(Buffer.byteLength(before));
+ expect(JSON.parse(await readFile(f.file,'utf8')).payload.history_base.end_byte_offset).toBe(Buffer.byteLength(current));
+ expect(await f.migration.prepareOfficial([],async()=>[])).toEqual({migrated:0});
+});
+it('repairs an already stale paginated byte cutoff using explicit persisted ordinals',async()=>{
+ const f=await fixture();const id='00000000-0000-0000-0000-000000000002';const source=join(f.file,'..',`rollout-2026-10-12T00-00-00-${id}.jsonl`);
+ const text=[{ordinal:0,type:'session_meta',payload:{id}},{ordinal:1,type:'response_item',payload:{type:'message',role:'user',content:'retained'}},{ordinal:2,type:'response_item',payload:{type:'message',role:'user',content:'later turn'}}].map(r=>JSON.stringify(r)+'\n').join('');await writeFile(source,text);
+ const bound=Buffer.byteLength(text.split('\n').slice(0,2).join('\n')+'\n');
+ await writeFile(f.file,JSON.stringify({ordinal:0,type:'session_meta',payload:{id:'fork',history_base:{thread_id:id,end_ordinal_exclusive:2,end_byte_offset:999999}}})+'\n');
+ await f.migration.prepareOfficial([],async()=>[]);expect(JSON.parse(await readFile(f.file,'utf8')).payload.history_base.end_byte_offset).toBe(bound);
+});
+
+it('backs up and invalidates only derived history projections whose rollout bytes changed',async()=>{
+ const f=await fixture();const home=join(f.root,'codex');
+ const db=new DatabaseSync(join(home,'thread_history_1.sqlite'));
+ for(const table of ['thread_turns','thread_items','thread_history_projection_state','thread_realtime_items']){db.exec(`create table ${table}(thread_id text, rollout_byte_offset integer)`);db.prepare(`insert into ${table} values (?,?)`).run('changed',9999);db.prepare(`insert into ${table} values (?,?)`).run('unrelated',123);}
+ await writeFile(f.file,[{ordinal:0,type:'session_meta',payload:{id:'changed',model_provider:'token_flow'}},{ordinal:1,type:'response_item',payload:{type:'reasoning',id:'rs_chatcmpl_empty',encrypted_content:'',summary:[]}}].map(r=>JSON.stringify(r)+'\n').join(''));
+ try{
+ await f.migration.prepareOfficial([],async()=>[]);
+ const rows=(await readFile(f.file,'utf8')).trim().split('\n').map(l=>JSON.parse(l));expect(rows.map(r=>r.ordinal)).toEqual([0,1]);
+ for(const table of ['thread_turns','thread_items','thread_history_projection_state','thread_realtime_items'])expect(db.prepare(`select * from ${table}`).all()).toEqual([{thread_id:'unrelated',rollout_byte_offset:123}]);
+ const batch=(await readdir(join(f.root,'codex-context-backups')))[0]!;
+ const saved=new DatabaseSync(join(f.root,'codex-context-backups',batch,'thread_history_1.sqlite'),{readOnly:true});expect(saved.prepare('select count(*) as n from thread_items').get()?.n).toBe(2);saved.close();
+ }finally{db.close();}
+});
+
+it('removes foreign persisted-item IDs from gateway history while retaining call pairs, subagent content and native IDs',async()=>{
+ const f=await fixture();
+ const native={type:'function_call',id:'fc_native',call_id:'native',name:'read',arguments:'{}'};
+ const foreign=[
+  {type:'message',id:'msg_foreign',role:'assistant',content:[{type:'output_text',text:'Subagent Avicenna reported its result.'}]},
+  {type:'function_call',id:'fc_call_foreign',call_id:'agent_call',name:'spawn_agent',arguments:'{"task":"investigate"}'},
+  {type:'function_call_output',id:'fco_foreign',call_id:'agent_call',output:'Subagent result retained'},
+  {type:'custom_tool_call',id:'ct_call_foreign',status:'completed',call_id:'patch_call',name:'apply_patch',input:'*** Begin Patch\n*** End Patch',internal_chat_message_metadata_passthrough:{turn_id:'gateway-turn'}},
+  {type:'custom_tool_call_output',id:'ctco_foreign',call_id:'patch_call',output:'Success'},
+ ];
+ const rows=[{type:'session_meta',payload:{model_provider:'openai'}},{type:'response_item',payload:native},{type:'turn_context',payload:{model:'workbuddy/kimi-k3-1'}},...foreign.map(payload=>({type:'response_item',payload})),{type:'compacted',payload:{replacement_history:foreign,replacement_history_metadata:foreign.map(()=>({client_authored:false}))}},{type:'turn_context',payload:{model:'gpt-native'}},{type:'response_item',payload:native}];
+ await writeFile(f.file,rows.map((r,ordinal)=>JSON.stringify({...r,ordinal})).join('\n')+'\n');
+ await f.migration.prepareOfficial([],async()=>[]);
+ const saved=(await readFile(f.file,'utf8')).trim().split('\n').map(s=>JSON.parse(s));
+ const withoutIds=foreign.map(({id,...item})=>item);
+ expect(saved.slice(3,8).map(r=>r.payload)).toEqual(withoutIds);
+ expect(saved[8].payload.replacement_history).toEqual(withoutIds);
+ expect(saved[8].payload).not.toHaveProperty('replacement_history_metadata');
+ expect(saved[1].payload).toEqual(native);expect(saved.at(-1).payload).toEqual(native);
+ expect(saved.map(r=>r.ordinal)).toEqual(rows.map((_,i)=>i));
+ expect(await f.migration.prepareOfficial([],async()=>[])).toEqual({migrated:0});
+});
+
+it('repairs source item IDs even when optional checkpoint normalization is disabled',async()=>{
+ const f=await fixture();const reasoning={type:'reasoning',id:'rs_chatcmpl_keep',encrypted_content:'opaque',summary:[]};
+ const rows=[{type:'session_meta',payload:{model_provider:'token_flow'}},{type:'response_item',payload:reasoning},{type:'response_item',payload:{type:'custom_tool_call',id:'ct_call_source',call_id:'pair',name:'apply_patch',input:'patch'}},{type:'compacted',payload:{replacement_history:[{type:'compaction',encrypted_content:'unavailable-opaque-checkpoint'}]}}];
+ await writeFile(f.file,rows.map(r=>JSON.stringify(r)).join('\n'));
+ await f.migration.repairLineage(async()=>[]);
+ const saved=(await readFile(f.file,'utf8')).split('\n').map(r=>JSON.parse(r));
+ expect(saved[2].payload).not.toHaveProperty('id');expect(saved[2].payload.call_id).toBe('pair');
+ expect(saved[1]).toEqual(rows[1]);expect(saved[3]).toEqual(rows[3]);
+});

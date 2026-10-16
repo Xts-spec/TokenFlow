@@ -10,6 +10,19 @@ import {quotaProviders} from '../packages/core/src/quota/index.js';
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => {for (const fn of cleanup.splice(0).reverse()) await fn();});
 const binary = resolve('tests/fixtures/fake-cliproxy.mjs');
+it('preserves official image capabilities and keeps image-dropping adapters text-only',async()=>{
+ const {manager,root}=await setup();
+ await mkdir(join(root,'cliproxy'),{recursive:true});
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([
+  {name:'workbuddy.json',provider:'workbuddy',status:'active',auth_index:'wb',models:[{id:'deepseek-v4.1-flash',supportedInputModalities:['TEXT','IMAGE']},{id:'text-only',supportedInputModalities:['text']},{id:'unknown'}]},
+  {name:'qoder.json',provider:'qoder',status:'active',auth_index:'qd',models:[{id:'vision-base-model',supportedInputModalities:['text','image']}]},
+ ]));
+ await manager.start();const models=manager.snapshot().models;
+ expect(models.find(m=>m.id==='workbuddy/deepseek-v4.1-flash')?.capabilities?.images).toBe(true);
+ expect(models.find(m=>m.id==='workbuddy/text-only')?.capabilities?.images).toBe(false);
+ expect(models.find(m=>m.id==='workbuddy/unknown')?.capabilities).toBeUndefined();
+ expect(models.find(m=>m.id==='qoder/vision-base-model')?.capabilities?.images).toBe(false);
+});
 it('identifies WorkBuddy and Qoder accounts from safe stored metadata when sidecar labels are generic',async()=>{
  const {manager,root}=await setup();
  await mkdir(join(root,'cliproxy/auth'),{recursive:true});
@@ -108,7 +121,7 @@ it('connects Antigravity through the Google authorization endpoint and validates
 });
 it('connects Kimi through the device-code flow: shows the user code, has no callback, routes models to the login provider',async () => {
   const {manager,opened,fixture}=await setup();
-  expect(manager.snapshot().providers.map(p => p.id)).toEqual(['codex','claude','antigravity','kimi','xai','qoder','workbuddy','zcode','doubao','trae','cursor']);
+  expect(manager.snapshot().providers.map(p => p.id)).toEqual(['codex','claude','antigravity','kimi','xai','qoder','workbuddy','zcode','trae','cursor']);
   const snapshot=await manager.login('kimi');const login=snapshot.login!;
   expect(login.flow).toBe('device');expect(login.userCode).toBe('FIXT-CODE');expect(login.status).toBe('waiting_for_browser');
   expect(opened[0]).toBe('https://www.kimi.com/code/authorize_device?user_code=FIXT-CODE');
@@ -196,7 +209,7 @@ it('connects Qoder and WorkBuddy through device/web flow without required user c
   expect(() => validateAuthorizationURL('https://copilot.tencent.com.evil.test/login','workbuddy')).toThrow();
 });
 
-it('connects ZCode through polling and Doubao/Trae through their official callback flows',async () => {
+it('connects ZCode through polling and Trae through its separate callback flow',async () => {
   const {manager,opened,fixture}=await setup();
   // ZCode
   const zSnap=await manager.login('zcode');
@@ -208,19 +221,9 @@ it('connects ZCode through polling and Doubao/Trae through their official callba
   expect(manager.snapshot().models.some(m => m.provider==='zcode')).toBe(true);
   expect(() => validateAuthorizationURL('https://chat.z.ai.evil.test/api/oauth/authorize','zcode')).toThrow();
 
-  // Doubao
-  const dbSnap=await manager.login('doubao');
-  expect(opened[1]).toMatch(/^https:\/\/www.marscode.cn\/authorization/);
-  const dbState=new URL(dbSnap.login!.url!).searchParams.get('state');
-  expect((await fetch(`http://127.0.0.1:1455/doubao/callback?state=${dbState}&code=doubao-code`)).ok).toBe(true);
-  await expect.poll(() => manager.snapshot().loginState).toBe('completed');
-  expect(manager.snapshot().accounts.some(a => a.provider==='doubao')).toBe(true);
-  expect(manager.snapshot().models.some(m => m.provider==='doubao')).toBe(true);
-  expect(() => validateAuthorizationURL('https://www.marscode.cn.evil.test/authorization','doubao')).toThrow();
-
   // Trae (validates nested state in redirect_url)
   const traeSnap=await manager.login('trae');
-  expect(opened[2]).toMatch(/^https:\/\/www.trae.ai\/login\?redirect_url=/);
+  expect(opened[1]).toMatch(/^https:\/\/www.trae.ai\/login\?redirect_url=/);
   const traeState=new URL(new URL(traeSnap.login!.url!).searchParams.get('redirect_url')!).searchParams.get('login_trace_id');
   expect((await fetch(`http://127.0.0.1:1455/authorize?loginTraceID=${traeState}&userJwt=fixture-jwt&refreshToken=fixture-refresh&host=https%3A%2F%2Fapi-us-east.trae.ai`)).ok).toBe(true);
   await expect.poll(() => manager.snapshot().loginState).toBe('completed');

@@ -8,6 +8,7 @@ import type {Target} from './agent-connections.js';
 const exec=promisify(execFile);
 const recipes={
  codex:{bin:'codex',package:'@openai/codex',download:'https://developers.openai.com/codex/app/'},
+ 'claude-desktop':{bin:'Claude',package:'',download:'https://claude.ai/download'},
  claude:{bin:'claude',package:'@anthropic-ai/claude-code',download:'https://code.claude.com/docs/en/setup'},
  pi:{bin:'pi',package:'@earendil-works/pi-coding-agent',download:'https://pi.dev/docs/latest/quickstart'},
  deepseek:{bin:'dsh',package:'',download:'https://www.deepseek.com/zh/download/'},
@@ -18,7 +19,7 @@ export type AgentInstallation={installed:boolean;channel:'npm'|'application'|'ot
 const failure=(message:string)=>Object.assign(new Error(message),{statusCode:409});
 const dirs=()=>[...(process.env.PATH??'').split(delimiter),join(homedir(),'.npm-global','bin'),join(homedir(),'.local','bin'),...(process.platform==='win32'?[join(homedir(),'.npm-global'),...(process.env.APPDATA?[join(process.env.APPDATA,'npm')]:[])]:['/opt/homebrew/bin','/usr/local/bin'])].filter(isAbsolute);
 async function executable(name:string,unresolved=false){
- for(const dir of dirs())for(const suffix of process.platform==='win32'?['.cmd','.exe','']:['']){
+ for(const dir of dirs())for(const suffix of process.platform==='win32'?['.exe','.cmd','']:['']){
   const path=join(dir,name+suffix);try{await access(path,constants.X_OK);return unresolved?path:await realpath(path);}catch{/* Next installation location. */}
  }
 }
@@ -30,13 +31,14 @@ async function packageOf(path:string,name:string){
   if(data.name===name&&typeof data.version==='string')return data.version;
  }catch{/* Executables need not be npm packages. */}
 }
-const desktopNames:Partial<Record<Target,string[]>>={codex:['Codex','ChatGPT'],qoder:['Qoder'],workbuddy:['WorkBuddy'],deepseek:['DeepSeek Harness']};
-export function desktopCandidates(target:Target,platform=process.platform,home=homedir(),env:NodeJS.ProcessEnv=process.env){
+const desktopNames:Partial<Record<Target|'claude-desktop'|'workbuddy-ai'|'qoder-ide',string[]>>={'claude-desktop':['Claude'],codex:['Codex','ChatGPT'],qoder:['Qoder'],'qoder-ide':['Qoder IDE','Qoder'],workbuddy:['WorkBuddy'],'workbuddy-ai':['WorkBuddy AI','WorkBuddyAI'],deepseek:['DeepSeek Harness']};
+export function desktopCandidates(target:Target|'claude-desktop'|'workbuddy-ai'|'qoder-ide',platform=process.platform,home=homedir(),env:NodeJS.ProcessEnv=process.env){
  if(platform==='darwin')return (desktopNames[target]??[]).flatMap(name=>['/Applications',join(home,'Applications')].map(base=>join(base,`${name}.app`)));
- if(platform==='win32')return (desktopNames[target]??[]).flatMap(name=>[env.LOCALAPPDATA&&win32.join(env.LOCALAPPDATA,'Programs'),env.LOCALAPPDATA,env.ProgramFiles,env['ProgramFiles(x86)']].filter((base):base is string=>!!base&&win32.isAbsolute(base)).map(base=>win32.join(base,name,`${name}.exe`)));
+ if(platform==='win32'&&target==='claude-desktop'&&env.LOCALAPPDATA)return [win32.join(env.LOCALAPPDATA,'AnthropicClaude','Claude.exe'),win32.join(env.LOCALAPPDATA,'Programs','Claude','Claude.exe'),win32.join(env.LOCALAPPDATA,'Claude','Claude.exe')];
+ if(platform==='win32')return (desktopNames[target]??[]).flatMap(name=>[env.LOCALAPPDATA&&win32.join(env.LOCALAPPDATA,'Programs'),env.LOCALAPPDATA,env.ProgramFiles,env['ProgramFiles(x86)']].filter((base):base is string=>!!base&&win32.isAbsolute(base)).map(base=>win32.join(base,name,`${target==='workbuddy-ai'?'WorkBuddyAI':target==='qoder-ide'?'Qoder':name}.exe`)));
  return [];
 }
-export function agentCompatibility(target:Target,platform=process.platform,arch=process.arch){
+export function agentCompatibility(target:Target|'claude-desktop',platform=process.platform,arch=process.arch){
  return target==='deepseek'&&platform==='darwin'&&arch!=='arm64'?{supported:false,reason:'DeepSeek 官方暂未提供 Intel Mac 桌面安装包。'}:{supported:true};
 }
 const versionOf=(text:string)=>text.match(/\b(\d+\.\d+\.\d+(?:-[\w.-]+)?)\b/)?.[1];
@@ -67,7 +69,7 @@ const cachedStoreApp=(target:Target)=>{
  const cached=storeCache.get(target);if(cached&&cached.expires>Date.now())return cached.value;
  const value=windowsStoreApp(target);storeCache.set(target,{expires:Date.now()+15000,value});return value;
 };
-async function desktopInstallation(target:Target):Promise<AgentInstallation|undefined>{
+async function desktopInstallation(target:Target|'claude-desktop'):Promise<AgentInstallation|undefined>{
  for(const path of desktopCandidates(target))try{
   let version:string|undefined;
   if(process.platform==='darwin'){
@@ -82,18 +84,23 @@ async function desktopInstallation(target:Target):Promise<AgentInstallation|unde
   }
   return {installed:true,channel:'application',path,version,download:recipes[target].download,automatic:false,...agentCompatibility(target)};
  }catch{/* Next installation location. */}
- if(process.platform==='win32'&&storePackages[target]){
-  const store=await cachedStoreApp(target);
+ if(process.platform==='win32'&&storePackages[target as Target]){
+  const store=await cachedStoreApp(target as Target);
   if(store?.location)return {installed:true,channel:'application',path:store.location,version:store.version,download:recipes[target].download,automatic:false,...agentCompatibility(target)};
  }
 }
-export async function detectAgent(target:Target):Promise<AgentInstallation>{
+export async function detectAgent(target:Target|'claude-desktop'):Promise<AgentInstallation>{
  const recipe=recipes[target];
  const desktop=await desktopInstallation(target);if(desktop&&(target!=='codex'))return desktop;
  // DeepSeek is the official desktop app; Pi is the official coding-agent package.
- if(target==='deepseek')return {installed:false,channel:'missing',download:recipe.download,automatic:false,...agentCompatibility(target)};
- const path=await executable(recipe.bin);
+ if(target==='deepseek'||target==='claude-desktop')return {installed:false,channel:'missing',download:recipe.download,automatic:false,...agentCompatibility(target)};
+ let path=await executable(recipe.bin);
+ if(target==='claude'&&path&&/\.cmd$/i.test(path)){
+  for(const name of ['bin/claude.exe','cli.js']){const native=join(dirname(path),'node_modules','@anthropic-ai','claude-code',name);try{await access(native,constants.F_OK);path=native;break;}catch{}}
+ }
  if(path){const npmVersion=recipe.package?await packageOf(path,recipe.package):undefined;let version=npmVersion;
+  // Recent Claude npm packages are launchers; metadata alone does not prove the native payload works.
+  if(target==='claude')try{version=versionOf((await exec(path.endsWith('.js')?process.execPath:path,path.endsWith('.js')?[path,'--version']:['--version'],{env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},timeout:10000,maxBuffer:4096,windowsHide:true})).stdout);if(!version)throw Error('missing version');}catch{return {installed:false,channel:'missing',path,download:recipe.download,automatic:!!npmVersion&&process.platform!=='win32',reason:'Claude Code 程序不完整，请重新安装修复。'};}
   if(!version&&['pi','claude','codex'].includes(target)&&process.platform!=='win32')try{version=versionOf((await exec(path,['--version'],{timeout:3000,maxBuffer:4096})).stdout);}catch{/* Unknown version never implies an update. */}
   return {installed:true,channel:npmVersion?'npm':'other',path,version,download:recipe.download,automatic:!!npmVersion&&path.includes('/lib/node_modules/')&&process.platform!=='win32'};
  }
@@ -122,7 +129,7 @@ export class AgentInstallationManager {
    // Running npm through Electron makes npm derive its default global prefix from the app bundle.
    // PREFIX is only a default: the user's .npmrc prefix still wins, and updates pass their own --prefix.
    if(action==='install'){const shim=await executable('npm',true);if(shim)env.PREFIX=dirname(dirname(shim));}
-   try{await exec(process.execPath,[npm,'install','--global',...(action==='update'&&installed.path?['--prefix',installed.path.split('/lib/node_modules/')[0]]:[]),recipe.package,'--registry=https://registry.npmjs.org/','--ignore-scripts','--no-audit','--no-fund'],{env:{...env,ELECTRON_RUN_AS_NODE:'1'},timeout:180000,maxBuffer:1024*1024,windowsHide:true});}
+   try{await exec(process.execPath,[npm,'install','--global',...(installed.path?.includes('/lib/node_modules/')?['--prefix',installed.path.split('/lib/node_modules/')[0]]:[]),recipe.package,'--registry=https://registry.npmjs.org/',...(target==='claude'?['--ignore-scripts=false','--allow-scripts=@anthropic-ai/claude-code']:['--ignore-scripts']),'--no-audit','--no-fund'],{env:{...env,ELECTRON_RUN_AS_NODE:'1'},timeout:180000,maxBuffer:1024*1024,windowsHide:true});}
    catch{throw failure('安装或更新未完成，请检查网络和安装目录权限后重试。已有配置已保留。');}
    const next=await detectAgent(target);if(!next.installed)throw failure('安装命令已结束，但还未检测到程序，请检查 Node.js 安装目录。');
    return {message:`${action==='install'?'安装':'更新'}完成${next.version?` · ${next.version}`:''}，请重新打开 Agent。`,installation:next};

@@ -15,7 +15,8 @@ export function createSecrets(root:string, storage:Storage, platform=process.pla
   const warnings=new Map<string,string>();
   const label=(name:string)=>name.startsWith('gateway-key-')?'导出 Key':name.startsWith('source-')?'API 来源':({cliproxy:'内部网关',openai:'OpenAI',custom:'自定义接口','cursor-account':'Cursor 账号'}[name]??name);
   const path=(name:string)=>{
-    if(!['cliproxy','openai','custom','cursor-account'].includes(name)&&!/^source-[a-f0-9]{24}-[a-f0-9]{16}$/.test(name)&&!/^gateway-key-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(name))throw new Error('未知密钥类型');
+    // Accept new credential types without a registry; names must remain portable filenames.
+    if(!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,199}$/.test(name)||/^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$/i.test(name))throw new Error('密钥存储名称无效');
     return join(root,'secrets',`${name}.bin`);
   };
   const canEncrypt=()=>storage.isEncryptionAvailable()&&!(platform==='linux'&&storage.getSelectedStorageBackend?.()==='basic_text');
@@ -29,12 +30,14 @@ export function createSecrets(root:string, storage:Storage, platform=process.pla
       try {data=await readFile(path(name));}
       catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return '';throw error;}
       if(!canEncrypt()) {
+        if(name.startsWith('native-login-'))throw new Error('系统安全存储暂不可用，原登录备份已保留。');
         warnings.set(name,`${label(name)}密钥暂时无法读取，请解锁系统钥匙串后重启应用。原加密文件已保留。`);
         return '';
       }
       try{return storage.decryptString(data);}
       catch {
         unreadable.add(name);
+        if(name.startsWith('native-login-'))throw new Error('无法解密原登录备份，未覆盖现有文件。');
         warnings.set(name,`${label(name)}密钥无法解密，原加密文件已保留。${name==='cliproxy'?'已重新生成内部网关密钥，旧的内部直连客户端需更新密钥；账号登录和受限客户端 Key 不受影响。':'请解锁系统钥匙串后重启，或在模型来源重新填写 API Key。'}`);
         return '';
       }

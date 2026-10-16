@@ -1,7 +1,7 @@
 import { crc32, inflateSync } from 'node:zlib';
 import { afterEach, expect, it } from 'vitest';
 import { createServer } from 'node:http';
-import { mkdtemp, readFile, writeFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, stat, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createDesktopService } from '../packages/core/src/service.js';
@@ -9,14 +9,35 @@ import { ResponsesProvider, providerSchema } from '../packages/core/src/provider
 import { CLIProxyManager } from '../packages/core/src/cliproxy.js';
 const cleanup:Array<()=>Promise<unknown>>=[];
 afterEach(async()=>{for(const fn of cleanup.splice(0).reverse())await fn();});
-async function root(){const p=await mkdtemp(join(tmpdir(),'browser-api-'));cleanup.push(()=>rm(p,{recursive:true,force:true}));return p;}
+async function root(){const p=await mkdtemp(join(tmpdir(),'tokenflow-api-'));cleanup.push(()=>rm(p,{recursive:true,force:true}));return p;}
+it('starts the gateway without the removed automation APIs or runtime directories',async()=>{
+ const dir=await root();
+ const service=await createDesktopService({root:dir,binary:'/missing',token:'local-token',localKey:'local-proxy-key',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:join(dir,'codex/config.toml'),claude:join(dir,'claude/settings.json'),qoder:join(dir,'qoder/settings.json'),workbuddy:join(dir,'workbuddy/models.json'),pi:join(dir,'pi/models.json'),deepseek:join(dir,'deepseek/cordis.patch.yml')}});
+ cleanup.push(()=>service.app.close());
+ const headers={host:'127.0.0.1:9527',authorization:'Bearer local-token'};
+ expect((await service.app.inject({url:'/health',headers})).json()).toEqual({status:'ok',service:'tokenflow'});
+ for(const [method,url] of [
+  ['GET','/api/capabilities'],['GET','/api/scenarios'],['POST','/api/scenarios/browser-task/reset'],
+  ['GET','/api/browser'],['POST','/api/browser/open'],['POST','/api/browser/source'],
+  ['POST','/api/browser/extension/pair'],['POST','/api/browser/extension/disconnect'],
+  ['GET','/api/desktop'],['POST','/api/desktop'],['POST','/api/desktop/permissions'],
+  ['GET','/api/control'],['POST','/api/control/pause'],['POST','/api/control/resume'],
+  ['POST','/api/runs'],['GET','/api/runs/active'],['GET','/api/runs/old'],['POST','/api/runs/old/stop'],
+  ['GET','/api/runs/old/replay'],['GET','/api/runs/old/events'],['GET','/api/runs/old/artifacts/screenshots/old.png'],['GET','/api/history'],
+ ] as const){
+  const response=await service.app.inject({method,url,headers});expect(response.statusCode,`${method} ${url}`).toBe(404);
+ }
+ expect((await service.app.inject({url:'/api/a2a',headers})).statusCode).toBe(409); // Agent discovery requires a running gateway.
+ for(const url of ['/api/settings','/api/local-agent','/api/gateway-keys'])expect((await service.app.inject({url,headers})).statusCode,url).toBe(200);
+ const entries=await readdir(dir);for(const name of ['browser','runs','workspaces'])expect(entries).not.toContain(name);
+});
 it('authenticates local API, blocks hostile origins/hosts and forwards SSE without exposing provider keys',async()=>{
  const upstream=createServer((req,res)=>{
    if(req.headers.authorization!=='Bearer provider-secret'){res.writeHead(401);res.end();return;}
    if(req.url==='/v1/models'){res.setHeader('content-type','application/json');res.end(JSON.stringify({data:[{id:'fixture-model',object:'model'}]}));return;}
    res.setHeader('content-type','text/event-stream');res.end('data: {"type":"response.completed"}\n\ndata: [DONE]\n\n');
  });await new Promise<void>(r=>upstream.listen(0,'127.0.0.1',r));cleanup.push(()=>new Promise<void>(r=>upstream.close(()=>r())));
- const dir=await root();const service=await createDesktopService({root:dir,binary:'/missing',token:'local-token',localKey:'local-proxy-key',headless:true,secrets:{get:async()=> 'provider-secret',set:async()=>{}}});cleanup.push(()=>service.app.close());
+ const dir=await root();const service=await createDesktopService({root:dir,binary:'/missing',token:'local-token',localKey:'local-proxy-key',secrets:{get:async()=> 'provider-secret',set:async()=>{}}});cleanup.push(()=>service.app.close());
  const headers={host:'127.0.0.1:9527',authorization:'Bearer local-token'};
  expect((await service.app.inject({url:'/api/settings',headers:{host:headers.host}})).statusCode).toBe(401);
  expect((await service.app.inject({url:'/api/settings',headers:{...headers,origin:'https://evil.test'}})).statusCode).toBe(403);
@@ -28,12 +49,6 @@ it('authenticates local API, blocks hostile origins/hosts and forwards SSE witho
  expect((await service.app.inject({url:'/v1/models',headers})).json().data[0].id).toBe('fixture-model');
  const streamed=await service.app.inject({method:'POST',url:'/v1/responses',headers,payload:{model:'fixture-model',input:'Hi',stream:true}});expect(streamed.headers['content-type']).toContain('event-stream');expect(streamed.body).toContain('[DONE]');
  expect((await readFile(join(dir,'settings.json'),'utf8'))).not.toContain('secret');
- // 桌面操作默认关闭、仅内存态；开启需要显式请求，且不会写入 settings.json。
- expect((await service.app.inject({url:'/api/desktop',headers})).json()).toMatchObject({enabled:false,supported:['darwin','win32'].includes(process.platform)});
- const toggled=await service.app.inject({method:'POST',url:'/api/desktop',headers,payload:{enabled:true}});
- if(['darwin','win32'].includes(process.platform)){expect(toggled.json().enabled).toBe(true);expect((await service.app.inject({url:'/api/desktop',headers})).json().enabled).toBe(true);}else{expect(toggled.statusCode).toBe(400);}
- expect((await service.app.inject({method:'POST',url:'/api/desktop',headers,payload:{enabled:'yes'}})).statusCode).toBe(400);
- expect((await readFile(join(dir,'settings.json'),'utf8'))).not.toContain('desktop');
  expect(()=>providerSchema.parse({...config,baseURL:'http://public.example/v1'})).toThrow();expect(()=>providerSchema.parse({...config,baseURL:'https://user:pass@example.org/v1'})).toThrow();
 });
 it('probes actual Responses/tool continuation capabilities instead of assuming model compatibility',async()=>{
@@ -78,7 +93,7 @@ it('exposes a copyable Local Agent API key without putting it in the status snap
  const dir=await root();const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
  const binary=resolve('sidecars',`${process.platform}-${process.arch}`,process.platform==='win32'?'cliproxyapi.exe':'cliproxyapi');
  let stored='';
- const service=await createDesktopService({root:dir,binary,token:'local-token',localKey:'test-random-local-key-42',proxyPort:port,headless:true,secrets:{get:async()=>stored,set:async(_name,value)=>{stored=value;}}});cleanup.push(()=>service.app.close());
+ const service=await createDesktopService({root:dir,binary,token:'local-token',localKey:'test-random-local-key-42',proxyPort:port,secrets:{get:async()=>stored,set:async(_name,value)=>{stored=value;}}});cleanup.push(()=>service.app.close());
  const headers={host:'127.0.0.1:9527',authorization:'Bearer local-token'};
  expect((await service.app.inject({url:'/api/local-agent/gateway',headers:{host:headers.host}})).statusCode).toBe(401);
  const gateway=(await service.app.inject({url:'/api/local-agent/gateway',headers})).json();
@@ -108,7 +123,7 @@ it('loads settings.json with engine property and recovers gracefully from corrup
  const dir=await root();
  const payload={kind:'custom',engine:'pi',baseURL:'http://127.0.0.1:8317/v1',model:'gemini-3.8-flash-high',historyMode:'stateless',reasoning:'off'};
  await writeFile(join(dir,'settings.json'),JSON.stringify(payload,null,2));
- const service=await createDesktopService({root:dir,binary:'/missing',token:'local-token',localKey:'local-proxy-key',headless:true,secrets:{get:async()=>'',set:async()=>{}}});cleanup.push(()=>service.app.close());
+ const service=await createDesktopService({root:dir,binary:'/missing',token:'local-token',localKey:'local-proxy-key',secrets:{get:async()=>'',set:async()=>{}}});cleanup.push(()=>service.app.close());
  const headers={host:'127.0.0.1:9527',authorization:'Bearer local-token'};
  const res=await service.app.inject({url:'/api/settings',headers});
  expect(res.statusCode).toBe(200);
@@ -116,7 +131,7 @@ it('loads settings.json with engine property and recovers gracefully from corrup
 
  const corruptDir=await root();
  await writeFile(join(corruptDir,'settings.json'),'{ invalid json syntax');
- const fallbackService=await createDesktopService({root:corruptDir,binary:'/missing',token:'local-token',localKey:'local-proxy-key',headless:true,secrets:{get:async()=>'',set:async()=>{}}});cleanup.push(()=>fallbackService.app.close());
+ const fallbackService=await createDesktopService({root:corruptDir,binary:'/missing',token:'local-token',localKey:'local-proxy-key',secrets:{get:async()=>'',set:async()=>{}}});cleanup.push(()=>fallbackService.app.close());
  const fallbackRes=await fallbackService.app.inject({url:'/api/settings',headers});
  expect(fallbackRes.statusCode).toBe(200);
  expect(fallbackRes.json().provider.kind).toBe('cliproxy');

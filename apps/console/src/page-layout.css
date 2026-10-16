@@ -1,0 +1,9 @@
+/* Shared shell: every sidebar page starts on the same content and title guides. */
+.tfMain{--page-width:880px;--page-inset:16px;--page-top:12px;--page-gap:20px}
+.tfMain>.tfPage{box-sizing:border-box;width:100%;max-width:var(--page-width);margin:0 auto;padding:var(--page-top) var(--page-inset) 48px;gap:var(--page-gap)}
+.tfMain .tfPageHead{display:flex;align-items:center;justify-content:space-between;min-height:36px;gap:16px;margin:0;padding:0;border:0}
+.tfMain .tfPageHead :is(h1,h2){margin:0;font-size:20px;line-height:28px;font-weight:550;letter-spacing:-.4px}
+.tfMain .tfUsageOverview{padding-top:0}
+.tfMain .tfUsageOverview>.tfPageHead{margin-bottom:var(--page-gap)}
+.tfMain>.tfRequestStatus{box-sizing:border-box;max-width:var(--page-width);padding-inline:var(--page-inset)}
+@media(max-width:600px){.tfMain{--page-inset:16px;--page-gap:16px}.tfMain .tfPageHead{flex-wrap:wrap}}

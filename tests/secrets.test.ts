@@ -3,10 +3,22 @@ import { mkdtemp, mkdir, readFile, writeFile, readdir, rm } from 'node:fs/promis
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createSecrets } from '../apps/desktop/src/secrets.js';
+import { CredentialHistory } from '../packages/core/src/credential-history.js';
 const roots:string[]=[];
 afterEach(async()=>{await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})));});
 async function setup(){const root=await mkdtemp(join(tmpdir(),'secrets-test-'));roots.push(root);await mkdir(join(root,'secrets'));return root;}
 const storage={isEncryptionAvailable:()=>true,encryptString:(v:string)=>Buffer.from(`encrypted:${v}`),decryptString:(b:Buffer)=>{if(!b.toString().startsWith('encrypted:'))throw new Error('Error while decrypting the ciphertext provided to safeStorage.decryptString.');return b.toString().slice(10);}};
+it('persists and forgets authorization history through the desktop encrypted store',async()=>{
+ const root=await setup(),secrets=createSecrets(root,storage),history=new CredentialHistory(root,secrets);
+ const grant={email:'fixture@example.invalid',access_token:'fixture-private-token'};
+ await history.remember('qoder',[grant]);
+ const files=await readdir(join(root,'secrets'));
+ const grantFile=files.find(name=>/^grant-[a-f0-9]{64}\.bin$/.test(name))!;
+ expect(grantFile).toBeTruthy();expect(files.some(name=>/^auth-history-index-qoder-[a-f0-9]{64}\.bin$/.test(name))).toBe(true);
+ expect(JSON.parse(await secrets.get(grantFile.slice(0,-4))).credential).toEqual(grant);
+ await history.forget('qoder',[grant]);expect(await secrets.get(grantFile.slice(0,-4))).toBe('');
+ for(const name of ['grant-../outside',`auth-history-index-../qoder-${'a'.repeat(64)}`])await expect(secrets.get(name)).rejects.toThrow('密钥存储名称无效');
+});
 it('preserves unreadable ciphertext and replaces it only after backing it up',async()=>{
  const root=await setup();const file=join(root,'secrets','cliproxy.bin');await writeFile(file,'corrupt');
  const secrets=createSecrets(root,storage);expect(await secrets.get('cliproxy')).toBe('');expect(await readFile(file,'utf8')).toBe('corrupt');
@@ -34,4 +46,38 @@ it('backs up undecryptable API keys before explicit replacement and retains ciph
 });
 it('stores independent Cursor SDK credentials in the encrypted credential store',async()=>{
  const root=await setup();const secrets=createSecrets(root,storage);const credential=JSON.stringify({apiKey:'fixture-cursor-key',disabled:false});await secrets.set('cursor-account',credential);expect(await secrets.get('cursor-account')).toBe(credential);expect((await readdir(join(root,'secrets')))).toContain('cursor-account.bin');await secrets.set('cursor-account','');expect(await secrets.get('cursor-account')).toBe('');
+});
+it('encrypts native login backups and fails closed on unreadable or locked originals',async()=>{
+ const root=await setup();const secrets=createSecrets(root,storage);await secrets.set('native-login-workbuddy','original-session');expect(await secrets.get('native-login-workbuddy')).toBe('original-session');
+ const path=join(root,'secrets','native-login-qoder.bin');await writeFile(path,'corrupt-original');await expect(secrets.get('native-login-qoder')).rejects.toThrow('无法解密');expect(await readFile(path,'utf8')).toBe('corrupt-original');
+ const locked=createSecrets(root,{...storage,isEncryptionAvailable:()=>false});await expect(locked.get('native-login-workbuddy')).rejects.toThrow('安全存储');await expect(locked.set('native-login-workbuddy','replacement')).rejects.toThrow('不可用');expect(await secrets.get('native-login-workbuddy')).toBe('original-session');
+});
+
+it.each(['darwin','win32','linux'] as const)('keeps every desktop product backup independent on %s',async platform=>{
+ const root=await setup(),secrets=createSecrets(root,storage,platform);
+ const keys=['native-login-workbuddy','native-login-workbuddy-ai','native-login-qoder','native-login-qoder-ide','native-login-claude-desktop'];
+ for(const key of keys){expect(await secrets.get(key)).toBe('');await secrets.set(key,`original:${key}`);}
+ for(const key of keys){expect(await secrets.get(key)).toBe(`original:${key}`);expect(await readFile(join(root,'secrets',`${key}.bin`),'utf8')).not.toBe(`original:${key}`);}
+ for(const key of keys.slice(1,4)){
+  const locked=createSecrets(root,{...storage,isEncryptionAvailable:()=>false},platform);
+  await expect(locked.get(key)).rejects.toThrow('安全存储');
+  await expect(locked.set(key,'replacement')).rejects.toThrow('不可用');
+  expect(await secrets.get(key)).toBe(`original:${key}`);
+ }
+ await secrets.remove('native-login-workbuddy-ai');expect(await secrets.get('native-login-workbuddy-ai')).toBe('');expect(await secrets.get('native-login-workbuddy')).toBe('original:native-login-workbuddy');
+ await secrets.set('native-login-new-provider','new-provider-backup');expect(await secrets.get('native-login-new-provider')).toBe('new-provider-backup');
+ await expect(secrets.get('../secrets/native-login-workbuddy')).rejects.toThrow('密钥存储名称无效');
+});
+
+it('accepts new credential types while rejecting unsafe portable filenames',async()=>{
+ const root=await setup(),secrets=createSecrets(root,storage);
+ for(const name of ['future-provider-token','grant-short','auth-history-index-new-provider-123']){
+  await secrets.set(name,'fixture');expect(await secrets.get(name)).toBe('fixture');
+  await secrets.remove(name);expect(await secrets.get(name)).toBe('');
+ }
+ for(const name of ['', '..', '../outside', 'a/b', 'a\\b', '/absolute', 'C:outside', 'name\0', 'CON', 'lpt1', 'a'.repeat(201)]){
+  await expect(secrets.get(name)).rejects.toThrow('密钥存储名称无效');
+  await expect(secrets.set(name,'fixture')).rejects.toThrow('密钥存储名称无效');
+  await expect(secrets.remove(name)).rejects.toThrow('密钥存储名称无效');
+ }
 });

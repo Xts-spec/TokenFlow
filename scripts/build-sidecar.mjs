@@ -18,7 +18,7 @@ mkdirSync(target, {recursive: true});
 const env = {...process.env, GOOS: goos, GOARCH: goarch};
 if (platform !== process.platform || arch !== process.arch) env.CGO_ENABLED = '0';
 const patch=sidecarOverlay();const overlay=patch.overlay;
-const result = spawnSync('go', ['build', '-overlay',overlay, '-trimpath', '-o', resolve(target, platform === 'win32' ? 'cliproxyapi.exe' : 'cliproxyapi'), './cmd/server'], {
+const result = spawnSync('go', ['build', '-overlay',overlay, '-trimpath', '-ldflags', '-s -w', '-o', resolve(target, platform === 'win32' ? 'cliproxyapi.exe' : 'cliproxyapi'), './cmd/server'], {
   cwd: 'upstream/CLIProxyAPI', stdio: 'inherit', env,
 });
 patch.close();

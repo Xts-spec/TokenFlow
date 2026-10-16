@@ -20,6 +20,16 @@ const replacements={
  [resolve('upstream/CLIProxyAPI/internal/runtime/executor/qoder_executor.go')]:resolve('patches/cliproxy/qoder_executor.go'),
  [resolve('upstream/CLIProxyAPI/internal/runtime/executor/helps/qoder_protocol.go')]:resolve('patches/cliproxy/qoder_protocol.go'),
 };
+// Keep bounded pre-header recovery scoped to Antigravity inference only.
+for(const [file,count] of [['antigravity_executor_execute.go',2],['antigravity_executor_stream.go',1]]){
+ const agSource=resolve('upstream/CLIProxyAPI/internal/runtime/executor',file);
+ const agOriginal=readFileSync(agSource,'utf8');
+ if(agOriginal.split('httpClient.Do(httpReq)').length!==count+1)throw new Error('Antigravity request boundary changed: '+file);
+ const agPatched=join(patchDir,file);
+ writeFileSync(agPatched,agOriginal.replaceAll('httpClient.Do(httpReq)','antigravityDoWithReconnect(ctx, httpClient, httpReq)'));
+ replacements[agSource]=agPatched;
+}
+replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/token_flow_antigravity_reconnect.go')]=resolve('patches/cliproxy/antigravity_reconnect.go');
 // Keep the upstream response codec, including its incomplete/usage mapping.
 providerLoginOverlay(replacements,patchDir);
 workbuddyRegionOverlay(replacements,patchDir);
@@ -46,6 +56,7 @@ if(test){
  replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/token_flow_trae_web_search_test.go')]=resolve('tests/sidecar/trae_web_search_test.go');
  replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/token_flow_trae_live_test.go')]=resolve('tests/sidecar/trae_native_live_test.go');
  replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/token_flow_trae_native_test.go')]=resolve('tests/sidecar/trae_native_test.go');
+ replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/token_flow_antigravity_reconnect_test.go')]=resolve('tests/sidecar/antigravity_reconnect_test.go');
  // Official Qoder credentials require a real identity; keep the upstream success fixture synthetic.
  const qoderTestSource=resolve('upstream/CLIProxyAPI/internal/runtime/executor/qoder_executor_test.go');
  const qoderTestPatched=join(patchDir,'qoder_executor_test.go');

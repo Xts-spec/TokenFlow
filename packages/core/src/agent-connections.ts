@@ -1,7 +1,8 @@
+import {macAppIdentity} from './agent-lifecycle.js';
 import {codexDefaultModel} from './codex-runtime.js';
 import { a2aCapabilities } from '@cua-sample/contracts/a2a';
 import { readFile, writeFile, mkdir, rename, lstat, unlink, open, rm, mkdtemp, copyFile, chmod, realpath } from 'node:fs/promises';
-import { dirname, join, resolve, parse as parsePath } from 'node:path';
+import { basename, dirname, join, resolve, parse as parsePath } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -12,6 +13,8 @@ import { parseDocument as parseYAMLDocument, stringify as stringifyYAML } from '
 import { detectAgent } from './agent-installation.js';
 import { codexModelCatalog } from './codex-model-catalog.js';
 import { apiModelDisplayName } from '../../../apps/shared/api-endpoint.js';
+import { deepseekConfigPath,deepseekHome } from './deepseek-config.js';
+import {WindowsAgentLifecycle} from './windows-agent-lifecycle.js';
 
 /** Read the official default with an isolated config, never the active gateway catalog. */
 export async function officialCodexModel(configPath:string,text:string|null,originalAuth?:string|null){
@@ -37,17 +40,17 @@ const conflict=(message:string)=>Object.assign(new Error(message),{statusCode:40
 export const modelSelectionSchema=z.object({sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(3).max(300)}).strict();
 export type ModelSelection=z.infer<typeof modelSelectionSchema>;
 export const modelSelectionsSchema=z.array(modelSelectionSchema).min(1).max(100).refine(items=>new Set(items.map(i=>i.model)).size===items.length,'每个模型只能选择一个来源账号');
-const recordSchema=z.object({id:z.string().uuid(),target:targetSchema,createdAt:z.string(),before:z.string().nullable(),after:z.string(),beforeHash:z.string(),afterHash:z.string(),state:z.enum(['prepared','applied','restored']),keyId:z.string().uuid(),sourceId:z.string(),model:z.string(),selections:modelSelectionsSchema.optional(),supersedes:z.string().uuid().optional(),previousConfig:z.string().nullable().optional(),previousHash:z.string().optional()});
+const recordSchema=z.object({id:z.string().uuid(),target:targetSchema,createdAt:z.string(),before:z.string().nullable(),after:z.string(),beforeHash:z.string(),afterHash:z.string(),state:z.enum(['prepared','applied','restored']),keyId:z.string().uuid(),sourceId:z.string(),model:z.string(),selections:modelSelectionsSchema.optional(),supersedes:z.string().uuid().optional(),previousConfig:z.string().nullable().optional(),previousHash:z.string().optional(),deepseekScope:z.enum(['home','profile']).optional()});
 type Record=z.infer<typeof recordSchema>;
 export type ConnectionRecord=Omit<Record,'before'|'after'|'previousConfig'>;
 const publicRecord=({before,after,previousConfig,...record}:Record):ConnectionRecord=>record;
 export type AgentPaths={[K in Target]:string};
 const targetNames={codex:'Codex',claude:'Claude Code',workbuddy:'WorkBuddy',qoder:'Qoder',deepseek:'DeepSeek Harness',pi:'Pi Agent'};
 export function agentPaths(home=homedir()):AgentPaths {
-  return {pi:join(process.env.PI_CODING_AGENT_DIR||join(home,'.pi','agent'),'models.json'),deepseek:join(process.env.DSH_HOME||join(home,'.dsh'),'cordis.patch.yml'),qoder:join(process.env.QODER_CONFIG_DIR||join(home,'.qoder'),'settings.json'),codex:join(process.env.CODEX_HOME||join(home,'.codex'),'config.toml'),claude:join(process.env.CLAUDE_CONFIG_DIR||join(home,'.claude'),'settings.json'),workbuddy:join(process.env.WORKBUDDY_CONFIG_DIR||process.env.CODEBUDDY_CONFIG_DIR||join(home,'.workbuddy'),'models.json')};
+  return {pi:join(process.env.PI_CODING_AGENT_DIR||join(home,'.pi','agent'),'models.json'),deepseek:deepseekConfigPath(home,process.env.DSH_HOME),qoder:join(process.env.QODER_CONFIG_DIR||join(home,'.qoder'),'settings.json'),codex:join(process.env.CODEX_HOME||join(home,'.codex'),'config.toml'),claude:join(process.env.CLAUDE_CONFIG_DIR||join(home,'.claude'),'settings.json'),workbuddy:join(process.env.WORKBUDDY_CONFIG_DIR||process.env.CODEBUDDY_CONFIG_DIR||join(home,'.workbuddy'),'models.json')};
 }
 // Only return program identities. Node entrypoint inspection never returns or persists arguments.
-export async function agentProcesses(target:Target|'antigravity'):Promise<number[]> {
+export async function agentProcesses(target:Target|'antigravity'|'workbuddy-ai'|'qoder-ide'):Promise<number[]> {
   try {
     if(process.platform==='win32') {
       // Migration must see the native CLI PID before desktop-only identity checks.
@@ -56,33 +59,50 @@ export async function agentProcesses(target:Target|'antigravity'):Promise<number
         const {stdout}=await exec('tasklist',['/FO','CSV','/NH'],{timeout:5000,maxBuffer:2*1024*1024});
         return stdout.split('\n').flatMap(line=>{const m=line.match(/^"(?:codex|ChatGPT|CodexCLI)(?:\.exe)?","(\d+)"/i);return m?[Number(m[1])]:[];});
       }
+      if(target==='qoder'||target==='qoder-ide'||target==='workbuddy'||target==='workbuddy-ai'||target==='deepseek'){
+        const desktop=(await new WindowsAgentLifecycle().processes(target)).map(p=>p.pid);
+        if(target!=='deepseek'||desktop.length)return desktop;
+      }
       const {stdout}=await exec('tasklist',['/FO','CSV','/NH'],{timeout:5000,maxBuffer:2*1024*1024});
-      const names=target==='deepseek'?'(?:DeepSeek Harness|dsh)':`${target}${target==='antigravity'?'(?: IDE)?':''}`;
+      const names=target==='deepseek'?'dsh':`${target}${target==='antigravity'?'(?: IDE)?':''}`;
       const found=stdout.split('\n').flatMap(line=>{const m=line.match(/^"([^"]+)","(\d+)"/);return m&&new RegExp(`^${names}(?:\\.exe)?$`,'i').test(m[1])?[Number(m[2])]:[];});
-      if(found.length||!['pi','deepseek','claude'].includes(target))return found;
-      const script="Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress";
+      if(!['pi','deepseek','claude'].includes(target))return found;
+      const runtime=basename(process.execPath).replaceAll("'","''");
+      const script=`Get-CimInstance Win32_Process -Filter "Name='node.exe' OR Name='${runtime}'" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress`;
       const result=await exec('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{timeout:5000,maxBuffer:2*1024*1024,windowsHide:true});
       const nodes=result.stdout.trim()?JSON.parse(result.stdout):[];
       const launcher=target==='pi'?/[\\/](?:@earendil-works|@mariozechner)[\\/]pi-coding-agent[\\/]dist[\\/](?:bundle[\\/])?cli\.js$/i:target==='claude'?/[\\/]@anthropic-ai[\\/]claude-code[\\/]cli\.js$/i:/[\\/]@deepseek-ai[\\/]dsh[\\/]lib[\\/]bin\.js$/i;
-      return (Array.isArray(nodes)?nodes:[nodes]).flatMap(node=>{const m=typeof node.CommandLine==='string'?node.CommandLine.match(/^\s*(?:"[^"]*"|\S+)\s+(?:"([^"]+)"|(\S+))/):null;return m&&Number.isInteger(node.ProcessId)&&launcher.test(m[1]??m[2])?[node.ProcessId]:[];});
+      return [...new Set([...found,...(Array.isArray(nodes)?nodes:[nodes]).flatMap(node=>{const m=typeof node.CommandLine==='string'?node.CommandLine.match(/^\s*(?:"[^"]*"|\S+)\s+(?:"([^"]+)"|(\S+))/):null;return m&&Number.isInteger(node.ProcessId)&&launcher.test(m[1]??m[2])?[node.ProcessId]:[];})])];
     }
     const {stdout}=await exec('ps',['-axo','pid=,comm='],{timeout:5000,maxBuffer:2*1024*1024});
+    if(process.platform==='darwin'&&(target==='workbuddy'||target==='workbuddy-ai'||target==='qoder'||target==='qoder-ide')){
+      const bundle=target==='workbuddy'?'com.tencent.workbuddy.mac':target==='workbuddy-ai'?'com.workbuddy.workbuddy-ai':target==='qoder-ide'?'com.qoder.ide':'com.qoder.app';
+      if(target==='qoder-ide'){
+       const rows=stdout.split('\n').flatMap(line=>{const m=line.trim().match(/^(\d+)\s+(\/.*?\.app)\/Contents\//);return m?[{pid:Number(m[1]),path:m[2]}]:[];});
+       const identities=new Map<string,Awaited<ReturnType<typeof macAppIdentity>>>();
+       for(const row of rows)if(!identities.has(row.path))identities.set(row.path,await macAppIdentity(row.path));
+       return rows.filter(row=>identities.get(row.path)?.bundle===bundle).map(row=>row.pid);
+      }
+      const candidates=stdout.split('\n').flatMap(line=>{const m=line.trim().match(/^(\d+)\s+(\/.*\.app)\/Contents\/MacOS\/([^/]+)$/);return m?[{pid:Number(m[1]),path:m[2],executable:m[3]}]:[];});
+      const verified=await Promise.all(candidates.map(async candidate=>{const identity=await macAppIdentity(candidate.path);return identity?.bundle===bundle&&identity.executable===candidate.executable?candidate.pid:null;}));
+      return verified.filter((pid):pid is number=>pid!==null);
+    }
     const desktop=target==='deepseek'?'/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness':undefined;
     const codexDesktop=/(?:\/(?:ChatGPT|Codex)\.app\/Contents\/MacOS\/(?:ChatGPT|Codex)|\/CodexCLI\.app\/Contents\/MacOS\/codex)$/i;
     // Match Codex's executable, not directories such as "Codex Framework".
     // Crash reporters can outlive the desktop and must not block migrations.
-    const program=new RegExp(`(?:^|/)${target==='deepseek'?'dsh':target}${target==='pi'||target==='codex'?'$':'(?:$|[- ])'}`,'i');
-    const found=stdout.split('\n').flatMap(line=>{const m=line.trim().match(/^(\d+)\s+(.+)$/);return m&&!(target==='qoder'&&m[2].includes('/Qoder IDE.app/'))&&(desktop&&m[2].endsWith(desktop)||target==='codex'&&codexDesktop.test(m[2])||program.test(m[2]))?[Number(m[1])]:[];});
-    if(target!=='deepseek'&&target!=='pi')return found;
-    const nodes=stdout.split('\n').flatMap(line=>{const m=line.trim().match(/^(\d+)\s+(?:.*\/)?node$/);return m&&Number(m[1])!==process.pid?[m[1]]:[];});
+    const program=new RegExp(`(?:^|/)${target==='deepseek'?'dsh':target}${target==='claude'?'(?:\\.exe)?$':target==='pi'||target==='codex'?'$':'(?:$|[- ])'}`,'i');
+    const found=stdout.split('\n').flatMap(line=>{const m=line.trim().match(/^(\d+)\s+(.+)$/);return m&&!(target==='claude'&&m[2].includes('/Claude.app/'))&&!(target==='qoder'&&m[2].includes('/Qoder IDE.app/'))&&(desktop&&m[2].endsWith(desktop)||target==='codex'&&codexDesktop.test(m[2])||program.test(m[2])||target==='claude'&&/\/claude\/versions\/\d+\.\d+\.\d+(?:[-.+][\w.-]+)?$/.test(m[2]))?[Number(m[1])]:[];});
+    if(target!=='deepseek'&&target!=='pi'&&target!=='claude')return found;
+    const nodes=stdout.split('\n').flatMap(line=>{const m=line.trim().match(/^(\d+)\s+(.+)$/);return m&&(/(?:^|\/)node$/.test(m[2])||m[2]===process.execPath)&&Number(m[1])!==process.pid?[m[1]]:[];});
     if(!nodes.length)return found;
     // CLI launchers may keep the process name "node". Inspect only the launcher token;
     // full arguments stay local to this call and are discarded without logging.
     const commands=await exec('ps',['-p',nodes.join(','),'-o','pid=,args='],{timeout:5000,maxBuffer:2*1024*1024});
-    const launcher=target==='deepseek'?/(?:\/dsh|\/@deepseek-ai\/dsh\/lib\/bin\.js)$/:/(?:\/pi|\/(?:@earendil-works|@mariozechner)\/pi-coding-agent\/dist\/(?:bundle\/)?cli\.js)$/;
-    const scripts=commands.stdout.split('\n').flatMap(line=>{const m=line.trim().match(/^(\d+)\s+\S+\s+(\S+)/);return m&&launcher.test(m[2])?[Number(m[1])]:[];});
+    const launcher=target==='claude'?/(?:\/claude|\/@anthropic-ai\/claude-code\/cli\.js)$/:target==='deepseek'?/(?:\/dsh|\/@deepseek-ai\/dsh\/lib\/bin\.js)$/:/(?:\/pi|\/(?:@earendil-works|@mariozechner)\/pi-coding-agent\/dist\/(?:bundle\/)?cli\.js)$/;
+    const scripts=commands.stdout.split('\n').flatMap(line=>{const m=line.trim().match(/^(\d+)\s+(?:"[^"]*"|'[^']*'|\S+)\s+(?:"([^"]+)"|'([^']+)'|(\S+))/);return m&&launcher.test(m[2]??m[3]??m[4])?[Number(m[1])]:[];});
     return [...new Set([...found,...scripts])];
-  }catch{throw conflict('无法检查 Agent 进程，未修改配置。请确认系统进程查询可用。');}
+  }catch(error){if((error as {statusCode?:number})?.statusCode===409)throw error;throw conflict('无法检查 Agent 进程，未修改配置。请确认系统进程查询可用。');}
 }
 export async function safePath(path:string) {
   let current=resolve(path);const root=parsePath(current).root;
@@ -113,7 +133,7 @@ const decodeConfig=(target:Target,text:string):unknown=>{
   if(new Set(entries.map(entry=>entry.id)).size!==entries.length)throw conflict('DeepSeek 配置存在重复插件，未修改。');
   return Object.fromEntries(entries.map(entry=>[entry.id,entry]));
 };
-const encodeConfig=(target:Target,value:unknown)=>target==='codex'?stringify(object(value)):target==='deepseek'?stringifyYAML(Object.values(object(value))):JSON.stringify(value,null,2)+'\n';
+const encodeConfig=(target:Target,value:unknown)=>target==='codex'?stringify(object(value)):target==='deepseek'?stringifyYAML(Object.entries(object(value)).map(([id,entry])=>({...object(entry),id}))):JSON.stringify(value,null,2)+'\n';
 // Claude's /model picker can save an alias while its pinned model stays unchanged.
 function claudeModelMatches(doc:{[key:string]:unknown},model:string):boolean {
   if(doc.model===model)return true;
@@ -222,7 +242,8 @@ function repairConfigBase(record:Record,current:string|null):string|null {
     return JSON.stringify(Array.isArray(actual)?kept:{...object(actual),models:kept},null,2)+'\n';
   }
   if(record.target==='qoder'){
-    const doc=object(actual),providers={...object(doc.providers??{})};delete providers['token-flow'];
+    const doc=object(actual),providers={...object(doc.providers??{})};const originalProviders=object(object(before??{}).providers??{});
+    if(Object.hasOwn(originalProviders,'token-flow'))providers['token-flow']=originalProviders['token-flow'];else delete providers['token-flow'];
     return JSON.stringify({...doc,providers},null,2)+'\n';
   }
   const reverseOwned=(original:unknown,written:unknown,value:unknown):unknown=>{
@@ -264,7 +285,8 @@ export function connectedConfig(target:Target,original:string|null,origin:string
   if(target==='qoder'){
     const doc=original===null?{}:object(JSON.parse(original));
     const providers=doc.providers===undefined?{}:object(doc.providers);
-    if(Object.hasOwn(providers,'token-flow'))throw conflict('Qoder 已有 token-flow 供应商，请先还原已有接入。');
+    // Connecting explicitly replaces this managed provider, including native UI edits
+    // and orphaned entries copied from another installation. The journal keeps the preimage.
     return JSON.stringify({...doc,providers:{...providers,'token-flow':{type:'openai-compatible',protocol:'openai-responses',authType:'bearer',baseUrl:`${url.origin}/v1`,apiKey:key,displayName:'token-flow',model,models:chosen.map(model=>({model,displayName:label(model)}))}}},null,2)+'\n';
   }
   if(target==='workbuddy'){
@@ -279,7 +301,9 @@ export function connectedConfig(target:Target,original:string|null,origin:string
   if(target==='claude'){
     const doc=original===null?{}:object(JSON.parse(original));
     const env=doc.env===undefined?{}:object(doc.env);
-    return JSON.stringify({...doc,model,...(selectedModels?{availableModels:chosen,modelPicker:{replaceBuiltInOptions:true,options:chosen.map(model=>({model,label:label(model)}))}}:{}),env:{...env,...(selectedModels?{CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY:'1'}:{}),ANTHROPIC_BASE_URL:url.origin,ANTHROPIC_AUTH_TOKEN:key,ANTHROPIC_API_KEY:'',ANTHROPIC_MODEL:model,ANTHROPIC_DEFAULT_OPUS_MODEL:model,ANTHROPIC_DEFAULT_SONNET_MODEL:model,ANTHROPIC_DEFAULT_HAIKU_MODEL:model,ANTHROPIC_SMALL_FAST_MODEL:model,CLAUDE_CODE_SUBAGENT_MODEL:model}},null,2)+'\n';
+    // Clear conflicting routes, but journal them so restoring recovers the exact prior setup.
+    delete doc.apiKeyHelper;delete doc.forceLoginMethod;delete doc.forceLoginOrgUUID;delete doc.forceLoginGatewayUrl;
+    return JSON.stringify({...doc,model,...(selectedModels?{availableModels:chosen,modelPicker:{replaceBuiltInOptions:true,options:chosen.map(model=>({model,label:label(model)}))}}:{}),env:{...env,...(selectedModels?{CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY:'1'}:{}),ANTHROPIC_BASE_URL:url.origin,ANTHROPIC_AUTH_TOKEN:key,ANTHROPIC_API_KEY:'',CLAUDE_CODE_USE_BEDROCK:'0',CLAUDE_CODE_USE_VERTEX:'0',CLAUDE_CODE_USE_FOUNDRY:'0',CLAUDE_CODE_OAUTH_TOKEN:'',ANTHROPIC_PROFILE:'',ANTHROPIC_MODEL:'',ANTHROPIC_DEFAULT_OPUS_MODEL:model,ANTHROPIC_DEFAULT_SONNET_MODEL:model,ANTHROPIC_DEFAULT_HAIKU_MODEL:model,ANTHROPIC_SMALL_FAST_MODEL:model,CLAUDE_CODE_SUBAGENT_MODEL:''}},null,2)+'\n';
   }
   const doc=original===null?{}:parse(original);
   // Full original bytes remain in the backup; TOML serialization preserves semantic settings.
@@ -308,24 +332,46 @@ export function connectedConfig(target:Target,original:string|null,origin:string
 /** Backups are journaled before a single atomic configuration replacement. Never expose their contents. */
 export class AgentConnections {
   private tail:Promise<unknown>=Promise.resolve();
+  private readonly deepseekProfilePath:string|undefined;
   readonly paths:AgentPaths;
-  constructor(private root:string,paths:Partial<AgentPaths>=agentPaths(),private processes:(target:Target)=>Promise<number[]>=agentProcesses) {this.paths={...agentPaths(root),...paths};}
+  constructor(private root:string,paths:Partial<AgentPaths>=agentPaths(),private processes:(target:Target)=>Promise<number[]>=agentProcesses) {
+    this.paths={...agentPaths(root),...paths};
+    this.deepseekProfilePath=deepseekHome(this.paths.deepseek)!==dirname(this.paths.deepseek)?this.paths.deepseek:undefined;
+  }
   private dir(){return join(this.root,'agent-backups');}
   private catalogPath(model:string){return join(this.dir(),`codex-models-${hash(model)}.json`);}
   private async records():Promise<Record[]> {
     const {readdir}=await import('node:fs/promises');await mkdir(this.dir(),{recursive:true,mode:0o700});
     const files=await readdir(this.dir());const records:Record[]=[];
     for(const file of files.filter(f=>/^[a-f0-9-]{36}\.json$/.test(f))){try{const record=recordSchema.parse(JSON.parse(await readFile(join(this.dir(),file),'utf8')));if(hash(record.before)!==record.beforeHash||hash(record.after)!==record.afterHash||(record.previousConfig!==undefined&&hash(record.previousConfig)!==record.previousHash))throw new Error('Backup checksum mismatch');records.push(record);}catch{throw conflict('接入备份记录损坏，请保留文件并人工检查。');}}
-    return records.sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+    records.sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+    // Older journals wrote the global home patch. Keep restoration pointed at that file.
+    if(this.deepseekProfilePath){
+      const active=records.find(r=>r.target==='deepseek'&&r.state!=='restored');
+      this.paths.deepseek=active&&active.deepseekScope!=='profile'?join(deepseekHome(this.deepseekProfilePath),'cordis.patch.yml'):this.deepseekProfilePath;
+    }
+    return records;
   }
   private async save(record:Record){const path=join(this.dir(),`${record.id}.json`);const temp=`${path}.tmp`;await writeFile(temp,JSON.stringify(record),{mode:0o600});await rename(temp,path);}
   private run<T>(target:Target,operation:()=>Promise<T>):Promise<T>{
     const task=this.tail.then(async()=>{
+      if(target==='deepseek')await this.records();
       const lock=`${this.paths[target]}.token-flow.lock`;
       await safePath(this.paths[target]);await mkdir(dirname(lock),{recursive:true,mode:0o700});
       let file;try{file=await open(lock,'wx',0o600);}catch(e){if((e as NodeJS.ErrnoException).code==='EEXIST')throw conflict('另一个接入操作持有配置锁；如应用曾异常退出，请先检查锁文件，未强行覆盖。');throw e;}
       try{await file.writeFile(String(process.pid));return await operation();}finally{await file.close();await unlink(lock);}
     });this.tail=task.catch(()=>{});return task;
+  }
+  private async requireEditableProfile(target:Target){
+    if(target!=='deepseek'||!this.deepseekProfilePath)return;
+    if(this.paths.deepseek!==this.deepseekProfilePath)throw conflict('旧版 DeepSeek 接入使用全局补丁，会阻止 Harness 保存 API Key。请先点击“恢复原配置”，再重新接入桌面版配置。');
+    const global=await readConfig(join(deepseekHome(this.deepseekProfilePath),'cordis.patch.yml'));
+    if(global===null)return;
+    const document=parseYAMLDocument(global);
+    if(document.errors.length||document.warnings.length)throw conflict('DeepSeek 全局补丁无法安全解析，未修改配置。');
+    const entries=document.toJSON()??[];
+    if(!Array.isArray(entries))throw conflict('DeepSeek 全局补丁格式无效，未修改配置。');
+    if(entries.some(entry=>isObject(entry)&&['llm-pi-ai','agent-default-model'].includes(String(entry.id))&&entry.insert===undefined&&Object.hasOwn(entry,'config')))throw conflict('DeepSeek 全局补丁仍覆盖模型配置，Harness 无法保存 API Key。请先检查全局 cordis.patch.yml 中的模型覆盖；未修改原文件。');
   }
   private async idle(target:Target){const pids=await this.processes(target);if(pids.length)throw conflict(`请先退出 ${targetNames[target]} 再重试；检测到进程 ${pids.join(', ')}。不会强制终止运行中的任务。`);}
   private async replace(target:Target,expected:string,next:string|null,allowRunning=false){
@@ -353,8 +399,8 @@ export class AgentConnections {
       const expectedValue=decodeConfig(record.target,record.after) as {[key:string]:any};
       const expected=record.target==='workbuddy'&&Array.isArray(expectedValue)?{models:expectedValue}:expectedValue;
       if(record.target==='claude'){
-        checks.push({name:'主模型与辅助模型一致',ok:(record.selections??[record]).some(item=>claudeModelMatches(actual as {[key:string]:unknown},item.model))&&['ANTHROPIC_MODEL','ANTHROPIC_SMALL_FAST_MODEL','CLAUDE_CODE_SUBAGENT_MODEL','ANTHROPIC_DEFAULT_OPUS_MODEL','ANTHROPIC_DEFAULT_SONNET_MODEL','ANTHROPIC_DEFAULT_HAIKU_MODEL'].every(k=>actual.env?.[k]===record.model)},
-          {name:'接口地址正确',ok:actual.env?.ANTHROPIC_BASE_URL===expected.env.ANTHROPIC_BASE_URL},
+        checks.push({name:'主模型可切换，子代理继承会话',ok:(record.selections??[record]).some(item=>claudeModelMatches(actual as {[key:string]:unknown},item.model))&&!actual.env?.ANTHROPIC_MODEL&&!actual.env?.CLAUDE_CODE_SUBAGENT_MODEL&&['ANTHROPIC_SMALL_FAST_MODEL','ANTHROPIC_DEFAULT_OPUS_MODEL','ANTHROPIC_DEFAULT_SONNET_MODEL','ANTHROPIC_DEFAULT_HAIKU_MODEL'].every(k=>actual.env?.[k]===record.model)},
+          {name:'接口地址与服务路由正确',ok:actual.env?.ANTHROPIC_BASE_URL===expected.env.ANTHROPIC_BASE_URL&&['CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY'].every(k=>!actual.env?.[k]||actual.env[k]==='0')&&!actual.apiKeyHelper&&!actual.forceLoginGatewayUrl},
           {name:'客户端 Key 未被覆盖',ok:actual.env?.ANTHROPIC_AUTH_TOKEN===expected.env.ANTHROPIC_AUTH_TOKEN&&actual.env?.ANTHROPIC_API_KEY===''});
       }else if(record.target==='qoder'){
         const provider=actual.providers?.['token-flow'],original=expected.providers['token-flow'];
@@ -385,12 +431,13 @@ export class AgentConnections {
   }
   async apply(input:{target:Target;revision:string;origin:string;model:string;sourceId:string;keyId:string;key:string;allowRunning?:boolean;replaceId?:string;rewrite?:boolean;selections?:ModelSelection[];modelLabels?:{[id:string]:string};modelImages?:{[id:string]:boolean}}){
     return this.run(input.target,async()=>{
+      await this.requireEditableProfile(input.target);
       if(!input.allowRunning)await this.idle(input.target);
       const before=await readConfig(this.paths[input.target]);if(hash(before)!==input.revision)throw conflict('配置已变更，请刷新接入预览。');
       const active=(await this.records()).find(r=>r.target===input.target&&r.state!=='restored');
       if(active&&active.id!==input.replaceId)throw conflict('此 Agent 已有接入记录，请审批切换方案后再接入。');
       if(input.replaceId&&!active)throw conflict('接入记录已变化，请重新生成维修方案。');
-      const original=active?(input.rewrite?repairConfigBase(active,before):restoredConfig(active,before)):before;
+      const original=active?(input.rewrite||input.target==='qoder'?repairConfigBase(active,before):restoredConfig(active,before)):before;
       const selectedModels=input.selections?.map(item=>item.model);
       if(input.selections){modelSelectionsSchema.parse(input.selections);if(!input.selections.some(item=>item.model===input.model&&item.sourceId===input.sourceId))throw conflict('默认模型必须在已选模型中');}
       // Include display metadata so a renamed menu does not reuse the legacy cached path.
@@ -401,7 +448,7 @@ export class AgentConnections {
         await safePath(catalogPath);const temp=`${catalogPath}.${randomUUID()}.tmp`;
         try{await writeFile(temp,JSON.stringify(catalog),{mode:0o600,flag:'wx'});await rename(temp,catalogPath);}finally{await rm(temp,{force:true});}
       }
-      const record:Record={id:randomUUID(),target:input.target,createdAt:new Date().toISOString(),before:original,after,beforeHash:hash(original),afterHash:hash(after),state:'prepared',keyId:input.keyId,sourceId:input.sourceId,model:input.model,...(input.selections?{selections:input.selections}:{}),...(active?{supersedes:active.id,previousConfig:before,previousHash:hash(before)}:{})};
+      const record:Record={id:randomUUID(),target:input.target,createdAt:new Date().toISOString(),before:original,after,beforeHash:hash(original),afterHash:hash(after),state:'prepared',keyId:input.keyId,sourceId:input.sourceId,model:input.model,...(input.target==='deepseek'?{deepseekScope:this.deepseekProfilePath?'profile' as const:'home' as const}:{}),...(input.selections?{selections:input.selections}:{}),...(active?{supersedes:active.id,previousConfig:before,previousHash:hash(before)}:{})};
       await this.save(record);await this.replace(input.target,input.revision,after,input.allowRunning);record.state='applied';await this.save(record);await this.retirePrevious(record);return publicRecord(record);
     });
   }
@@ -411,8 +458,9 @@ export class AgentConnections {
   }
   async preview(target:Target,origin:string,model:string,rewrite=false,selections?:ModelSelection[]){
     const records=await this.records();const active=records.find(r=>r.target===target&&r.state!=='restored');
+    await this.requireEditableProfile(target);
     const current=await readConfig(this.paths[target]);
-    const original=active?(rewrite?repairConfigBase(active,current):restoredConfig(active,current)):current;
+    const original=active?(rewrite||target==='qoder'?repairConfigBase(active,current):restoredConfig(active,current)):current;
     const after=connectedConfig(target,original,origin,model,'<审批后由网关注入客户端 Key>',target==='codex'?this.catalogPath(selections?JSON.stringify(selections.map(item=>item.model)):model):undefined,selections?.map(item=>item.model));
     // Only expose gateway-owned routing fields, never the full user configuration.
     const parsed=decodeConfig(target,after) as {[key:string]:any};
@@ -426,6 +474,7 @@ export class AgentConnections {
       const record=(await this.records()).find(r=>r.id===id)!;
       const currentText=await readConfig(this.paths[record.target]);const current=hash(currentText);
       if(appliedConfig(record,currentText)){record.state='applied';await this.save(record);await this.retirePrevious(record);return publicRecord(record);}
+      await this.requireEditableProfile(record.target);
       if(current!==record.beforeHash&&!(record.previousConfig!==undefined&&current===hash(record.previousConfig)))throw conflict('配置存在外部修改，无法安全自动修复，请先检查并保留备份。');
       await this.replace(record.target,current,record.after);record.state='applied';await this.save(record);await this.retirePrevious(record);return publicRecord(record);
     });
@@ -440,6 +489,12 @@ export class AgentConnections {
       await this.retirePrevious(record);
       await unlink(join(this.dir(),`${id}.json`));return publicRecord(record);
     });
+  }
+  async currentOfficialModel(){return officialCodexModel(this.paths.codex,await readConfig(this.paths.codex));}
+  async restoration(id:string){
+    const record=(await this.records()).find(r=>r.id===id);if(!record)throw conflict('备份不存在');
+    const current=await readConfig(this.paths[record.target]);
+    return equivalentConfig(record.target,current,record.before)?current:restoredConfig(record,current);
   }
   async officialModel(id:string){
     const record=(await this.records()).find(r=>r.id===id&&r.target==='codex');

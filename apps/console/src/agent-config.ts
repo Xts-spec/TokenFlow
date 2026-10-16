@@ -3,7 +3,7 @@ import { a2aCapabilities } from '@cua-sample/contracts/a2a';
 export type AgentKind='codex'|'claude'|'openai'|'qoder'|'cursor'|'pi'|'deepseek';
 export const agentCatalog=[
  {id:'pi' as const,name:'Pi Agent',protocol:'Chat Completions',path:'/v1/chat/completions',description:'将配置保存到 ~/.pi/agent/models.json，打开 /model 选择 TokenFlow 模型。',docs:'https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/models.md'},
- {id:'deepseek' as const,name:'DeepSeek Harness',protocol:'Chat Completions',path:'/v1/chat/completions',description:'将插件补丁保存到 ~/.dsh/cordis.patch.yml，运行 dsh web，在模型菜单中选择 TokenFlow。',docs:'https://deepseek-harness.github.io/deepseek-harness/guide/providers'},
+ {id:'deepseek' as const,name:'DeepSeek Harness',protocol:'Chat Completions',path:'/v1/chat/completions',description:'桌面版将插件补丁合并到 ~/.dsh/profiles/desktop/cordis.patch.yml；使用 dsh web 时合并到 ~/.dsh/profiles/web/cordis.patch.yml。在模型菜单中选择 TokenFlow。',docs:'https://deepseek-harness.github.io/deepseek-harness/guide/providers'},
  {id:'cursor' as const,name:'Cursor',protocol:'Chat Completions',path:'/v1/chat/completions',description:'Cursor Settings → Models → API Keys。自定义请求经过 Cursor 服务器，需要外网可访问的 HTTPS 网关；本机地址不能直接使用。Tab 补全继续使用 Cursor 内置模型。',docs:'https://cursor.com/help/models-and-usage/api-keys'},
  {id:'qoder' as const,name:'Qoder 独立应用',protocol:'Responses API',path:'/v1/responses',description:'Qoder 独立应用：Settings → Models → Add → OpenAI Compatible → Responses。仅适用于支持自定义地址的版本，不适用于 Qoder IDE。',docs:'https://docs.qoder.com/qoder/custom-models'},
  {id:'codex' as const,name:'Codex',protocol:'Responses API',path:'/v1/responses',description:'直接使用统一 Responses 接口，保留工具调用和流式响应。',docs:'https://developers.openai.com/codex/config-reference'},
@@ -27,7 +27,9 @@ export function agentConfig(kind:AgentKind,origin:string,model:string,powershell
  ].map(value=>`-c ${quote(value)}`).join(' ')+` --model ${quote(model)}`].join('\n\n');
  if(kind==='claude')return [
   assign('ANTHROPIC_BASE_URL',url.origin),assign('ANTHROPIC_AUTH_TOKEN','替换为此 Agent 的客户端 Key'),assign('ANTHROPIC_API_KEY',''),
-  ...['ANTHROPIC_MODEL','ANTHROPIC_DEFAULT_OPUS_MODEL','ANTHROPIC_DEFAULT_SONNET_MODEL','ANTHROPIC_DEFAULT_HAIKU_MODEL','ANTHROPIC_SMALL_FAST_MODEL','CLAUDE_CODE_SUBAGENT_MODEL'].map(key=>assign(key,model)),
+  ...['CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY'].map(key=>assign(key,'0')),
+  ...['ANTHROPIC_MODEL','CLAUDE_CODE_SUBAGENT_MODEL','CLAUDE_CODE_OAUTH_TOKEN','ANTHROPIC_PROFILE'].map(key=>assign(key,'')),
+  ...['ANTHROPIC_DEFAULT_OPUS_MODEL','ANTHROPIC_DEFAULT_SONNET_MODEL','ANTHROPIC_DEFAULT_HAIKU_MODEL','ANTHROPIC_SMALL_FAST_MODEL'].map(key=>assign(key,model)),
   `claude --model ${quote(model)}`,
  ].join('\n');
  if(kind==='pi')return JSON.stringify({providers:{'token-flow':{baseUrl:baseURL,api:'openai-completions',apiKey:'替换为此 Agent 的客户端 Key',models:[{id:model,name:model,input:['text'],contextWindow:131072,maxTokens:16384}]}}},null,2);

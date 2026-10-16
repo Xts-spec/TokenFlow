@@ -13,6 +13,7 @@ const failureSchema = z.object({
   sourceId: z.string().regex(/^[a-f0-9]{24}$/).optional(),
   message: z.string().min(1).max(400),
   code: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/).optional(),
+  outcome:z.enum(['failed','completed']).default('failed'),
 }).strict();
 export type SwitchFailure = z.infer<typeof failureSchema>;
 const limit = 30;
@@ -34,13 +35,14 @@ export class SwitchJournal {
       this.records = parsed.success ? parsed.data.slice(0, limit) : [];
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.records = []; }
   }
-  list(target?: string) { return this.records.filter(item => !target || item.target === target).map(item => ({ ...item })); }
+  list(target?: string) { return this.history(target).filter(item=>item.outcome==='failed'); }
+  history(target?:string){return this.records.filter(item=>!target||item.target===target).map(item=>({...item}));}
   latest(target?: string) { return this.list(target)[0]; }
-  record(input: { action: SwitchAction; target: string; model?: string; sourceId?: string; message: string; code?: string }) {
+  record(input: { action: SwitchAction; target: string; model?: string; sourceId?: string; message: string; code?: string;outcome?:'failed'|'completed' }) {
     const target = /^[a-z0-9_-]{1,40}$/.test(input.target) ? input.target : 'unknown';
     const model = input.model ? sanitizeSwitchMessage(input.model) : undefined;
     const entry = failureSchema.parse({
-      id: randomUUID(), at: new Date().toISOString(), action: input.action, target,
+      id: randomUUID(), at: new Date().toISOString(), action: input.action, target,outcome:input.outcome??'failed',
       ...(model && model !== '切换失败' && model.length <= 300 ? { model } : {}),
       ...(input.sourceId && /^[a-f0-9]{24}$/.test(input.sourceId) ? { sourceId: input.sourceId } : {}),
       message: sanitizeSwitchMessage(input.message),

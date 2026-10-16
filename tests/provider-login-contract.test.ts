@@ -20,3 +20,13 @@ it('correlates the official Trae callback using loginTraceID and preserves its c
   expect(() => validateCallbackURL(trae, callback.replace('api-us-east.trae.ai', 'evil.test'), 'session')).toThrow();
   expect(() => validateCallbackURL(trae, callback + '&state=other', 'session')).toThrow();
 });
+
+import { isLoginProvider, loginProviderCatalog, loginProviderSchema, routeModelToProvider } from '../packages/core/src/login/registry.js';
+import { quotaProviders } from '../packages/core/src/quota/index.js';
+it('removes the conflated Doubao/MarsCode adapter while preserving independent Trae login', () => {
+ expect(isLoginProvider('doubao')).toBe(false);
+ expect(loginProviderSchema.safeParse('doubao').success).toBe(false);
+ expect(routeModelToProvider('doubao')).toBeUndefined();
+ expect(loginProviderCatalog().some(p=>p.id==='trae')).toBe(true);
+ expect('doubao' in quotaProviders).toBe(false);
+});

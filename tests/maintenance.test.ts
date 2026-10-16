@@ -7,6 +7,31 @@ import type {StreamFn} from '@earendil-works/pi-agent-core';
 import {GatewayMaintenance} from '../packages/core/src/gateway-maintenance.js';
 const transport={baseURL:'http://127.0.0.1:8317/v1',apiKey:'private-fixture-key',authID:'account.json'};
 function answer(content:AssistantMessage['content'],error=false){const s=createAssistantMessageEventStream();const message:AssistantMessage={role:'assistant',content,api:'openai-responses',provider:'token-flow',model:'qoder/test',usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:error?'error':content.some(c=>c.type==='toolCall')?'toolUse':'stop',timestamp:Date.now(),...(error?{errorMessage:'private-fixture-key RAW UPSTREAM ERROR'}:{})};if(error)s.push({type:'error',reason:'error',error:message});else s.push({type:'done',reason:message.stopReason as 'stop'|'toolUse',message});s.end(message);return s;}
+it('gives the repair model read-only cleanup inspection and scan tools without deletion tools',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'pi-cleanup-care-'));let turn=0;const flags:boolean[]=[];
+ const care=new GatewayMaintenance(root,(_model,context)=>{
+  const text=JSON.stringify(context);expect(text).not.toContain('delete_file_cleanup');
+  if(++turn===1){expect(text).toContain('inspect_file_cleanup');return answer([{type:'toolCall',id:'inspect',name:'inspect_file_cleanup',arguments:{}}]);}
+  if(turn===2){expect(text).toContain('windows-cache-evidence');return answer([{type:'toolCall',id:'scan',name:'scan_file_cleanup',arguments:{}}]);}
+  expect(text).toContain('scan-started');return answer([{type:'text',text:'扫描已开始，完成后根据实际结果提供分类建议。'}]);
+ });
+ try{
+  await care.select({sourceId:'repair',model:'qoder/test'});
+  care.start('分析本机缓存',transport,{inspect:async()=>({pageContext:{page:'settings'}}),refresh:async()=>({}),restore:async()=>({}),cleanup:async scan=>{flags.push(scan);return {status:scan?'scan-started':'windows-cache-evidence'};}},false,undefined,{page:'settings',intent:'file-cleanup'});
+  await care.settled();expect(care.snapshot().status).toBe('completed');expect(flags).toEqual([false,true]);
+ }finally{await care.close();await rm(root,{recursive:true,force:true});}
+});
+it('lets the repair model request an HTTP probe and reason from classified evidence instead of assuming the client is fixed',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'pi-http-care-'));let turns=0,calls=0;
+ const care=new GatewayMaintenance(root,(_model,context)=>{
+  if(++turns===1){expect(JSON.stringify(context)).toContain('probe_model_http');return answer([{type:'toolCall',id:'probe',name:'probe_model_http',arguments:{target:'claude',protocol:'messages',reason:'检查实际调用'}}]);}
+  expect(JSON.stringify(context)).toContain('source_policy');return answer([{type:'text',text:'来源渠道授权拒绝，不能通过重写配置判断已修复。'}]);
+ });
+ try{
+  await care.select({sourceId:'repair',model:'qoder/test'});care.start('Claude 调用失败，检查原因',transport,{inspect:async()=>({}),refresh:async()=>({}),restore:async()=>({}),httpProbe:async(input,signal)=>{calls++;expect(input).toEqual({target:'claude',protocol:'messages'});expect(signal.aborted).toBe(false);return {passed:false,category:'source_policy',httpStatus:400,clientVerified:false};}},false,{target:'claude'});
+  await care.settled();expect(care.snapshot().status).toBe('completed');expect(calls).toBe(1);expect(care.snapshot().messages.some(m=>m.role==='tool'&&m.text.includes('probe_model_http'))).toBe(true);
+ }finally{await care.close();await rm(root,{recursive:true,force:true});}
+});
 it('uses the actual Pi loop, retains follow-up context and never carries write authorization into the next question',async()=>{
  const root=await mkdtemp(join(tmpdir(),'pi-care-'));let turns=0,restores=0,inspects=0;const contexts:TranscriptContext[]=[];
  const stream:StreamFn=(_m,c)=>{contexts.push(structuredClone(c));turns++;return turns%2===1?answer([{type:'toolCall',id:`call${turns}`,name:'restore_connection',arguments:{id:randomUUID()}}]):answer([{type:'text',text:'已依据检查结果回答'}]);};
@@ -100,5 +125,47 @@ it('lets the repair model inspect all Agent choices and propose a concrete routi
   await care.select({sourceId:'repair',model:'codex/test'});
   care.start('请修改 Qoder 的接口、Key 和模型配置',transport,{inspect:async()=>({}),refresh:async()=>({}),restore:async()=>({}),configurations:async()=>({targets:['codex','claude','workbuddy','qoder'],sources:[{sourceId:'saved-source',models:['codex/test']}]}),configure:async input=>{proposal=input;return {status:'pending'};}});
   await care.settled();expect(care.snapshot().status).toBe('completed');expect(proposal).toEqual({target:'qoder',sourceId:'saved-source',model:'codex/test'});
+ }finally{await care.close();await rm(root,{recursive:true,force:true});}
+});
+
+it('stores separate page conversations and resumes their text with a fresh inspection after restart',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'repair-conversations-'));
+ const actions={inspect:async()=>({currentEvidence:'fresh evidence'}),refresh:async()=>({}),restore:async()=>({})};
+ const care=new GatewayMaintenance(root,()=>answer([{type:'text',text:'已检查本次问题'}]));
+ let reopened:GatewayMaintenance|undefined;
+ try{
+  await care.select({sourceId:'repair',model:'qoder/test'});
+  care.start('Pi 的模型不显示',transport,actions,false,{target:'pi'}, {page:'agents',target:'pi'});await care.settled();
+  const original=care.snapshot().conversationId;care.reset();
+  care.start('API 代理 Key 无法调用',transport,actions,false,undefined,{page:'proxy'});await care.settled();await care.flushHistory();
+  expect(care.history()).toHaveLength(2);expect(care.history()[0].context).toEqual({page:'proxy'});
+  expect(care.history()[0]).not.toHaveProperty('messages');
+  reopened=new GatewayMaintenance(root,(_model,context)=>{
+   const text=JSON.stringify(context);expect(text).toContain('Pi 的模型不显示');expect(text).toContain('fresh evidence');expect(text).not.toContain('API 代理 Key 无法调用');expect(text).toContain('不代表当前状态或任何操作授权');
+   return answer([{type:'text',text:'重新检查了当前 Pi'}]);
+  });
+  await reopened.load();expect(reopened.history()).toHaveLength(2);
+  const restored=reopened.resume(original);expect(restored.chain?.target).toBe('pi');expect(restored.context).toEqual({page:'agents',target:'pi'});
+  reopened.start('继续检查',transport,actions,false,{target:'pi',sourceId:'new-source',model:'new/model'},{page:'agents',target:'pi'});
+  expect(()=>reopened!.resume(original)).toThrow('请先停止');await reopened.settled();await reopened.flushHistory();
+  expect(reopened.snapshot().conversationId).toBe(original);expect(reopened.history()).toHaveLength(2);
+  expect(reopened.conversation(original).messages.filter(message=>message.role==='user').map(message=>message.text)).toEqual(['Pi 的模型不显示','继续检查']);
+  expect(JSON.stringify(reopened.conversation(original))).not.toContain('private-fixture-key');
+ }finally{await care.close();await reopened?.close();await rm(root,{recursive:true,force:true});}
+});
+
+it('exposes scoped usage, storage and history tools to the actual repair loop',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'repair-evidence-'));let turn=0;
+ const care=new GatewayMaintenance(root,(_model,context)=>{
+  const text=JSON.stringify(context);turn++;
+  if(turn===1)return answer([{type:'toolCall',id:'usage',name:'read_usage',arguments:{range:'today',reason:'用户问今天'}}]);
+  if(turn===2){expect(text).toContain('tokensPerSecond');return answer([{type:'toolCall',id:'storage',name:'inspect_storage',arguments:{}}]);}
+  if(turn===3){expect(text).toContain('resolved-profile');return answer([{type:'toolCall',id:'history',name:'inspect_codex_history',arguments:{}}]);}
+  expect(text).toContain('switchHistory');return answer([{type:'text',text:'依据当前数据给出诊断'}]);
+ });
+ try{await care.select({sourceId:'account',model:'qoder/test'});
+  care.start('今天的生成速度',transport,{inspect:async()=>({pageContext:{page:'usage'}}),refresh:async()=>({}),restore:async()=>({}),
+   usage:async(query)=>{expect(query).toEqual({range:'today'});return {tokensPerSecond:50};},storage:async()=>({profile:'resolved-profile'}),codexHistory:async()=>({switchHistory:[]})},false,undefined,{page:'usage'});
+  await expect.poll(()=>care.snapshot().status).toBe('completed');expect(turn).toBe(4);
  }finally{await care.close();await rm(root,{recursive:true,force:true});}
 });

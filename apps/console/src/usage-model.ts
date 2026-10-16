@@ -1,5 +1,5 @@
 import type { UsageRow as GatewayUsageRow } from '../../../packages/core/src/usage-ledger';
-export type UsageRow=GatewayUsageRow&{origin?:'gateway'|'native';channel?:'official'|'api'|'unknown';provider?:string;nativeAccountId?:string};
+export type UsageRow=GatewayUsageRow&{origin?:'gateway'|'native';channel?:'official'|'api'|'unknown';provider?:string;nativeAccountId?:string;nativeEmailHash?:string;nativeOrganizationId?:string;nativeAccountLabel?:string;nativeAccountEvidence?:'otel'|'conflict'|'login-snapshot'};
 
 /** Time windows offered next to every usage summary. */
 export type RangeId = 'today' | '7d' | '30d' | 'all';
@@ -94,4 +94,4 @@ export function durationText(ms: number | null): string {
 }
 
 /** Account or API source behind a ledger row; models served by the account catalog keep their provider prefix. */
-export const sourceKey = (row: UsageRow) => row.sourceId || (row.origin==='native'?`native:${row.provider??row.target}:${row.channel??'unknown'}:${row.nativeAccountId??''}`:undefined) || (row.model.match(/^api-([a-f0-9]{24})\//)?.[1] ?? `provider:${row.model.split('/')[0]}`);
+export const sourceKey = (row: UsageRow) => row.sourceId || (row.origin==='native'?`native:${row.provider??row.target}:${row.channel??'unknown'}:${row.nativeAccountId??''}:${row.nativeEmailHash??''}${row.nativeOrganizationId?`:${row.nativeOrganizationId}`:''}`:undefined) || (row.model.match(/^api-([a-f0-9]{24})\//)?.[1] ?? `provider:${row.model.split('/')[0]}`);

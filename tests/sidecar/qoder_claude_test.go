@@ -342,7 +342,10 @@ func TestQoderWireKeepsHeaderAndSelectedModelConsistent(t *testing.T) {
 						t.Error(err)
 						return
 					}
-					for _, path := range []string{"model_config.key", "chat_context.extra.modelConfig.key", "business.model_key"} {
+					if gjson.GetBytes(decoded, "business.model_key").Exists() {
+						t.Fatal("redundant business model key must be absent")
+					}
+					for _, path := range []string{"model_config.key", "chat_context.extra.modelConfig.key"} {
 						if got := gjson.GetBytes(decoded, path).String(); got != key {
 							t.Errorf("%s=%s, want %s", path, got, key)
 						}
@@ -391,5 +394,64 @@ func TestQoderAccountingLogsOnlyTypedBillingFields(t *testing.T) {
 	logQoderAccounting(gjson.Parse(`{"usage":{"billable":"SECRET","credits":"PRIVATE"}}`))
 	if hook.LastEntry() != nil {
 		t.Fatal("invalid accounting fields logged")
+	}
+}
+
+// The recorded production failure is EOF from Do, before response headers.
+// A socket that closes once must recover without replaying any emitted output.
+func TestQoderRecoversOnePreHeaderEOF(t *testing.T) {
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			conn.Close()
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"body\":\"{\\\"id\\\":\\\"fixture\\\",\\\"model\\\":\\\"kmodel_latest\\\",\\\"choices\\\":[{\\\"index\\\":0,\\\"delta\\\":{\\\"content\\\":\\\"OK\\\"},\\\"finish_reason\\\":\\\"stop\\\"}]}\"}\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+	executor := NewQoderExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{ID: "fixture", Provider: "qoder", Attributes: map[string]string{"chat_url": server.URL}, Metadata: map[string]any{"access_token": "synthetic", "uid": "fixture-user"}}
+	req := cliproxyexecutor.Request{Model: "kmodel_latest", Payload: []byte(`{"messages":[{"role":"user","content":"OK"}]}`)}
+	result, err := executor.ExecuteStream(context.Background(), auth, req, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAI, OriginalRequest: req.Payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output strings.Builder
+	for chunk := range result.Chunks {
+		if chunk.Err != nil {
+			t.Fatal(chunk.Err)
+		}
+		output.Write(chunk.Payload)
+	}
+	if attempts != 2 || !strings.Contains(output.String(), "OK") {
+		t.Fatalf("attempts=%d, output=%s", attempts, output.String())
+	}
+}
+
+func TestQoderPreHeaderEOFRetryIsBounded(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		conn.Close()
+	}))
+	defer server.Close()
+	executor := NewQoderExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{ID: "fixture", Provider: "qoder", Attributes: map[string]string{"chat_url": server.URL}, Metadata: map[string]any{"access_token": "synthetic", "uid": "fixture-user"}}
+	req := cliproxyexecutor.Request{Model: "kmodel_latest", Payload: []byte(`{"messages":[{"role":"user","content":"OK"}]}`)}
+	_, err := executor.ExecuteStream(context.Background(), auth, req, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAI, OriginalRequest: req.Payload})
+	if err == nil || attempts != 2 {
+		t.Fatalf("err=%v attempts=%d", err, attempts)
 	}
 }
