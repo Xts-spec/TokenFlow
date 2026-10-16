@@ -1,0 +1,41 @@
+{
+  "verifiedAt": "2026-10-16T12:57:09.776205+08:00",
+  "installedApp": "/Applications/TokenFlow.app",
+  "buildVersion": "10.15.26.6",
+  "startup": "passed",
+  "httpService": 200,
+  "typescriptRegressionTests": 44,
+  "typecheck": true,
+  "goCatalogAndNativeTests": true,
+  "installedChat": {
+    "requests": 80,
+    "passed": 80,
+    "workers": 16,
+    "historicalTurns": 100,
+    "historyCharactersApprox": 64000,
+    "toolRoundsPerSession": 4,
+    "streamingRequests": 40,
+    "nonStreamingRequests": 40,
+    "maxMs": 7528
+  },
+  "installedResponses": {
+    "requests": 4,
+    "passed": 4,
+    "streamingAndNonStreamingTools": true
+  },
+  "ui": {
+    "traeModels": 16,
+    "accountIdentityVisible": true,
+    "plan": "Free plan",
+    "usedDisplayUSD": 0.08,
+    "limitUSD": 1,
+    "remainingDisplayPercent": 92,
+    "manualRefreshPassed": true
+  },
+  "codesignVerification": true,
+  "zipAndInstalledMatch": true,
+  "hashes": {
+    "app.asar": "36b614705a3c08a596fc218a12a5447b8ddaa6da7f1b97ee3f3e4e8e6a9493ef",
+    "sidecars/darwin-arm64/cliproxyapi": "84b9d85f8978d2c97c71c3ce5ca8572bf4bbc8eedae2a9858bbda66ae3a1cb13"
+  }
+}

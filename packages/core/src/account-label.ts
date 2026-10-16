@@ -4,7 +4,7 @@ const text=(value:unknown)=>typeof value==='string'&&value.trim()?value.trim().s
 export function accountLabel(provider:string,summary:Identity,stored:Identity={}):string{
  const email=text(summary.email)??text(stored.email);if(email)return email;
  const label=text(summary.label);
- const generic=new Set(['qoder','qoder ide','workbuddy','codebuddy','已保存的账号']);
+ const generic=new Set(['qoder','qoder ide','workbuddy','codebuddy','trae','已保存的账号']);
  if(label&&!generic.has(label.toLowerCase()))return label;
  const nickname=text(summary.nickname)??text(stored.nickname)??text(stored.username)??text(stored.user_name);if(nickname)return nickname;
  const uid=text(summary.uid)??text(stored.uid)??text(summary.user_id)??text(stored.user_id);

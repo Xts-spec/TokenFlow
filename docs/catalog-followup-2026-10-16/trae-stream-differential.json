@@ -1,0 +1,86 @@
+[
+  {
+    "worker": 0,
+    "upstreamStream": true,
+    "status": 200,
+    "output": "TRAE_COMP",
+    "passed": false
+  },
+  {
+    "worker": 1,
+    "upstreamStream": false,
+    "status": 200,
+    "output": "TRAE_COMPLETE_123_OK",
+    "passed": true
+  },
+  {
+    "worker": 2,
+    "upstreamStream": true,
+    "status": 200,
+    "output": "TRAE_COMP",
+    "passed": false
+  },
+  {
+    "worker": 3,
+    "upstreamStream": false,
+    "status": 200,
+    "output": "TRAE_COMPLETE_123_OK",
+    "passed": true
+  },
+  {
+    "worker": 4,
+    "upstreamStream": true,
+    "status": 200,
+    "output": "TRAE_COMP",
+    "passed": false
+  },
+  {
+    "worker": 5,
+    "upstreamStream": false,
+    "status": 200,
+    "output": "TRAE_COMPLETE_123_OK",
+    "passed": true
+  },
+  {
+    "worker": 6,
+    "upstreamStream": true,
+    "status": 200,
+    "output": "TRAE_COMP",
+    "passed": false
+  },
+  {
+    "worker": 7,
+    "upstreamStream": false,
+    "status": 200,
+    "output": "TRAE_COMPLETE_123_OK",
+    "passed": true
+  },
+  {
+    "worker": 8,
+    "upstreamStream": true,
+    "status": 200,
+    "output": "TRAE_COMP",
+    "passed": false
+  },
+  {
+    "worker": 9,
+    "upstreamStream": false,
+    "status": 200,
+    "output": "TRAE_COMPLETE_123_OK",
+    "passed": true
+  },
+  {
+    "worker": 10,
+    "upstreamStream": true,
+    "status": 200,
+    "output": "TRAE_COMPLETE_123",
+    "passed": false
+  },
+  {
+    "worker": 11,
+    "upstreamStream": false,
+    "status": 200,
+    "output": "TRAE_COMPLETE_123_OK",
+    "passed": true
+  }
+]

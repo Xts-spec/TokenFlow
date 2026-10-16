@@ -206,6 +206,19 @@ func (s *Service) fetchOfficialAccountModels(ctx context.Context, a *coreauth.Au
 			}
 		}
 		path = "/models"
+	case "trae":
+		if base == "" {
+			base = "https://trae-api-us.mchost.guru"
+		}
+		path = "/api/ide/v1/get_detail_param?function=chat_v3&need_prompt=false"
+		headers["Authorization"] = "Cloud-IDE-JWT " + token
+		headers["X-App-Id"] = helps.TraeAppID
+		headers["X-App-Version"] = "default"
+		headers["X-IDE-Version"] = "3.6.2"
+		headers["X-IDE-Version-Code"] = "20260212"
+		headers["X-App-Version-Code"] = "20260212"
+		headers["X-IDE-Version-Type"] = "stable"
+		headers["Request-Traffic-Type"] = "prod"
 	case "doubao":
 		// Ark keys expose an OpenAI model directory. MarsCode login tokens use a
 		// different protocol and must not be sent to an unrelated Ark service.
@@ -353,6 +366,35 @@ func parseOfficialCatalog(provider string, raw []byte, fallback []*ModelInfo) ([
 	var items []any
 	recognized := false
 	switch provider {
+	case "trae":
+		configs, ok := data["config_info_list"].([]any)
+		if !ok {
+			return nil, false
+		}
+		recognized = true
+		for _, value := range configs {
+			c, ok := value.(map[string]any)
+			if !ok {
+				return nil, false
+			}
+			display, _ := c["display_config"].(map[string]any)
+			if c["config_switch"] == false || c["is_invisible_to_user"] == true || display["is_custom_model"] == true || stringField(display, "display_name") == "" {
+				continue
+			}
+			item := map[string]any{"id": stringField(c, "config_name"), "display_name": stringField(display, "display_name"), "supportedInputModalities": []any{"text"}}
+			if display["multimodal"] == true {
+				item["supportedInputModalities"] = []any{"text", "image"}
+			}
+			if window, ok := c["context_window_tokens"].(map[string]any); ok {
+				item["context_length"] = window["dev"]
+			}
+			if details, ok := c["model_detail_list"].([]any); ok && len(details) > 0 {
+				if detail, ok := details[0].(map[string]any); ok {
+					item["max_output_tokens"] = detail["max_tokens"]
+				}
+			}
+			items = append(items, item)
+		}
 	case "qoder":
 		// CLI + desktop scenes use the same signed inference gateway. Server scene
 		// lists are authoritative; don't mix embedding/local/BYOK providers into OAuth.

@@ -1,0 +1,37 @@
+{
+  "client": "codex-cli 0.154.0",
+  "model": "trae/deepseek-v4.1-flash",
+  "endpoint": "installed-sidecar-responses",
+  "longContextCharacters": 66890,
+  "isolatedConfiguration": true,
+  "rounds": [
+    {
+      "round": 1,
+      "resumed": false,
+      "exitCode": 0,
+      "toolsCompleted": 3,
+      "durationMs": 26349,
+      "passed": true,
+      "final": "TRAE_CODEX_ROUND1_OK"
+    },
+    {
+      "round": 2,
+      "resumed": true,
+      "exitCode": 0,
+      "toolsCompleted": 3,
+      "durationMs": 25188,
+      "passed": true,
+      "final": "TRAE_CODEX_ROUND2_OK"
+    },
+    {
+      "round": 3,
+      "resumed": true,
+      "exitCode": 0,
+      "toolsCompleted": 3,
+      "durationMs": 25183,
+      "passed": true,
+      "final": "TRAE_CODEX_ROUND3_OK"
+    }
+  ],
+  "passed": true
+}

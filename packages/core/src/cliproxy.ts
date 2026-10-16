@@ -300,10 +300,10 @@ export class CLIProxyManager {
         if(file.id)authIDs.set(id,file.id);
         const provider = file.provider ?? file.type ?? 'unknown';
         let identity:Record<string,unknown>={};
-        if((provider==='qoder'||provider==='workbuddy')&&!file.name.includes('/')&&!file.name.includes('\\')){
+        if((provider==='qoder'||provider==='workbuddy'||provider==='trae')&&!file.name.includes('/')&&!file.name.includes('\\')){
           try{const raw=await readConfig(join(this.root,'cliproxy','auth',file.name));if(raw)identity=JSON.parse(raw);}catch{/* Keep the sidecar label if the credential is being refreshed. */}
         }
-        if (file.auth_index !== undefined) quotaTargets.set(id, {authIndex: String(file.auth_index), account: {provider, email: file.email, domain:typeof identity.domain==='string'?identity.domain:undefined,
+        if (file.auth_index !== undefined) quotaTargets.set(id, {authIndex: String(file.auth_index), account: {provider, email: file.email, domain:provider==='trae'&&typeof identity.host==='string'?identity.host:typeof identity.domain==='string'?identity.domain:undefined,
           projectId: file.project_id, accountType: file.account_type, chatgptAccountId: file.id_token?.chatgpt_account_id, planType: file.id_token?.plan_type}});
         return {
           id, provider, label: (accountLabels[id]??accountLabel(provider,file,identity))+(provider==='workbuddy'&&['www.workbuddy.ai','https://www.workbuddy.ai'].includes(String(identity.domain))?' · 海外':''),

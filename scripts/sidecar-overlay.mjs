@@ -42,6 +42,8 @@ replacements[responseSource]=responsePatched;
 // Test files in a developer's checkout may already exist. Use the same destination
 // names so the overlay replaces them rather than registering duplicate tests.
 if(test){
+ replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/token_flow_trae_live_test.go')]=resolve('tests/sidecar/trae_native_live_test.go');
+ replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/token_flow_trae_native_test.go')]=resolve('tests/sidecar/trae_native_test.go');
  // Official Qoder credentials require a real identity; keep the upstream success fixture synthetic.
  const qoderTestSource=resolve('upstream/CLIProxyAPI/internal/runtime/executor/qoder_executor_test.go');
  const qoderTestPatched=join(patchDir,'qoder_executor_test.go');
