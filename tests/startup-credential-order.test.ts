@@ -37,7 +37,7 @@ vi.mock('../apps/desktop/src/profile.js',()=>({resolveProfile:()=>fixture.root})
 vi.mock('../apps/desktop/src/startup-window.js',()=>({createStartupWindow:async()=>({
  update:async(status:string)=>{
   fixture.events.push(`status:${status}`);
-  if(status==='正在读取已保存的凭据…')await fixture.painting;
+  if(status==='正在读取已保存的凭据…'||status==='正在准备本地工作台…')await fixture.painting;
   fixture.events.push(`painted:${status}`);
  },
  confirmCredentialAccess:()=>{fixture.events.push('confirm');return fixture.decision;},
@@ -66,8 +66,9 @@ for(const available of [true,false])it.each([true,false])(`completes startup aft
  await expect.poll(()=>fixture.events.includes('confirm')).toBe(true);
  expect(fixture.events.filter(event=>event.startsWith('storage-'))).toEqual([]);
  expect(service).not.toHaveBeenCalled();expect(clientRead).not.toHaveBeenCalled();
+ const credentialStatus=allowed?'正在读取已保存的凭据…':'正在准备本地工作台…';
  fixture.events.push('choice-resolved');fixture.decide(allowed);
- await expect.poll(()=>fixture.events.includes('status:正在读取已保存的凭据…')).toBe(true);
+ await expect.poll(()=>fixture.events.includes(`status:${credentialStatus}`)).toBe(true);
  // A status update is not enough: wait until the loading UI has painted before entering synchronous OS storage.
  expect(fixture.events.filter(event=>event.startsWith('storage-'))).toEqual([]);
  fixture.paint();
@@ -77,9 +78,10 @@ for(const available of [true,false])it.each([true,false])(`completes startup aft
   expect(fixture.events).toContain(first);expect(fixture.events).toContain(last);
   expect(fixture.events.indexOf(first)).toBeLessThan(fixture.events.indexOf(last));
  };
- before('choice-resolved','painted:正在读取已保存的凭据…');
- before('painted:正在读取已保存的凭据…','storage-available');
- before('storage-available','service-listen');before('service-listen','session-cookie');
+ before('choice-resolved',`painted:${credentialStatus}`);
+ if(allowed){before('painted:正在读取已保存的凭据…','storage-available');before('storage-available','service-listen');}
+ else expect(fixture.events.filter(event=>event.startsWith('storage-'))).toEqual([]);
+ before('service-listen','session-cookie');
  before('session-cookie','workspace-create');before('painted:正在打开工作台…','workspace-create');
  expect(fixture.events).not.toContain('startup-close');expect(fixture.events).not.toContain('workspace-show');
  const options=service.mock.calls[0][0];
@@ -95,11 +97,16 @@ for(const available of [true,false])it.each([true,false])(`completes startup aft
   else await expect(operation()).rejects.toThrow('本次启动未允许');
  }
  expect(clientRead).toHaveBeenCalledTimes(allowed?operations.length:0);
- expect(storage.decryptString).toHaveBeenCalledTimes(available?1:0);
- // Skipping client imports still reads TokenFlow's own vault; unavailable storage must preserve its ciphertext.
+ expect(options.credentialWarnings!().some(w=>w.includes('临时密钥'))).toBe(!allowed||!available);
+ if(!allowed){
+  for(let attempt=0;attempt<2;attempt++)expect(await options.secrets.get('cliproxy')).toBe('');
+  await expect(options.secrets.set('cliproxy','replacement')).rejects.toThrow('本次启动已跳过');
+  expect(fixture.events.filter(event=>event.startsWith('storage-'))).toEqual([]);
+ }
+ expect(storage.decryptString).toHaveBeenCalledTimes(allowed&&available?1:0);
+ // Skipping must never touch the OS vault, including TokenFlow's own encrypted credentials.
  expect(await readFile(join(fixture.root,'secrets/cliproxy.bin'),'utf8')).toBe('fixture-local-key');
- expect(options.credentialWarnings!().some(w=>w.includes('已跳过客户端'))).toBe(!allowed);
- expect(options.credentialWarnings!().some(w=>w.includes('临时密钥'))).toBe(!available);
+ expect(options.credentialWarnings!().some(w=>w.includes('已跳过所有安全存储'))).toBe(!allowed);
  fixture.openWorkspace();
  await expect.poll(()=>fixture.events.includes('startup-close')).toBe(true);
  before('workspace-loaded','workspace-show');before('workspace-show','workspace-focus');before('workspace-focus','startup-close');

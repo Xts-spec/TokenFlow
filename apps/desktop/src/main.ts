@@ -40,7 +40,7 @@ async function start() {
   const icon=join(here,'console','app-icon.png');
   const startup=await createStartupWindow(icon);
   // Explain both saved and client credentials before any operation can trigger an OS prompt.
-  const allowClientCredentials=await startup.confirmCredentialAccess();
+  const allowCredentials=await startup.confirmCredentialAccess();
   await startup.update('正在准备网络连接…');
   // Resolve external traffic using a separate OS-proxy session. The workspace
   // only loads loopback URLs and must remain reachable with any system proxy.
@@ -49,8 +49,8 @@ async function start() {
   const network=await createNetworkProxy(url=>networkSession.resolveProxy(url));
   network.installFetch();
   await session.defaultSession.setProxy({mode:'direct'});
-  await startup.update('正在读取已保存的凭据…',process.platform==='darwin'?'系统可能请求钥匙串权限，用于解密已保存的凭据。':'正在通过系统安全存储读取已保存的密钥。');
-  if(process.platform==='darwin'){
+  await startup.update(allowCredentials?'正在读取已保存的凭据…':'正在准备本地工作台…',allowCredentials?(process.platform==='darwin'?'系统可能请求钥匙串权限，用于解密已保存的凭据。':'正在通过系统安全存储读取已保存的密钥。'):'');
+  if(process.platform==='darwin'&&allowCredentials){
     // Keep the legacy service name if the keychain cannot initialize; Secrets exposes its warning.
     try{if(safeStorage.isEncryptionAvailable()){safeStorage.encryptString('');app.setName('TokenFlow');}}catch{}
   }
@@ -65,7 +65,7 @@ async function start() {
   if(process.platform==='darwin')app.dock?.setIcon(nativeImage.createFromPath(icon));
   const root=process.env.AGENT_DATA_ROOT?resolve(process.env.AGENT_DATA_ROOT):app.getPath('userData');
   await mkdir(join(root,'secrets'),{recursive:true,mode:0o700});
-  const secrets=createSecrets(root,safeStorage);
+  const secrets=createSecrets(root,safeStorage,process.platform,allowCredentials);
   let localKey=await secrets.get('cliproxy');
   if(!localKey){
     localKey=randomBytes(32).toString('hex');
@@ -75,7 +75,7 @@ async function start() {
   const token=randomBytes(32).toString('hex');
   const base=app.isPackaged?process.resourcesPath:resolve(here,'..');
   const claudeKeychainStore=process.platform==='darwin'?claudeKeychain(dirname(agentPaths().claude)):undefined;
-  const claudeCredentialStore=claudeKeychainStore?{read:guardCredentialAccess(allowClientCredentials,()=>claudeKeychainStore.read()),write:guardCredentialAccess(allowClientCredentials,(value:string|null)=>claudeKeychainStore.write(value))}:undefined;
+  const claudeCredentialStore=claudeKeychainStore?{read:guardCredentialAccess(allowCredentials,()=>claudeKeychainStore.read()),write:guardCredentialAccess(allowCredentials,(value:string|null)=>claudeKeychainStore.write(value))}:undefined;
   await startup.update('正在启动本地服务…');
   const service=await createDesktopService({root,token,localKey,secrets,outboundProxyURL:network.url,networkSnapshot:network.snapshot,fileCleanup:{
     ...desktopCleanupFiles(app,shell),
@@ -84,7 +84,7 @@ async function start() {
       const result=window?await dialog.showOpenDialog(window,picker):await dialog.showOpenDialog(picker);
       return result.canceled?undefined:result.filePaths[0];
     },
-  },claudeCredentialStore,desktopAccounts:{crypto:guardCredentialAccess(allowClientCredentials,qoderCrypto)},qoderIde:{crypto:guardCredentialAccess(allowClientCredentials,qoderIdeCrypto)},credentialWarnings:()=>[...secrets.warnings(),...(!allowClientCredentials?['本次启动已跳过客户端安全存储；如需读取 Claude Code、Qoder 等加密登录信息，请重启后选择“允许读取”。']:[])],openExternal:url=>shell.openExternal(url),proxyPort:process.env.AGENT_PROXY_PORT?Number(process.env.AGENT_PROXY_PORT):undefined,binary:process.env.CLIPROXY_BINARY?resolve(process.env.CLIPROXY_BINARY):join(base,'sidecars',`${process.platform}-${process.arch}`,process.platform==='win32'?'cliproxyapi.exe':'cliproxyapi'),uiRoot:join(here,'console')});
+  },claudeCredentialStore,desktopAccounts:{crypto:guardCredentialAccess(allowCredentials,qoderCrypto)},qoderIde:{crypto:guardCredentialAccess(allowCredentials,qoderIdeCrypto)},credentialWarnings:()=>[...secrets.warnings(),...(!allowCredentials?['本次启动已跳过所有安全存储，已有凭据文件已保留；部分账号和 API 密钥暂不可用。请重启后选择“允许读取”以恢复访问。']:[])],openExternal:url=>shell.openExternal(url),proxyPort:process.env.AGENT_PROXY_PORT?Number(process.env.AGENT_PROXY_PORT):undefined,binary:process.env.CLIPROXY_BINARY?resolve(process.env.CLIPROXY_BINARY):join(base,'sidecars',`${process.platform}-${process.arch}`,process.platform==='win32'?'cliproxyapi.exe':'cliproxyapi'),uiRoot:join(here,'console')});
   const address=await service.app.listen({host:'127.0.0.1',port:Number(process.env.AGENT_PORT??9527)});
   ipcMain.handle('clipboard:write-text',(event,text:unknown)=>{
     if(!window || event.sender!==window.webContents || event.senderFrame!==window.webContents.mainFrame || new URL(event.senderFrame.url).origin!==address)throw new Error('Clipboard request denied');

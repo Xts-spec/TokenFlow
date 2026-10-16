@@ -10,7 +10,7 @@ type Storage = {
   getSelectedStorageBackend?():string;
 };
 /** Keep unreadable ciphertext for recovery; missing credentials must not prevent the workspace opening. */
-export function createSecrets(root:string, storage:Storage, platform=process.platform) {
+export function createSecrets(root:string, storage:Storage, platform=process.platform,allowAccess=true) {
   const unreadable=new Set<string>();
   const warnings=new Map<string,string>();
   const label=(name:string)=>name.startsWith('gateway-key-')?'导出 Key':name.startsWith('source-')?'API 来源':({cliproxy:'内部网关',openai:'OpenAI',custom:'自定义接口','cursor-account':'Cursor 账号'}[name]??name);
@@ -19,7 +19,8 @@ export function createSecrets(root:string, storage:Storage, platform=process.pla
     if(!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,199}$/.test(name)||/^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$/i.test(name))throw new Error('密钥存储名称无效');
     return join(root,'secrets',`${name}.bin`);
   };
-  const canEncrypt=()=>storage.isEncryptionAvailable()&&!(platform==='linux'&&storage.getSelectedStorageBackend?.()==='basic_text');
+  // Even probing availability can open an OS permission prompt. A skipped startup must never call storage.
+  const canEncrypt=()=>allowAccess&&storage.isEncryptionAvailable()&&!(platform==='linux'&&storage.getSelectedStorageBackend?.()==='basic_text');
   return {
     canEncrypt,
     warnings:()=>[...warnings.values()],
@@ -31,7 +32,7 @@ export function createSecrets(root:string, storage:Storage, platform=process.pla
       catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return '';throw error;}
       if(!canEncrypt()) {
         if(name.startsWith('native-login-'))throw new Error('系统安全存储暂不可用，原登录备份已保留。');
-        warnings.set(name,`${label(name)}密钥暂时无法读取，请解锁系统钥匙串后重启应用。原加密文件已保留。`);
+        warnings.set(name,allowAccess?`${label(name)}密钥暂时无法读取，请解锁系统钥匙串后重启应用。原加密文件已保留。`:`本次启动已跳过 ${label(name)} 安全存储，原加密文件已保留。`);
         return '';
       }
       try{return storage.decryptString(data);}
@@ -43,7 +44,7 @@ export function createSecrets(root:string, storage:Storage, platform=process.pla
       }
     },
     async set(name:string,value:string) {
-      if(!canEncrypt())throw new Error('系统安全密钥存储不可用，请解锁系统钥匙串后重试。');
+      if(!canEncrypt())throw new Error(allowAccess?'系统安全密钥存储不可用，请解锁系统钥匙串后重试。':'本次启动已跳过安全存储，请重启后选择“允许读取”。');
       const file=path(name);
       const encrypted=storage.encryptString(value);
       // Back up even if get() was not called before replacing the credential.

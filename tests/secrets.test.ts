@@ -1,4 +1,4 @@
-import { it, expect, afterEach } from 'vitest';
+import { it, expect, afterEach, vi } from 'vitest';
 import { mkdtemp, mkdir, readFile, writeFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -35,6 +35,19 @@ it('does not overwrite locked-store credentials and lets reads recover once unlo
  expect(await secrets.get('custom')).toBe('');await expect(secrets.set('custom','new')).rejects.toThrow('不可用');
  expect(await readFile(join(root,'secrets','custom.bin'),'utf8')).toBe('encrypted:original');
  available=true;expect(await secrets.get('custom')).toBe('original');
+});
+it.each(['darwin','win32','linux'] as const)('skips all OS storage calls and preserves encrypted files on %s',async platform=>{
+ const root=await setup(),file=join(root,'secrets','cliproxy.bin');await writeFile(file,'encrypted:original');
+ const blocked={isEncryptionAvailable:vi.fn(()=>true),encryptString:vi.fn(storage.encryptString),decryptString:vi.fn(storage.decryptString),getSelectedStorageBackend:vi.fn(()=> 'gnome_libsecret')};
+ const secrets=createSecrets(root,blocked,platform,false);
+ expect(secrets.canEncrypt()).toBe(false);
+ for(let attempt=0;attempt<3;attempt++)expect(await secrets.get('cliproxy')).toBe('');
+ await expect(secrets.set('cliproxy','replacement')).rejects.toThrow('本次启动已跳过');
+ expect(await readFile(file,'utf8')).toBe('encrypted:original');
+ expect(await readdir(join(root,'secrets'))).toEqual(['cliproxy.bin']);
+ for(const operation of Object.values(blocked))expect(operation).not.toHaveBeenCalled();
+ // The decision is session-scoped; allowing access on the next launch reuses the same original ciphertext.
+ expect(await createSecrets(root,storage,platform).get('cliproxy')).toBe('original');
 });
 it('backs up undecryptable API keys before explicit replacement and retains ciphertext if encryption fails',async()=>{
  const root=await setup();const file=join(root,'secrets','openai.bin');await writeFile(file,'broken');
