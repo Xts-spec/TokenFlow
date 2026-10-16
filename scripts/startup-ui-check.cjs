@@ -1,42 +1,37 @@
 // Run with: npx electron scripts/startup-ui-check.cjs (isolated profile; no credentials accessed).
 const {app,BrowserWindow}=require('electron');
-const {mkdtemp,writeFile,rm}=require('node:fs/promises');
-const {tmpdir}=require('node:os');
-const {join}=require('node:path');
-const assert=require('node:assert/strict');
+const {mkdtemp,writeFile,rm,mkdir}=require('node:fs/promises');
+const {tmpdir}=require('node:os'),{join}=require('node:path'),assert=require('node:assert/strict');
 (async()=>{
- const root=await mkdtemp(join(tmpdir(),'tokenflow-startup-ui-'));app.setPath('userData',root);app.on('window-all-closed',()=>{});
- const bundle=join(root,'startup-window.cjs');require('esbuild').buildSync({entryPoints:['apps/desktop/src/startup-window.ts'],bundle:true,platform:'node',format:'cjs',external:['electron'],outfile:bundle});
- await app.whenReady();
- const startup=await require(bundle).createStartupWindow(join(process.cwd(),'dist/console/app-icon.png'));
- const win=BrowserWindow.getAllWindows()[0],evaluate=code=>win.webContents.executeJavaScript(code);
- const wait=async code=>{for(let n=0;n<100;n++){if(await evaluate(code))return;await new Promise(r=>setTimeout(r,20));}throw Error('Startup UI did not become ready');};
- assert.ok(win.isVisible());assert.deepEqual(win.getSize(),[1320,900]);
- await startup.update('正在读取已保存的凭据…','系统可能请求钥匙串权限，用于解密已保存的凭据。');
- assert.equal(await evaluate("document.querySelector('[role=status]').textContent"),'正在读取已保存的凭据…');
- await writeFile(join(process.cwd(),'.tmp/startup-window.png'),(await win.webContents.capturePage()).toPNG());
- let settled=false;
- const skipped=startup.confirmCredentialAccess().then(value=>{settled=true;return value;});
- await wait("!document.getElementById('consent').hidden");assert.equal(settled,false);
- assert.equal(await evaluate('document.activeElement.id'),'skip');
- assert.equal(await evaluate("document.querySelector('main').getAttribute('aria-busy')"),'false');
- assert.ok((await evaluate("document.getElementById('consent').innerText")).length<120);
- await new Promise(r=>setTimeout(r,220));
- await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
- await writeFile(join(process.cwd(),'.tmp/startup-confirmation.png'),(await win.webContents.capturePage()).toPNG());
- await evaluate("document.getElementById('skip').click()");assert.equal(await skipped,false);
- const allowed=startup.confirmCredentialAccess();await wait("!document.getElementById('consent').hidden");
- win.setSize(900,640);await new Promise(r=>setTimeout(r,50));
- assert.equal(await evaluate('document.documentElement.scrollWidth<=window.innerWidth'),true);
- assert.equal(await evaluate("(()=>{const r=document.getElementById('consent').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight})()"),true);
- await writeFile(join(process.cwd(),'.tmp/startup-confirmation-compact.png'),(await win.webContents.capturePage()).toPNG());
- win.webContents.sendInputEvent({type:'keyDown',keyCode:'Tab'});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Tab'});
- await wait("document.activeElement.id==='allow'");
- await evaluate("document.getElementById('allow').click()");assert.equal(await allowed,true);
- const escaped=startup.confirmCredentialAccess();await wait("!document.getElementById('consent').hidden");
- win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});assert.equal(await escaped,false);
- await startup.update('正在打开工作台…');
- assert.deepEqual(startup.bounds(),win.getBounds());startup.close();assert.ok(win.isDestroyed());
- console.log('PASS: workspace size, concise in-app confirmation, pending choice, allow/skip/Escape, keyboard focus, compact layout, and dismissal');
+ await mkdir(join(process.cwd(),'.tmp'),{recursive:true});
+ const root=await mkdtemp(join(tmpdir(),'tf-startup-position-'));app.setPath('userData',root);app.on('window-all-closed',()=>{});const bundle=join(root,'startup-window.cjs');require('esbuild').buildSync({entryPoints:['apps/desktop/src/startup-window.ts'],bundle:true,platform:'node',format:'cjs',external:['electron'],outfile:bundle});await app.whenReady();
+ for(const [width,height] of [[1320,900],[900,640]])for(const allow of [false,true]){
+  const startup=await require(bundle).createStartupWindow(join(process.cwd(),'apps/console/public/app-icon.png'));
+  const win=BrowserWindow.getAllWindows()[0],ev=code=>win.webContents.executeJavaScript(code);win.setBounds({width,height});
+  const box=()=>ev(`(()=>{const e=document.querySelector('.brand'),r=e.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,count:document.querySelectorAll('.brand').length}})()`);
+  const initial=await box();assert.equal(initial.count,1);assert.equal(await ev('getComputedStyle(document.getElementById("loading")).visibility'),'hidden','loading animation must wait for a choice');const decision=startup.confirmCredentialAccess();
+  await ev('new Promise(resolve=>requestAnimationFrame(resolve))');
+  assert.equal(await ev('document.activeElement.id'),'access-title');
+  assert.equal(await ev('document.getElementById("consent").getAttribute("role")'),'region');
+  assert.equal(await ev('getComputedStyle(document.getElementById("consent")).backgroundColor'),'rgba(0, 0, 0, 0)');
+  assert.equal(await ev('getComputedStyle(document.getElementById("skip")).textDecorationLine'),'none');
+  assert.deepEqual(await box(),initial,'brand shifted when showing choice');
+  assert.equal(await ev('getComputedStyle(document.getElementById("loading")).visibility'),'hidden');
+  if(width===1320&&!allow)await writeFile('.tmp/startup-position-choice.png',(await win.webContents.capturePage()).toPNG());
+  if(allow){
+   for(const id of ['skip','allow']){win.webContents.sendInputEvent({type:'keyDown',keyCode:'Tab'});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Tab'});await ev('new Promise(resolve=>requestAnimationFrame(resolve))');assert.equal(await ev('document.activeElement.id'),id);}
+   assert.equal(await ev('getComputedStyle(document.getElementById("skip")).textDecorationLine'),'none');
+  }
+  await ev(`document.getElementById('${allow?'allow':'skip'}').click()`);assert.equal(await decision,allow);
+  assert.deepEqual(await box(),initial,'brand shifted after choosing');
+  assert.equal(await ev('getComputedStyle(document.getElementById("consent")).visibility'),'hidden');
+  assert.equal(await ev('getComputedStyle(document.getElementById("loading")).visibility'),'visible');
+  for(const [status,hint] of [['正在准备网络连接…',''],['正在读取已保存的凭据…','系统可能请求钥匙串权限，用于解密已保存的凭据。'],['正在启动本地服务…',''],['正在打开工作台…','']]){
+   await startup.update(status,hint);assert.deepEqual(await box(),initial,'brand shifted during '+status);
+  }
+  if(width===1320&&!allow)await writeFile('.tmp/startup-position-loading.png',(await win.webContents.capturePage()).toPNG());
+  const escaped=startup.confirmCredentialAccess();await ev('new Promise(resolve=>requestAnimationFrame(resolve))');win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});assert.equal(await escaped,false);assert.deepEqual(await box(),initial);assert.deepEqual(startup.bounds(),win.getBounds());
+  startup.close();assert.ok(win.isDestroyed());console.log('PASS',width,height,allow?'allow':'skip','one shared brand stays at identical coordinates across choice and all loading stages.');
+ }
  await rm(root,{recursive:true,force:true,maxRetries:3,retryDelay:100}).catch(()=>{});app.exit(0);
-})().catch(error=>{console.error(error);app.exit(1);});
+})().catch(e=>{console.error(e);app.exit(1)});
