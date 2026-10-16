@@ -1,3 +1,4 @@
+import {CursorLocalLogin} from './cursor-local.js';
 import { apiModelRoute } from '../../../apps/shared/api-endpoint.js';
 import {CodexSwitchLifecycle} from './codex-switch-lifecycle.js';
 import {WorkBuddySDKProvider} from './codebuddy.js';
@@ -53,7 +54,7 @@ import { RunControl } from './control.js';
 import { checkDesktopPermissions, desktopInstructions, desktopSupported, type DesktopPermissions } from './desktop/index.js';
 
 export type Secrets = {persistent?:boolean;get:(name:string)=>Promise<string>; set:(name:string,value:string)=>Promise<void>;remove?:(name:string)=>Promise<void>};
-export type ServiceOptions = {workbuddySDKFactory?:(proxy:CLIProxyManager)=>Pick<WorkBuddySDKProvider,'response'|'close'>;antigravityPath?:string;claudeCredentialStore?:CredentialStore|null;nativeProcesses?:(target:NativeProvider)=>Promise<number[]>;agentPaths?:Partial<AgentPaths>;agentProcesses?:(target:Target)=>Promise<number[]>;root:string;binary:string;token:string;localKey:string;secrets:Secrets;credentialWarnings?:()=>string[];headless?:boolean;uiRoot?:string;proxyPort?:number;openExternal?:(url:string)=>Promise<void>};
+export type ServiceOptions = {workbuddySDKFactory?:(proxy:CLIProxyManager)=>Pick<WorkBuddySDKProvider,'response'|'close'>;antigravityPath?:string;cursorLocalPath?:string;claudeCredentialStore?:CredentialStore|null;nativeProcesses?:(target:NativeProvider)=>Promise<number[]>;agentPaths?:Partial<AgentPaths>;agentProcesses?:(target:Target)=>Promise<number[]>;root:string;binary:string;token:string;localKey:string;secrets:Secrets;credentialWarnings?:()=>string[];headless?:boolean;uiRoot?:string;proxyPort?:number;openExternal?:(url:string)=>Promise<void>};
 const clientCredential=(headers:{authorization?:string;'x-api-key'?:string|string[]})=>{
   const bearer=headers.authorization?.replace(/^Bearer /,'')??'';
   const apiKey=typeof headers['x-api-key']==='string'?headers['x-api-key']:'';
@@ -264,7 +265,7 @@ export async function createDesktopService(options:ServiceOptions) {
   const discoverLocal=()=>discoveryTask??=(async()=>{
     discovery.state='loading';
     try{await proxy.start();for(const target of ['codex','claude'] as const){
-      try{await proxy.importCredential(target,await localCredential(target,connections.paths),true);}
+      try{await proxy.importCredential(target,await localCredential(target,connections.paths,options.claudeCredentialStore),true);}
       catch{discovery.unavailable.push(target);}
     }
     for(const provider of ['workbuddy','zcode','doubao','trae'] as const){
@@ -466,6 +467,8 @@ export async function createDesktopService(options:ServiceOptions) {
     });
   });
   const nativeStatus=async(provider:NativeProvider)=>({...await nativeAccounts[provider].status(),accounts:await proxy.nativeAccounts(provider),gatewayConnected:provider==='claude'&&!!(await connections.status()).find(t=>t.id==='claude')?.connection});
+  const cursorLocalLogin=new CursorLocalLogin(options.cursorLocalPath);
+  app.get('/api/native-accounts/cursor',async req=>({...await cursorLocalLogin.status((req.query as {refresh?:string}).refresh==='1'),readOnly:true,pids:[],backup:null,gatewayConnected:false,accounts:proxy.cursor.snapshot().accounts.map(a=>({id:a.id,email:a.label,switchable:false,reason:'请在 Cursor 客户端切换本机登录。'}))}));
   app.get('/api/native-accounts/:provider',async req=>nativeStatus(nativeProviderSchema.parse((req.params as {provider:string}).provider)));
   for(const action of ['switch','restore'] as const)app.post(`/api/native-accounts/:provider/${action}`,async req=>{
     await idle();const provider=nativeProviderSchema.parse((req.params as {provider:string}).provider);
@@ -509,7 +512,7 @@ export async function createDesktopService(options:ServiceOptions) {
   });
   app.post('/api/a2a/import',async req=>{
     await idle();const {target}=z.object({target:z.enum(['codex','claude'])}).strict().parse(req.body);
-    try{return await proxy.importCredential(target,await localCredential(target,connections.paths));}
+    try{return await proxy.importCredential(target,await localCredential(target,connections.paths,options.claudeCredentialStore));}
     catch(error){throw Object.assign(new Error(error instanceof z.ZodError?'本地凭据不是支持的 OAuth 格式，请在账号授权页重新授权。':error instanceof Error?error.message:'导入失败'),{statusCode:400});}
   });
   app.post('/api/a2a/connect',async req=>{
@@ -769,8 +772,8 @@ export async function createDesktopService(options:ServiceOptions) {
   app.post('/api/local-agent/providers/:provider/refresh',async req=>{
     await idle();
     const provider=z.enum([...loginProviderIds,'cursor']).parse((req.params as {provider:string}).provider);
-    z.object({}).strict().parse(req.body??{});
-    return localOperation(()=>proxy.refreshProvider(provider));
+    const {force}=z.object({force:z.boolean().default(true)}).strict().parse(req.body??{});
+    return localOperation(()=>proxy.refreshProvider(provider,force));
   });
   app.post('/api/local-agent/:action',async req=>{await idle();const action=z.enum(['start','stop','restart','refresh','quota','cursor',...loginProviderIds]).parse((req.params as {action:string}).action);if(action==='cursor'||isLoginProvider(action))return localOperation(()=>proxy.login(action));if(action==='refresh')return localOperation(async()=>{await proxy.cursor.refresh();return proxy.refreshAccounts();});if(action==='quota')return localOperation(async()=>{await proxy.refreshAccounts();return proxy.refreshQuota();});if(action==='restart')return localOperation(async()=>{await proxy.stop();return proxy.start();});return localOperation(()=>proxy[action]());});
   app.post('/api/local-agent/login/:action',async req=>{
@@ -830,6 +833,9 @@ export async function createDesktopService(options:ServiceOptions) {
       if(!client||!reservation||settled)return;settled=true;
       try{await gatewayKeys.settle(client.id,reservation,usage,uncertain);}catch{app.log.error('客户端 Key 用量写入失败；在途状态保留，后续有限额请求将被阻止。');}
     };
+    // Revalidate an idle Cursor catalog when it is actually used, not on a timer.
+    const requestedModel=(req.body as {model?:unknown}|undefined)?.model;
+    if(typeof requestedModel==='string'&&requestedModel.startsWith('cursor/')&&(!client||client.models.includes(requestedModel))||path==='models'&&client?.models.some(model=>model.startsWith('cursor/')))await proxy.cursor.refreshIfStale();
     let selectedAuth:string|undefined;
     if(client) {
       const direct=directKeys.has(client.id)&&path.startsWith('responses');

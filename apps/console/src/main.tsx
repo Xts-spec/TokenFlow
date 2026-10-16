@@ -70,7 +70,9 @@ function App(){
  };
  const command=(action:string)=>act(()=>requestJSON<LocalAgentSnapshot>(`/api/local-agent/${action}`,post()));
  const accounts:AccountActions={
-  refresh:provider=>act(()=>requestJSON<LocalAgentSnapshot>(`/api/local-agent/providers/${provider}/refresh`,post(),300000),`${local.providers.find(item=>item.id===provider)?.label??provider} 账号、模型和额度已刷新。`),
+  refresh:(provider,force=true)=>force
+   ?act(()=>requestJSON<LocalAgentSnapshot>(`/api/local-agent/providers/${provider}/refresh`,post(),300000),`${local.providers.find(item=>item.id===provider)?.label??provider} 账号、模型和额度已刷新。`)
+   :requestJSON<LocalAgentSnapshot>(`/api/local-agent/providers/${provider}/refresh`,post({force:false}),300000).then(()=>refresh()).catch(()=>{}),
   connect:provider=>command(provider),
   importLocal:provider=>act(()=>requestJSON<LocalAgentSnapshot>(`/api/local-agent/import-local/${provider}`,post()),'已导入本机账号。'),
   login:(action,data)=>act(()=>requestJSON<LocalAgentSnapshot>(`/api/local-agent/login/${action}`,post(data))),

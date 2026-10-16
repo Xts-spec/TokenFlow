@@ -95,3 +95,32 @@ it('recovers a prepared Claude switch after only credentials were written',async
  expect((await manager.status()).backup?.state).toBe('prepared');
  await manager.restore({revision:(await manager.status()).revision});expect(await store.read()).toEqual(before);expect((await manager.status()).backup).toBeNull();
 });
+
+it('uses account and organization identity instead of email when preserving refreshed tokens',async()=>{
+ const {dir,manager}=await setup();const first={...credential(),account_uuid:'same-user',organization_uuid:'org-one'};
+ await manager.switch({revision:(await manager.status()).revision},first);
+ const path=join(dir,'.credentials.json'),doc=JSON.parse(await readFile(path,'utf8'));doc.claudeAiOauth.refreshToken='rotated-org-one';await writeFile(path,JSON.stringify(doc));
+ await manager.switch({revision:(await manager.status()).revision},{...first,organization_uuid:'org-two',refresh_token:'new-org-two'});
+ expect(JSON.parse(await readFile(path,'utf8')).claudeAiOauth.refreshToken).toBe('new-org-two');expect((await manager.status()).organizationId).toBe('org-two');
+ await writeFile(join(dir,'.claude.json'),JSON.stringify({oauthAccount:{emailAddress:first.email,accountUuid:first.account_uuid,organizationUuid:'external-org'}}));
+ await expect(manager.restore({revision:(await manager.status()).revision})).rejects.toThrow('其他修改');
+});
+it('restores original login after a model selection or explicit logout and preserves the later model',async()=>{
+ const {dir,manager,settings}=await setup();await manager.switch({revision:(await manager.status()).revision,model:'claude/sonnet'},credential());
+ const prefs=JSON.parse(await readFile(settings,'utf8'));prefs.model='opus';await writeFile(settings,JSON.stringify(prefs));
+ await manager.restore({revision:(await manager.status()).revision});expect(JSON.parse(await readFile(settings,'utf8')).model).toBe('opus');expect((await manager.status()).email).toBeNull();
+ await manager.switch({revision:(await manager.status()).revision},credential());await writeFile(join(dir,'.credentials.json'),'{}');await writeFile(join(dir,'.claude.json'),'{}');
+ await manager.restore({revision:(await manager.status()).revision});expect(JSON.parse(await readFile(settings,'utf8')).model).toBe('opus');expect((await manager.status()).backup).toBeNull();
+});
+it('recovers a partially restored account while retaining the model captured before the crash',async()=>{
+ const {root,dir,store,manager,settings}=await setup();await manager.switch({revision:(await manager.status()).revision,model:'claude/sonnet'},credential());
+ await writeFile(settings,'{"model":"opus"}');const path=join(root,'backup.json'),journal=JSON.parse(await readFile(path,'utf8')),current=await store.read();
+ journal.restoreTarget=store.restoreState(current,journal.before,journal.after);journal.after=current;journal.state='prepared';await writeFile(path,JSON.stringify(journal));
+ await writeFile(join(dir,'.credentials.json'),'{}');await manager.restore({revision:(await manager.status()).revision});expect(JSON.parse(await readFile(settings,'utf8')).model).toBe('opus');expect((await manager.status()).backup).toBeNull();
+});
+it('does not treat a leftover Claude profile as a signed-in client after OAuth is removed',async()=>{
+ const {dir,manager}=await setup();await writeFile(join(dir,'.claude.json'),JSON.stringify({oauthAccount:{emailAddress:'stale@example.test',accountUuid:'old'}}));
+ expect(await manager.status()).toMatchObject({loginState:'signed-out'});
+ await writeFile(join(dir,'.credentials.json'),JSON.stringify({claudeAiOauth:{accessToken:'present'}}));expect(await manager.status()).toMatchObject({loginState:'signed-in'});
+ await writeFile(join(dir,'.claude.json'),'{}');expect(await manager.status()).toMatchObject({loginState:'unreadable',readError:expect.stringContaining('缺少账号资料')});
+});

@@ -91,3 +91,10 @@ it('resolves the original account default using its saved login rather than the 
   expect(JSON.parse(await readFile(auth,'utf8')).tokens.account_id).toBe('next');
  }finally{resolver.mockRestore();}
 });
+it('distinguishes unsupported credential storage and ignores stale profiles without active OAuth',async()=>{
+ const {manager,config,auth}=await setup();await writeFile(auth,JSON.stringify({tokens:oauth('a')}));
+ for(const storage of ['keyring','auto']){await writeFile(config,`cli_auth_credentials_store="${storage}"`);expect(await manager.status()).toMatchObject({loginState:'unreadable',email:null,readError:expect.stringContaining('钥匙串')});}
+ await writeFile(config,'');expect(await manager.status()).toMatchObject({loginState:'signed-in',email:'a@example.test'});
+ for(const value of [{tokens:{...oauth('a'),access_token:''}},{auth_mode:'api_key',tokens:oauth('a')},{OPENAI_API_KEY:'private-api-key',tokens:oauth('a')}]){await writeFile(auth,JSON.stringify(value));expect(await manager.status()).toMatchObject({loginState:'signed-out',email:null,accountId:null});}
+ await writeFile(auth,'invalid');expect(await manager.status()).toMatchObject({loginState:'unreadable',email:null});
+});

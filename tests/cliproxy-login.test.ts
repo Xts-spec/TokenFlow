@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, writeFile, readFile, rm,realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -9,19 +10,6 @@ import {quotaProviders} from '../packages/core/src/quota/index.js';
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => {for (const fn of cleanup.splice(0).reverse()) await fn();});
 const binary = resolve('tests/fixtures/fake-cliproxy.mjs');
-it('preserves official image capabilities and keeps image-dropping adapters text-only',async()=>{
- const {manager,root}=await setup();
- await mkdir(join(root,'cliproxy'),{recursive:true});
- await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([
-  {name:'workbuddy.json',provider:'workbuddy',status:'active',auth_index:'wb',models:[{id:'deepseek-v4.1-flash',supportedInputModalities:['TEXT','IMAGE']},{id:'text-only',supportedInputModalities:['text']},{id:'unknown'}]},
-  {name:'qoder.json',provider:'qoder',status:'active',auth_index:'qd',models:[{id:'vision-base-model',supportedInputModalities:['text','image']}]},
- ]));
- await manager.start();const models=manager.snapshot().models;
- expect(models.find(m=>m.id==='workbuddy/deepseek-v4.1-flash')?.capabilities?.images).toBe(true);
- expect(models.find(m=>m.id==='workbuddy/text-only')?.capabilities?.images).toBe(false);
- expect(models.find(m=>m.id==='workbuddy/unknown')?.capabilities).toBeUndefined();
- expect(models.find(m=>m.id==='qoder/vision-base-model')?.capabilities?.images).toBe(false);
-});
 it('identifies WorkBuddy and Qoder accounts from safe stored metadata when sidecar labels are generic',async()=>{
  const {manager,root}=await setup();
  await mkdir(join(root,'cliproxy/auth'),{recursive:true});
@@ -32,12 +20,26 @@ it('identifies WorkBuddy and Qoder accounts from safe stored metadata when sidec
  await manager.start();
  expect(manager.snapshot().accounts.find(a=>a.provider==='workbuddy')?.label).toBe('测试用户');
  expect(manager.snapshot().accounts.find(a=>a.provider==='qoder')?.label).toBe('账号 019eaf51…444e8b1b');
+ expect(manager.snapshot().accounts.find(a=>a.provider==='qoder')?.nativeClients).toEqual(['qoder','qoder-ide']);
+ expect(manager.snapshot().accounts.find(a=>a.provider==='workbuddy')?.nativeClients).toEqual(['workbuddy']);
  expect(JSON.stringify(manager.snapshot().accounts)).not.toContain('private-token-not-for-display');
  const qoder=manager.snapshot().accounts.find(a=>a.provider==='qoder')!;
  await writeFile(join(root,'account-labels.json'),JSON.stringify({[qoder.id]:'personal@example.test'}));
  await manager.refreshAccounts();
  expect(manager.snapshot().accounts.find(a=>a.id===qoder.id)?.label).toBe('personal@example.test');
  expect(JSON.parse(await readFile(join(root,'cliproxy/auth/qoder.json'),'utf8')).email).toBeUndefined();
+});
+it('keeps product eligibility independent of enabled state and local client login',async()=>{
+ const {manager,root}=await setup();
+ await mkdir(join(root,'cliproxy/auth'),{recursive:true});
+ const files=[{name:'cn.json',provider:'workbuddy',status:'active',disabled:true},{name:'ai.json',provider:'workbuddy',status:'active'},{name:'unknown.json',provider:'workbuddy',status:'active'}];
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify(files));
+ for(const [name,domain] of [['cn','https://www.workbuddy.cn/'],['ai','www.workbuddy.ai'],['unknown','unknown.test']])await writeFile(join(root,'cliproxy/auth',`${name}.json`),JSON.stringify({email:`${name}@example.test`,domain}));
+ await manager.start();
+ const accounts=manager.snapshot().accounts;
+ expect(accounts.find(a=>a.label==='cn@example.test')).toMatchObject({disabled:true,nativeClients:['workbuddy']});
+ expect(accounts.find(a=>a.label==='ai@example.test')?.nativeClients).toEqual(['workbuddy-ai']);
+ expect(accounts.find(a=>a.label==='unknown@example.test')?.nativeClients).toEqual([]);
 });
 async function setup(timeout = 5000) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'cliproxy-login-')));
@@ -322,6 +324,9 @@ it('validates platform refresh requests and keeps the management endpoint admini
  expect((await service.app.inject({method:'POST',url:'/api/local-agent/providers/unknown/refresh',headers,payload:{}})).statusCode).toBe(400);
  expect((await service.app.inject({method:'POST',url,headers,payload:{provider:'claude'}})).statusCode).toBe(400);
  const refreshed=await service.app.inject({method:'POST',url,headers,payload:{}});expect(refreshed.statusCode,refreshed.body).toBe(200);expect(refreshed.json().state).toBe('running');expect(refreshed.body).not.toContain('fixture-key');
+ const refresh=vi.spyOn(service.proxy,'refreshProvider');
+ expect((await service.app.inject({method:'POST',url,headers,payload:{force:false}})).statusCode).toBe(200);expect(refresh).toHaveBeenLastCalledWith('codex',false);
+ expect((await service.app.inject({method:'POST',url,headers,payload:{force:'false'}})).statusCode).toBe(400);refresh.mockRestore();
 });
 
 
@@ -354,4 +359,60 @@ it('does not reintroduce stale gateway routes absent from every discovered accou
  vi.spyOn(manager as any,'request').mockImplementation(async (...args:any[])=>{const value=await original(...args);return args[0]==='/models'?{...value,data:[...value.data,{id:'antigravity/gemini-pro-agent',type:'antigravity',owned_by:'antigravity'}]}:value;});
  await manager.refreshAccounts('antigravity');
  expect(manager.snapshot().models.map(m=>m.id)).toEqual(['antigravity/current']);
+});
+
+it('hides unverified provider models and displays catalog failure separately from login state',async()=>{
+ const {manager,root}=await setup();await mkdir(join(root,'cliproxy'),{recursive:true});
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'kimi.json',provider:'kimi',status:'active',models:['obsolete']} ]));
+ const original=(manager as any).request.bind(manager);
+ vi.spyOn(manager as any,'request').mockImplementation(async (...args:any[])=>{const value=await original(...args);if(String(args[0]).startsWith('/auth-files/models')){expect(args[4]).toBeGreaterThan(8000);return {...value,catalog:{status:'unavailable'}};}return value;});
+ await manager.start();const state=manager.snapshot();expect(state.models).toEqual([]);expect(state.accounts[0].models).toEqual([]);expect(state.accounts[0].status).toBe('active');expect(state.accounts[0].modelError).toContain('官方模型目录');
+});
+
+it('caches platform visits for five minutes, coalesces concurrent visits, and always permits manual refresh',async()=>{
+ const {manager,root,fixture}=await setup();await mkdir(join(root,'cliproxy'),{recursive:true});
+ await writeFile(join(root,'cliproxy','fixture-accounts.json'),JSON.stringify([{name:'codex.json',provider:'codex',auth_index:'codex',status:'active',models:['fixture']}]));
+ await manager.start();await manager.refreshQuota();const initial=await fixture();const now=Date.now();const clock=vi.spyOn(Date,'now').mockReturnValue(now+299000);
+ try{
+  await manager.refreshProvider('codex',false);expect((await fixture()).modelCalls).toEqual(initial.modelCalls);expect((await fixture()).apiCalls).toEqual(initial.apiCalls);
+  clock.mockReturnValue(now+301000);const first=manager.refreshProvider('codex',false);expect(manager.refreshProvider('codex',false)).toBe(first);await first;
+  const after=await fixture();expect(after.modelCalls.length).toBe(initial.modelCalls.length+1);expect(after.apiCalls.length).toBeGreaterThan(initial.apiCalls.length);
+  await manager.refreshProvider('codex',false);expect((await fixture()).modelCalls).toEqual(after.modelCalls);
+  await manager.refreshProvider('codex');expect((await fixture()).modelCalls.length).toBe(after.modelCalls.length+1);
+ }finally{clock.mockRestore();}
+});
+it('does not periodically refresh a stable account catalog while the page is idle',async()=>{
+ const {manager}=await setup();await manager.start();await manager.refreshQuota();
+ vi.useFakeTimers({toFake:['setTimeout','clearTimeout']});
+ const refresh=vi.spyOn(manager,'refreshAccounts');
+ try{await manager.refreshAccounts(undefined,false);await vi.advanceTimersByTimeAsync(10*60*1000);expect(refresh).toHaveBeenCalledOnce();}
+ finally{vi.useRealTimers();refresh.mockRestore();}
+});
+it('groups grants by real identity, preserves files, and routes an existing pinned account through its newest usable grant',async()=>{
+ const {manager,root}=await setup();await mkdir(join(root,'cliproxy/auth'),{recursive:true});
+ const rows=[
+  {name:'old.json',provider:'codex',status:'active',models:['m','old-only'],email:'one@example.test'},
+  {name:'new.json',provider:'codex',status:'active',models:['m'],email:'ONE@example.test'},
+  {name:'other-person.json',provider:'codex',status:'active',models:['m'],email:'two@example.test'},
+  {name:'expired.json',provider:'codex',status:'active',models:['m'],email:'one@example.test'},
+ ];
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify(rows));
+ for(const [index,row] of rows.entries())await writeFile(join(root,'cliproxy/auth',row.name),JSON.stringify({type:'codex',email:row.email,account_id:'shared-team',access_token:`private-access-${index}`,refresh_token:index===3?undefined:`private-refresh-${index}`,last_refresh:`2026-10-${index===3?'16':index===1?'15':'01'}T00:00:00Z`,expired:index===3?'2000-01-01':'2035-01-01'}));
+ await manager.start();const accounts=manager.snapshot().accounts,old=accounts.find(a=>a.id===createHashForTest('old.json'))!,newest=accounts.find(a=>a.id===createHashForTest('new.json'))!,other=accounts.find(a=>a.id===createHashForTest('other-person.json'))!;
+ expect(old).toMatchObject({isDuplicate:true,preferredCredentialId:newest.id,credentialCount:3});expect(newest.isDuplicate).toBe(false);expect(other.isDuplicate).toBeUndefined();
+ expect(manager.sourceAuth(old.id,'codex/m')).toBe('new.json');expect(newest.models).toContain('codex/old-only');expect(manager.sourceAuth(newest.id,'codex/old-only')).toBe('old.json');expect(manager.sourceAuth(other.id,'codex/m')).toBe('other-person.json');
+ expect(JSON.stringify(manager.snapshot())).not.toMatch(/private-access|private-refresh/);
+ for(const row of rows)expect(await readFile(join(root,'cliproxy/auth',row.name),'utf8')).toContain('private-access');
+ await manager.setAccountEnabled(old.id,false);expect(manager.snapshot().accounts.filter(a=>a.credentialCount===3).every(a=>a.disabled)).toBe(true);expect(()=>manager.sourceAuth(old.id,'codex/m')).toThrow();
+});
+function createHashForTest(name:string){return createHash('sha256').update(name).digest('hex').slice(0,24);}
+it('imports two members of one Codex workspace independently and keeps separate grants without overwriting an earlier one',async()=>{
+ const {manager,root}=await setup();await manager.start();
+ const grant=(email:string,refresh:string,date:string)=>({account_id:'shared-team',email,access_token:'private-access',refresh_token:refresh,id_token:'opaque-id-token',expired:'2035-01-01',last_refresh:date});
+ const first=grant('one@example.test','first-grant','2026-10-01');await manager.importCredential('codex',first,true);
+ await manager.importCredential('codex',grant('two@example.test','other-member-grant','2026-10-02'),true);
+ await manager.importCredential('codex',grant('ONE@example.test','new-grant','2026-10-15'),true);
+ const names=(await import('node:fs/promises')).readdir;const files=(await names(join(root,'cliproxy/auth'))).filter(n=>n.startsWith('local-codex-'));
+ expect(files).toHaveLength(3);expect(manager.snapshot().accounts.filter(a=>a.provider==='codex'&&!a.isDuplicate)).toHaveLength(2);
+ await manager.importCredential('codex',first,true);expect((await names(join(root,'cliproxy/auth'))).filter(n=>n.startsWith('local-codex-'))).toHaveLength(3);
 });

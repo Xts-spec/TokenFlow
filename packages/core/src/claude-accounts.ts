@@ -35,6 +35,12 @@ function object(raw:string|null):Record<string,unknown>{try{const v=JSON.parse(r
 const field=(v:unknown)=>v===undefined?null:JSON.stringify(v);
 const put=(doc:Record<string,unknown>,key:string,value:string|null)=>{if(value===null)delete doc[key];else doc[key]=JSON.parse(value);};
 const routingKeys=['ANTHROPIC_BASE_URL','ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN','ANTHROPIC_MODEL','ANTHROPIC_DEFAULT_OPUS_MODEL','ANTHROPIC_DEFAULT_SONNET_MODEL','ANTHROPIC_DEFAULT_HAIKU_MODEL','ANTHROPIC_SMALL_FAST_MODEL','CLAUDE_CODE_SUBAGENT_MODEL','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY','ANTHROPIC_PROFILE'];
+export function claudeSettingsState(raw:string|null){
+  const settings=object(raw),env=object(field(settings.env));
+  const routing=Object.fromEntries(routingKeys.filter(k=>env[k]!==undefined).map(k=>[k,env[k]]));
+  for(const key of ['apiKeyHelper','forceLoginMethod','forceLoginOrgUUID','forceLoginGatewayUrl'])if(settings[key]!==undefined)routing[key]=settings[key];
+  return {model:field(settings.model),routing:JSON.stringify(routing)};
+}
 export class ClaudeAccountStore implements NativeStore {
   lockPath:string;storage:string;
   private credentials:string;private profile:string;
@@ -45,21 +51,30 @@ export class ClaudeAccountStore implements NativeStore {
   }
   private async docs(){return {settings:await readConfig(this.settings),profile:await readConfig(this.profile),file:await readConfig(this.credentials),keychain:this.keychain?await this.keychain.read():null};}
   async read(){
-    const d=await this.docs(),settings=object(d.settings),env=object(field(settings.env)),profile=object(d.profile);
-    const routing=Object.fromEntries(routingKeys.filter(k=>env[k]!==undefined).map(k=>[k,env[k]]));
-    for(const key of ['apiKeyHelper','forceLoginMethod','forceLoginOrgUUID'])if(settings[key]!==undefined)routing[key]=settings[key];
-    return {auth:field(object(d.keychain).claudeAiOauth),fileAuth:field(object(d.file).claudeAiOauth),account:field(profile.oauthAccount),model:field(settings.model),routing:JSON.stringify(routing)};
+    const d=await this.docs(),profile=object(d.profile);
+    return {auth:field(object(d.keychain).claudeAiOauth),fileAuth:field(object(d.file).claudeAiOauth),account:field(profile.oauthAccount),...claudeSettingsState(d.settings)};
   }
-  describe(state:NativeState){const account=object(state.account);return {email:typeof account.emailAddress==='string'?account.emailAddress:null,model:state.model?JSON.parse(state.model) as string:null};}
+  describe(state:NativeState){const account=object(state.account);return {email:typeof account.emailAddress==='string'?account.emailAddress:null,accountId:typeof account.accountUuid==='string'?account.accountUuid:null,organizationId:typeof account.organizationUuid==='string'?account.organizationUuid:null,model:state.model?JSON.parse(state.model) as string:null};}
+  loginStatus(state:NativeState):{loginState:'signed-in'|'signed-out'|'unreadable';readError?:string}{
+    const oauth=object(state.auth??state.fileAuth);
+    if(typeof oauth.accessToken!=='string'||!oauth.accessToken.trim())return {loginState:'signed-out'};
+    if(!this.describe(state).email)return {loginState:'unreadable',readError:'检测到 Claude Code 凭据，但缺少账号资料，请在客户端完成登录。'};
+    return {loginState:'signed-in'};
+  }
+
+  identity(state:NativeState){const a=this.describe(state);return a.email?JSON.stringify([a.accountId,a.organizationId,a.email.toLowerCase()]):null;}
+  signedOut(state:NativeState){return state.auth===null&&state.fileAuth===null&&state.account===null;}
+  restoreState(current:NativeState,original:NativeState,applied:NativeState){return {...original,routing:current.routing,model:current.model!==applied.model&&current.model!==original.model?current.model:original.model};}
   prepare(before:NativeState,c:NativeCredential,model?:string){
     const routing=object(before.routing);
-    if(Object.entries(routing).some(([k,v])=>k==='forceLoginMethod'?v!=='claudeai':!!v))throw nativeConflict('Claude Code 有接口、模型或登录限制配置，请先还原接口或清除覆盖设置。');
-    if(!model||!/^claude\/[a-zA-Z0-9._-]+$/.test(model))throw nativeConflict('请选择 Claude Code 支持的模型。');
+    if(Object.entries(routing).some(([k,v])=>k==='forceLoginMethod'?v!=='claudeai':k.startsWith('CLAUDE_CODE_USE_')?!!v&&v!=='0'&&v!==false:!!v))throw nativeConflict('Claude Code 有接口、模型或登录限制配置，请先还原接口或清除覆盖设置。');
+    if(model&&!/^claude\/[a-zA-Z0-9._-]+$/.test(model))throw nativeConflict('请选择 Claude Code 支持的模型。');
     const scopes=c.scopes??c.scope?.split(/\s+/).filter(Boolean)??['user:profile','user:inference','user:sessions:claude_code','user:mcp_servers','user:file_upload'];
     if(!scopes.includes('user:inference'))throw nativeConflict('账号没有 Claude Code 推理权限，请重新授权。');
     const auth=JSON.stringify({accessToken:c.access_token,refreshToken:c.refresh_token,expiresAt:Date.parse(c.expired),scopes,subscriptionType:null,rateLimitTier:null});
-    const same=this.describe(before).email===c.email&&(before.auth!==null||before.fileAuth!==null);
-    return {...before,auth:same?before.auth:this.keychain?auth:null,fileAuth:same?before.fileAuth:this.keychain?null:auth,account:JSON.stringify({emailAddress:c.email,...(c.account_uuid?{accountUuid:c.account_uuid}:{}),...(c.organization_uuid?{organizationUuid:c.organization_uuid}:{})}),model:JSON.stringify(model.slice(7))};
+    const previous=this.describe(before);
+    const same=!!c.account_uuid&&!!c.organization_uuid&&previous.accountId===c.account_uuid&&previous.organizationId===c.organization_uuid&&previous.email?.toLowerCase()===c.email.toLowerCase()&&(before.auth!==null||before.fileAuth!==null);
+    return {...before,auth:same?before.auth:this.keychain?auth:null,fileAuth:same?before.fileAuth:this.keychain?null:auth,account:JSON.stringify({emailAddress:c.email,...(c.account_uuid?{accountUuid:c.account_uuid}:{}),...(c.organization_uuid?{organizationUuid:c.organization_uuid}:{})}),model:model?JSON.stringify(model.slice(7)):before.model};
   }
   async write(before:NativeState,after:NativeState){
     if(nativeDigest(await this.read())!==nativeDigest(before))throw nativeConflict('Claude Code 登录已被其他程序修改。');

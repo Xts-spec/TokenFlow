@@ -29,7 +29,7 @@ function navigateTabs(event:KeyboardEvent<HTMLDivElement>){
 }
 
 export type AccountActions={
- refresh:(provider:string)=>Promise<void>;
+ refresh:(provider:string,force?:boolean)=>Promise<void>;
  connect:(provider:string)=>Promise<void>;
  importLocal:(provider:string)=>Promise<void>;
  login:(action:'open'|'cancel'|'callback',data:{id:string;redirectURL?:string})=>Promise<void>;
@@ -67,14 +67,14 @@ function LoginProgress({local,disabled,actions}:{local:LocalAgentSnapshot;disabl
 /** Authorized accounts with their quota up front, plus switching the client's own login where it has one. */
 export function AccountsPage({local,usage,disabled,actions,notify}:{local:LocalAgentSnapshot;usage:UsageData;disabled:boolean;actions:AccountActions;notify:Notify}){
  const [modelOrder,,modelRanks,moveModel]=useModelOrder();
- const logins:Record<LoginProvider,ReturnType<typeof useNativeLogin>>={codex:useNativeLogin('codex',local),claude:useNativeLogin('claude',local),antigravity:useNativeLogin('antigravity',local)};
  const [tab,setTab]=useState(()=>{try{return localStorage.getItem(tabKey)??'codex';}catch{return 'codex';}});
+ const logins:Record<LoginProvider,ReturnType<typeof useNativeLogin>>={codex:useNativeLogin('codex',local),claude:useNativeLogin('claude',local),antigravity:useNativeLogin('antigravity',local),cursor:useNativeLogin('cursor',local,tab==='cursor')};
  const [selectedAccounts,setSelectedAccounts]=useState<Record<string,string>>({});
  const [refreshing,setRefreshing]=useState('');
  const [switching,setSwitching]=useState(false);const lock=useRef(false);
  const loginPending=!!local.login&&pendingStates.includes(local.login.status);
  const locked=disabled||switching||!!refreshing||loginPending||['starting','stopping'].includes(local.state);
- const providers=local.providers.map(provider=>({...provider,accounts:local.accounts.filter(a=>a.provider===provider.id&&(!a.unavailable||a.retryable||provider.id==='cursor'))}));
+ const providers=local.providers.map(provider=>({...provider,accounts:local.accounts.filter(a=>a.provider===provider.id&&!a.isDuplicate&&(!a.unavailable||a.retryable||provider.id==='cursor'))}));
  const provider=providers.find(p=>p.id===tab)??providers[0];
  const login=provider&&provider.id in loginNames?logins[provider.id as LoginProvider]:undefined;
  const account=provider?.accounts.find(a=>a.id===selectedAccounts[provider.id])??provider?.accounts.find(a=>a.id===login?.current?.id)??provider?.accounts[0];
@@ -98,13 +98,13 @@ export function AccountsPage({local,usage,disabled,actions,notify}:{local:LocalA
   {!provider&&<p className="tfHint">正在读取授权平台…</p>}
   {provider&&<section id={`provider-panel-${provider.id}`} role="tabpanel" aria-labelledby={`provider-tab-${provider.id}`} className="tfProviderPanel">
    <header className="tfProviderHead">
-    <div className="tfProviderTitle"><UsageFold title={`${provider.label} 用量`} rows={usage.allRows.filter(row=>row.day===localDay(new Date())).filter(r=>r.origin==='native'?r.provider===provider.id:(provider.accounts.some(a=>a.id===r.sourceId)||r.model.startsWith(provider.id+'/')))} range="today"/><button className="textButton tfProviderRefresh" aria-label={`刷新 ${provider.label} 账号、模型和额度`} title="只刷新此平台的账号、模型和额度" disabled={locked||local.state!=='running'} onClick={()=>void (async()=>{if(lock.current)return;lock.current=true;setRefreshing(provider.id);try{await actions.refresh(provider.id);await login?.refresh();}catch(error){notify({kind:'error',text:error instanceof Error?error.message:'刷新失败，请重试'});}finally{lock.current=false;setRefreshing('');}})()}><Icon name="refresh" size={14}/>{refreshing===provider.id?'正在刷新…':'刷新'}</button>{login?.status?.backup&&<><button className="textButton" disabled={locked} onClick={()=>void (async()=>{if(lock.current)return;lock.current=true;setSwitching(true);try{await login.restore();notify({kind:'ok',text:`${provider.label} 已恢复切换前的本机登录。`});}catch(error){notify({kind:'error',text:error instanceof Error?error.message:'恢复失败'});}finally{await login.refresh();lock.current=false;setSwitching(false);}})()} title="恢复切换前的本机登录，不会删除账号或 Key">恢复出厂</button></>}</div>
+    <div className="tfProviderTitle"><UsageFold title={`${provider.label} 用量`} rows={usage.allRows.filter(row=>row.day===localDay(new Date())).filter(r=>r.origin==='native'?r.provider===provider.id:(provider.accounts.some(a=>a.id===r.sourceId)||r.model.startsWith(provider.id+'/')))} range="today"/><button className="textButton tfProviderRefresh" aria-label={`刷新 ${provider.label} 账号、模型和额度`} title="打开时按需刷新，5 分钟内复用结果；点击可立即刷新" disabled={locked||local.state!=='running'} onClick={()=>void (async()=>{if(lock.current)return;lock.current=true;setRefreshing(provider.id);try{await actions.refresh(provider.id);await login?.refresh(true);}catch(error){notify({kind:'error',text:error instanceof Error?error.message:'刷新失败，请重试'});}finally{lock.current=false;setRefreshing('');}})()}><Icon name="refresh" size={14}/>{refreshing===provider.id?'正在刷新…':'刷新'}</button>{login?.status?.backup&&<><button className="textButton" disabled={locked} onClick={()=>void (async()=>{if(lock.current)return;lock.current=true;setSwitching(true);try{await login.restore();notify({kind:'ok',text:`${provider.label} 已恢复切换前的本机登录。`});}catch(error){notify({kind:'error',text:error instanceof Error?error.message:'恢复失败'});}finally{await login.refresh();lock.current=false;setSwitching(false);}})()} title="恢复切换前的本机登录，不会删除账号或 Key">恢复出厂</button></>}</div>
     <div className="tfRow">
-     {importable.has(provider.id)&&<button disabled={locked} onClick={()=>void actions.importLocal(provider.id)}>从本机导入</button>}
+     {importable.has(provider.id)&&<button disabled={locked} onClick={()=>void actions.importLocal(provider.id).then(()=>login?.refresh(true))}>{provider.id==='cursor'&&login?.nativeCurrent?'复用本机账号':'从本机导入'}</button>}
      <span className="tfRow">{provider.id==='workbuddy'&&<button disabled={locked} onClick={()=>void actions.connect('workbuddy-overseas')}>添加海外账号</button>}<button className="primary" aria-label={`添加 ${provider.label} 账号`} disabled={locked} onClick={()=>void actions.connect(provider.id)}><Icon name="plus" size={14}/>添加账号</button></span>
     </div>
    </header>
-   {login?.status&&!login.current&&login.status.email&&<p className="tfHint">本机登录：{login.status.email}</p>}
+   {login&&<p className="tfHint">{login.error||login.status?.readError||(login.nativeLabel?`本机登录：${login.nativeLabel}`:login.status?'本机未登录':'正在读取本机登录…')} <button className="textButton" onClick={()=>void login.refresh(true)}>刷新本机登录</button></p>}
    {!account?<div className="tfAccountEmpty">
     <Icon name="user" size={28}/><h3>还没有 {provider.label} 账号</h3>
     <p>{local.state==='running'?'点击上方添加账号，完成授权后即可查看模型和额度。':'网关启动后显示已授权的账号，也可以点击上方添加账号。'}</p>
@@ -120,10 +120,11 @@ export function AccountsPage({local,usage,disabled,actions,notify}:{local:LocalA
      const shownModels=orderModels(account.models??[],id=>modelLabel(local,id),modelOrder==='manual'?'manual':'name',modelRanks);
      return <div id={`account-panel-${account.id}`} role="tabpanel" aria-labelledby={`account-tab-${account.id}`} className={`tfAccountDetail ${account.disabled?'off':''}`}>
       <div className="tfAccountTop">
-       {login&&native&&!native.current&&<button className="textButton tfAccountLogin" disabled={locked||!native.switchable} title={native.switchable?`把 ${loginNames[provider.id as LoginProvider]} 自己的登录换成这个账号`:native.reason} onClick={()=>void switchLogin(provider.id as LoginProvider,account.id,account.label)}>{switching?'正在切换…':'登录此账号'}</button>}
+       {login&&native&&!native.current&&!login.status?.readOnly&&<button className="textButton tfAccountLogin" disabled={locked||!native.switchable} title={native.switchable?`把 ${loginNames[provider.id as LoginProvider]} 自己的登录换成这个账号`:native.reason} onClick={()=>void switchLogin(provider.id as LoginProvider,account.id,account.label)}>{switching?'正在切换…':'登录此账号'}</button>}
        <div className="tfAccountManage"><label className="toggle" title={account.disabled?'启用':'停用'}><input type="checkbox" checked={!account.disabled} disabled={locked||local.state!=='running'} onChange={()=>void actions.toggle(account.id,account.disabled)}/><span>启用</span></label>
        <button className="textButton danger" disabled={locked||local.state!=='running'} onClick={()=>{if(window.confirm(`删除账号 ${account.label} 的登录凭据？`))void actions.remove(account.id);}}>删除</button></div>
       </div>
+      {(account.credentialCount??0)>1&&<small className="tfHint">已保存 {account.credentialCount} 份授权，优先使用最新可用授权。</small>}
       {account.modelError&&<small className="tfWarn">{account.modelError}</small>}
       {account.retryable&&<small className="tfHint">上次请求暂时失败，可稍后重试。</small>}
       <div className="tfAccountColumns">

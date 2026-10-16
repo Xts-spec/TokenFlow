@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Test-only OAuth server. Never connects to a real provider or opens a browser.
 import { createServer } from 'node:http';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 const configPath=process.argv[process.argv.indexOf('-config') + 1];
@@ -70,8 +70,8 @@ const server = createServer(async(req,res) => {
   return send(200,path==='/messages'?message:path==='/chat/completions'?chat:response);
  }
  if(path==='/auth-files'){
-  if(req.method==='POST'){let body='';for await(const c of req)body+=c;const value=JSON.parse(body);const name=url.searchParams.get('name');accounts=[...accounts.filter(a=>a.name!==name),{...value,name,provider:value.type,status:'active',models:['imported-model']}];writeFileSync(file,JSON.stringify(accounts));return send(200,{status:'ok'});}
-  if(req.method==='DELETE'){accounts=accounts.filter(a=>a.name!==url.searchParams.get('name'));writeFileSync(file,JSON.stringify(accounts));return send(200,{status:'ok'});}
+  if(req.method==='POST'){let body='';for await(const c of req)body+=c;const value=JSON.parse(body);const name=url.searchParams.get('name');mkdirSync(join(directory,'auth'),{recursive:true});writeFileSync(join(directory,'auth',name),JSON.stringify(value),{mode:0o600});accounts=[...accounts.filter(a=>a.name!==name),{...value,name,provider:value.type,status:'active',models:['imported-model']}];writeFileSync(file,JSON.stringify(accounts));return send(200,{status:'ok'});}
+  if(req.method==='DELETE'){rmSync(join(directory,'auth',url.searchParams.get('name')),{force:true});accounts=accounts.filter(a=>a.name!==url.searchParams.get('name'));writeFileSync(file,JSON.stringify(accounts));return send(200,{status:'ok'});}
   return send(200,{files:accounts.map(a=>({...a,id:a.name,id_token:typeof a.id_token==='string'?undefined:a.id_token}))});
  }
  if(path==='/auth-files/status'){let body='';for await(const c of req)body+=c;const input=JSON.parse(body);accounts.find(a=>a.name===input.name).disabled=input.disabled;writeFileSync(file,JSON.stringify(accounts));return send(200,{status:'ok'});}

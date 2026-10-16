@@ -2,9 +2,17 @@ import {readFileSync,writeFileSync} from 'node:fs';
 import {resolve,join,basename} from 'node:path';
 export function workbuddyRegionOverlay(replacements,dir){
  replacements[resolve('upstream/CLIProxyAPI/internal/auth/workbuddy/workbuddy_region_test.go')]=resolve('tests/sidecar/workbuddy_region_test.go');
+ replacements[resolve('upstream/CLIProxyAPI/internal/auth/workbuddy/workbuddy_local_paths.go')]=resolve('patches/cliproxy/workbuddy_local_paths.go');
+ replacements[resolve('upstream/CLIProxyAPI/internal/auth/workbuddy/workbuddy_local_paths_test.go')]=resolve('tests/sidecar/workbuddy_local_paths_test.go');
  const patch=(path,fn)=>{const source=resolve('upstream/CLIProxyAPI',path),target=join(dir,'region-'+basename(path));writeFileSync(target,fn(readFileSync(replacements[source]??source,'utf8')));replacements[source]=target;};
  const replace=(s,a,b)=>{if(!s.includes(a))throw Error('WorkBuddy region anchor changed: '+a);return s.replace(a,b);};
  patch('internal/auth/workbuddy/workbuddy.go',s=>{
+  const start=s.indexOf('\tvar candidates []string',s.indexOf('func ImportLocalAuth()'));
+  const end=s.indexOf('\n\tvar raw []byte',start);
+  if(start<0||end<0)throw Error('WorkBuddy import paths anchor changed');
+  s=s.slice(0,start)+'\tcandidates := localWorkBuddyAuthPaths(runtime.GOOS, homeDir, os.Getenv)\n'+s.slice(end);
+  // A logged-out client may retain an auth file; never import that stale session.
+  s=replace(s,'for _, p := range candidates {','for _, p := range candidates {\n if _, err := os.Stat(p+".logged-out"); err == nil || !os.IsNotExist(err) { continue }');
   s=replace(s,'cfg    *config.Config','cfg    *config.Config\n base string');
   s=replace(s,'func (w *WorkBuddyAuth) setCommonHeaders',`// Only the two verified public regions may receive credentials.
 func OfficialBase(domain string) string {
@@ -18,6 +26,7 @@ func (w *WorkBuddyAuth) setCommonHeaders`);
   s=s.replaceAll('Domain:       tok.Domain,','Domain:       strings.TrimPrefix(OfficialBase(w.base), "https://"),');
   s=replace(s,'workbuddyRefreshGroup.Do(refreshToken,','workbuddyRefreshGroup.Do(OfficialBase(w.base)+refreshToken,');
   s=replace(s,'http.MethodPost, WorkBuddyRefreshURL,','http.MethodPost, OfficialBase(w.base)+"/v2/plugin/auth/token/refresh",');
+  if(!s.includes('filepath.'))s=replace(s,'\"path/filepath\"','');
   return s;
  });
  patch('internal/api/handlers/management/auth_files_provider_oauth.go',s=>{

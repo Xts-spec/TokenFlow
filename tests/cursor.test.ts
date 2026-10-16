@@ -11,7 +11,7 @@ it('accepts a large client catalog and preserves union schemas while retaining a
  expect(()=>parseCursorInput('responses',{model:'cursor/test',input:'hello',tools:Array.from({length:2049},(_,i)=>({...tools[0],name:`tool_${i}`}))})).toThrow();
 });
 const sdk=vi.hoisted(()=>({login:vi.fn(),models:vi.fn(),create:vi.fn(),cancel:vi.fn(),close:vi.fn(),quota:vi.fn(),runUsage:vi.fn(),localSession:vi.fn(),localCreate:vi.fn()}));
-vi.mock('../packages/core/src/cursor-local.js',()=>({localCursorSession:sdk.localSession}));
+vi.mock('../packages/core/src/cursor-local.js',async importOriginal=>({...await importOriginal<typeof import('../packages/core/src/cursor-local.js')>(),localCursorSession:sdk.localSession}));
 vi.mock('../packages/core/src/cursor-usage.js',()=>({CursorUsage:class{quota=sdk.quota;runUsage=sdk.runUsage;}}));
 vi.mock('@cursor/sdk',()=>({Cursor:{auth:{login:sdk.login},models:{list:sdk.models}},Agent:{create:sdk.create},JsonlLocalAgentStore:class{constructor(readonly path:string){}}}));
 const cleanup:Array<()=>Promise<unknown>>=[];afterEach(async()=>{for(const fn of cleanup.splice(0).reverse())await fn();vi.restoreAllMocks();});
@@ -61,6 +61,7 @@ it('routes Cursor through the existing scoped API, meters tokens, isolates SDK t
  const routed=await service.app.inject({method:'POST',url:'/v1/messages',headers:{...admin,authorization:`Bearer ${otherKey.apiKey}`},payload:{model:'cursor/fixture-model',messages:[{role:'user',content:'Bound account'}]}});expect(routed.statusCode).toBe(200);expect(sdk.create.mock.lastCall![0].apiKey).toBe('second-cursor-fixture');
  await service.proxy.setAccountEnabled(account.id,false);expect((await service.app.inject({method:'POST',url:'/v1/responses',headers:client,payload:{model:'cursor/fixture-model',input:'hi'}})).statusCode).toBe(503);
  const imported=await service.app.inject({method:'POST',url:'/api/local-agent/import-local/cursor',headers:admin,payload:{}});expect(imported.statusCode,imported.body).toBe(200);expect(service.proxy.cursor.snapshot().accounts).toHaveLength(3);expect(sdk.localCreate).toHaveBeenCalledOnce();expect(imported.body).not.toContain('native-fixture-key');
+ sdk.localSession.mockResolvedValue({email:'NATIVE@example.test',createCredential:sdk.localCreate});await service.proxy.cursor.importLocal();expect(service.proxy.cursor.snapshot().accounts).toHaveLength(3);expect(sdk.localCreate).toHaveBeenCalledOnce();
 });
 it('exposes explicit text API limits',()=>{
  for(const body of [{input:[{role:'user',content:[{type:'input_image',image_url:'x'}]}]},{input:'hi',previous_response_id:'old'},{input:'hi',text:{format:{type:'json_schema'}}}])expect(()=>parseCursorInput('responses',{model:'cursor/x',...body})).toThrow();
@@ -161,11 +162,11 @@ it('cancels the SDK request when the client disconnects and releases the single-
 it('refreshes an expired Cursor catalog and does not retain an old list indefinitely',async()=>{
  const {root,secrets}=await setup();await secrets.set('cursor-account',JSON.stringify({apiKey:'fixture-key'}));const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());
  const now=Date.now();vi.spyOn(Date,'now').mockReturnValue(now);await provider.load();
- sdk.models.mockResolvedValue([{id:'new-model',displayName:'New'}]);vi.mocked(Date.now).mockReturnValue(now+31000);
+ sdk.models.mockResolvedValue([{id:'new-model',displayName:'New'}]);vi.mocked(Date.now).mockReturnValue(now+300001);
  await provider.refreshIfStale();expect(provider.snapshot().models.map(m=>m.id)).toEqual(['cursor/new-model']);
  sdk.models.mockRejectedValue(new Error('offline'));vi.spyOn(globalThis,'fetch').mockRejectedValue(new Error('offline'));
- vi.mocked(Date.now).mockReturnValue(now+40000);await provider.refresh();expect(provider.snapshot().models).toHaveLength(1);
- vi.mocked(Date.now).mockReturnValue(now+16*60000);await provider.refreshIfStale();expect(provider.snapshot().models).toEqual([]);
+ vi.mocked(Date.now).mockReturnValue(now+310000);await provider.refresh();expect(provider.snapshot().models).toHaveLength(1);
+ vi.mocked(Date.now).mockReturnValue(now+21*60000);await provider.refreshIfStale();expect(provider.snapshot().models).toEqual([]);
 });
 
 it('settles cancelled tool handoffs from the matching official bill so capped keys can continue and still stop at the cap',async()=>{
@@ -213,11 +214,13 @@ it('bounds flattened Cursor tools and rejects duplicate names within the same na
 });
 
 it('skips repeatedly unavailable SDK billing per account, expires the hint, and keeps official settlement',async()=>{
+ // Isolate billing from REST catalog fallback during concurrent mocked SDK imports.
+ const originalFetch=globalThis.fetch;vi.spyOn(globalThis,'fetch').mockImplementation((url,init)=>String(url)==='https://api.cursor.com/v1/models'?Promise.resolve(Response.json({items:[{id:'fixture-model',displayName:'Fixture model'}]})):originalFetch(url,init));
  const {root,secrets}=await setup();await secrets.set('cursor-account',JSON.stringify({version:1,accounts:[{apiKey:'first',email:'first@test'},{apiKey:'second',email:'second@test'}]}));
  const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();
  const getUsage=vi.fn().mockRejectedValue(Object.assign(new Error('Unsupported'),{status:403,code:'feature_unavailable'}));
  sdk.create.mockResolvedValue({agentId:'billing-fixture',close:sdk.close,getUsage,send:async()=>({wait:async()=>({status:'finished',result:'ok'}),cancel:sdk.cancel})});sdk.runUsage.mockResolvedValue(tokenUsage);
- const accounts=provider.snapshot().accounts;const now=Date.now();vi.spyOn(Date,'now').mockReturnValue(now);
+ const accounts=provider.snapshot().accounts;for(const account of accounts)expect(account.models,JSON.stringify(account)).toContain('cursor/fixture-model');const now=Date.now();vi.spyOn(Date,'now').mockReturnValue(now);
  const send=(id:string)=>provider.response('responses',{model:'cursor/fixture-model',input:'hi'},new AbortController().signal,id);
  for(let i=0;i<3;i++){const r=await send(accounts[0].id);expect(r.status).toBe(200);expect((await r.json()).usage.total_tokens).toBe(13);}
  expect(getUsage).toHaveBeenCalledTimes(1);expect(sdk.runUsage).toHaveBeenCalledTimes(3);
@@ -256,4 +259,28 @@ it('overlaps SDK disposal with official settlement but waits for both before rel
   expect((await provider.response('responses',{model:'cursor/fixture-model',input:'next'},new AbortController().signal)).status).toBe(429);
  }finally{finishDispose();}
  expect((await request).status).toBe(200);expect(disposeAtBilling).toBe(true);expect(sdk.runUsage).toHaveBeenCalledOnce();
+});
+
+it('reuses Cursor discovery for five minutes while explicit refresh bypasses the cache',async()=>{
+ const {root,secrets}=await setup();await secrets.set('cursor-account',JSON.stringify({apiKey:'fixture'}));const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());
+ const now=Date.now();vi.spyOn(Date,'now').mockReturnValue(now);await provider.load();
+ for(const elapsed of [1000,30000,60000,299999]){vi.mocked(Date.now).mockReturnValue(now+elapsed);await provider.refreshIfStale();}
+ expect(sdk.models).toHaveBeenCalledOnce();expect(sdk.quota).toHaveBeenCalledOnce();
+ await provider.refresh();expect(sdk.models).toHaveBeenCalledTimes(2);expect(sdk.quota).toHaveBeenCalledTimes(2);
+ vi.mocked(Date.now).mockReturnValue(now+600000);await Promise.all([provider.refreshIfStale(),provider.refreshIfStale()]);
+ expect(sdk.models).toHaveBeenCalledTimes(3);expect(sdk.quota).toHaveBeenCalledTimes(3);
+});
+it('groups case-insensitive Cursor identities, keeps all authorization versions privately and prefers usable grants',async()=>{
+ const {root,secrets,values}=await setup();const now=Date.now();
+ await secrets.set('cursor-account',JSON.stringify({version:1,accounts:[{apiKey:'valid-original',email:'Member@Example.test',apiKeyExpiresAtMs:now+86400000},{apiKey:'newest-expired',email:'member@example.test',apiKeyExpiresAtMs:now-1000,authorizedAt:now},{apiKey:'valid-latest',email:'MEMBER@example.test',apiKeyExpiresAtMs:now+86400000,authorizedAt:now},{apiKey:'other-person',email:'other@example.test'}]}));
+ const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();expect(provider.snapshot().accounts).toHaveLength(2);
+ const member=provider.snapshot().accounts.find(a=>a.label.toLowerCase()==='member@example.test')!;
+ await provider.response('responses',{model:'cursor/fixture-model',input:'hello'},new AbortController().signal,member.id);expect(sdk.create.mock.lastCall![0].apiKey).toBe('valid-latest');
+ expect([...values.entries()].filter(([name])=>name.startsWith('grant-'))).toHaveLength(3);expect(JSON.stringify(provider.snapshot())).not.toMatch(/valid-original|valid-latest|newest-expired/);
+ const oldId=(await import('node:crypto')).createHash('sha256').update('cursor:Member@Example.test').digest('hex').slice(0,24);expect(provider.owns(oldId)).toBe(true);expect(provider.assertSource(oldId,'cursor/fixture-model')).toContain('cursor:');
+});
+it('replaces an expired Cursor SDK grant on explicit local import and retains its private backup',async()=>{
+ const {root,secrets,values}=await setup();await secrets.set('cursor-account',JSON.stringify({apiKey:'expired-private',email:'native@example.test',apiKeyExpiresAtMs:1}));
+ const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();await provider.importLocal();expect(sdk.localCreate).toHaveBeenCalledOnce();expect(provider.snapshot().accounts).toHaveLength(1);expect(provider.snapshot().models).toHaveLength(1);
+ expect([...values.entries()].filter(([name])=>name.startsWith('grant-')).some(([,raw])=>raw.includes('expired-private'))).toBe(true);
 });
