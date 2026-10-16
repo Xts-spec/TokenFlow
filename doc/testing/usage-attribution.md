@@ -54,3 +54,50 @@ npx vitest run tests/usage-attribution.test.ts tests/usage-attribution-service.t
 - **真实 Claude 渠道切换**：官方登录、独立 API、经 TokenFlow、直接第三方四条路径，需要在真实客户端逐条核对来源、账号、目标和 Token；权限跳过、账号切换、历史无证据与重复索引也要覆盖。
 - **反重力直连采集**：SQLite v1 已实现，继续验收其他版本、真实账号／项目切换及完整厂商对账；不能用剩余额度或者当前登录推测历史。当前覆盖见 [直连采集](native-direct-usage.md)。
 - **跨平台**：Windows 重跑本页回归并执行 [U04 / U11](../待修复的问题win兼容.md)，不能沿用 macOS 夹具结果。
+
+
+## Codex Token 计算与官方口径核对（2026-10-17）
+
+### 已确认的定义
+
+OpenAI 的 [用量字段说明](https://developers.openai.com/api/docs/guides/agents-api/observability#understand-token-usage)明确：输入包含缓存读取，输出包含推理；总 Token 是输入加输出。例如输入 5,000（其中缓存 1,500）、输出 900（其中推理 200），总量为 **5,900**，不是 7,600。这是单次 usage 字段的定义，不能据此断言 Codex 个人主页汇总了哪些调用。
+
+[推理文档](https://developers.openai.com/api/docs/guides/reasoning)也把推理计入输出；即使没有可见答复，已产生的推理仍可能有消耗。输入还可能包含指令、历史、工具定义和结果，因此一次用户消息可以产生多次模型调用，Token 不能按消息文字长度估算。
+
+[缓存文档](https://developers.openai.com/api/docs/guides/prompt-caching)将缓存命中率定义为汇总缓存读取除以汇总输入；缓存命中降低的是相应成本，不把实际 Token 数打折。涉及缓存写入的 API 输入拆分为普通输入、缓存读取、缓存写入，三个部分仍包含在总输入中。
+
+| 统计项 | TokenFlow 应遵循的规则 | 当前代码 |
+| --- | --- | --- |
+| 单响应总量 | 输入＋输出；缓存和推理不重复加 | `local-usage.ts`、`usage-model.ts` 已符合 |
+| 输入构成 | 总输入减缓存读取和缓存写入得到普通输入；未知拆分不冒充确定值 | `gateway-observation.ts`、`usage-model.ts` |
+| 推理 | 输出的子项，可单独展示，但不再加进总量 | 本机采集及网关观察均保存该子项 |
+| 重复通知／复制日志 | 同一响应只计一次；旧累计通知使用增量 | `local-usage.ts`；这是本机去重规则，非对官方日桶实现的推测 |
+| 子线程 | 统计真实新响应，按自身证据归属；父日志中的副本不再加一次 | 子线程修复与 v13 索引已验证 |
+| 日期／账号 | 本机按请求记录时间和系统本地日汇总，账号必须有证据 | 官方日桶的时区和收录范围仍未确认 |
+
+### Token 数、费用、额度分别处理
+
+[Codex 官方定价说明](https://learn.chatgpt.com/docs/pricing#token-rates)区分原始 Token、购买 credits 和订阅包含用量。credits 按模型及输入／缓存输入／输出费率计算；Codex credits 无独立缓存写入费用，API Key 则遵循 API 价格。速度模式也可能改变消耗倍率；不能把某一费率或 API 账单直接换算为订阅剩余百分比。
+
+产品要求：原始 Token 保留实际计数；费用／credits 若后续展示，应注明模型、计费渠道、速度档位、费率版本和是否估算。官方剩余额度读取服务端窗口。不同厂商的 usage 拆分需分别适配，不能把 OpenAI 的字段包含关系直接套给其他平台。
+
+### 官方个人主页数字的边界
+
+[App Server 文档](https://learn.chatgpt.com/docs/app-server#7-token-usage-chatgpt)提供 `account/usage/read` 的累计字段和 `startDate/tokens` 日桶；缺失可为 null，不能当作零。该节未公布日桶的时区、汇总截止时间或全部请求收录规则；[个人主页说明](https://learn.chatgpt.com/docs/app/settings#profile)介绍了活动指标，也未给出这些公式。
+
+因此，当前可确认的是单响应计数公式已对齐。官方主页 3.5 亿与本地约 6.43 亿的差额不能靠调整输入／缓存／推理加法消除。官方接口快照若后续进入产品，应独立标注账号、原始日期和读取时间，用于对照；不得与本机明细相加或覆盖本机总量。现阶段官方读取仍是诊断功能，不宣称已实现官方汇总视图或日桶对账。待办仍为 USAGE-005，历史证据见 [直连采集记录](native-direct-usage.md#codex-个人主页与本机日志差异排查2026-10-17)。
+
+### 本机验证
+
+只读扫描本机 Codex 的 `sessions` 与 `archived_sessions`，限定北京时间 2026-10-16 的 `token_usage_record`，按响应标识检查重复，并仅输出用量字段汇总：
+
+- 3,635 条记录、3,635 个独立响应；未发现冲突或缺失响应标识；扫描文件未变化。
+- 每条都存在 `total_tokens`，**3,635/3,635** 与 `input_tokens + output_tokens` 相同；未发现缓存读取超过输入或推理超过输出。
+- Codex 日志自己提供的 `total_tokens` 合计 **642,832,806**，与我们的输入＋输出合计完全相同。这是排除网关前的原始记录总量；此前排除 14 条网关响应的 245,404 Token 后，本机直连为 **642,587,402**。不能把两者当成不同公式。
+- 6 个相关测试文件、41 项通过：本机解析／索引、逐请求归属、网关 usage、展示总量及官方读取诊断。覆盖缓存／推理包含关系、流式通知、副本去重和子线程。本轮无生产公式调整、无历史数据重写、无新推理测试请求；Windows 未实测。
+
+复跑回归：
+
+```sh
+npx vitest run tests/local-usage.test.ts tests/local-usage-index.test.ts tests/gateway-activity.test.ts tests/usage-model.test.ts tests/usage-attribution.test.ts tests/codex-official-usage-check.test.ts
+```

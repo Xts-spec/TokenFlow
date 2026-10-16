@@ -10,7 +10,7 @@
 | 软件怎么用、支持哪些入口 | [使用指南](guides/usage.md) |
 | 桌面、界面、网关、来源适配器如何协作 | [项目架构](architecture.md) |
 | 当前还要修什么、如何验收 | [统一 TODO](TODO.md) |
-| Claude／反重力的用量渠道、来源和统计边界 | [用量来源与本地验证](testing/usage-attribution.md) |
+| 用量来源、Codex 官方计数定义、Token／费用／额度边界 | [用量来源与本地验证](testing/usage-attribution.md) |
 | 各客户端直连采集覆盖、反重力 SQLite、Cursor 官方明细与账号归属 | [客户端直连用量](testing/native-direct-usage.md) |
 | WorkBuddy 导入后只显示名称，以及名称到路由的映射 | [WorkBuddy 模型名称验证](testing/workbuddy-model-labels.md) |
 | 官方登录能否与网关模型并存，Qoder／Codex 名称复核 | [官方登录与自定义模型](testing/official-login-coexist.md) |
