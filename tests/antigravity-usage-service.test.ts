@@ -24,7 +24,7 @@ it('exposes direct Antigravity usage by observed account in overview and activit
   expect(snapshot.rows).toEqual([]);for(const account of accounts){expect(snapshot.nativeRows.find((r:any)=>r.sourceId===account.id)).toMatchObject({origin:'native',target:'antigravity',provider:'antigravity',channel:'official',requests:1,inputTokens:100,outputTokens:30,nativeAccountEvidence:'login-snapshot',nativeAccountLabel:account.label});}
   expect(snapshot.nativeRows.filter((r:any)=>!r.sourceId)).toHaveLength(1);
   const activity=(await service.app.inject({url:'/api/activity/traces?days=0',headers})).json().records;expect(activity.filter((r:any)=>r.sourceId).map((r:any)=>r.sourceId).sort()).toEqual(accounts.map(a=>a.id).sort());
-  expect(snapshot.coverage.find((c:any)=>c.target==='antigravity')).toMatchObject({status:'ready',indexed:1});expect(snapshot.coverage.find((c:any)=>c.target==='cursor')).toMatchObject({status:'unsupported'});
+  expect(snapshot.coverage.find((c:any)=>c.target==='antigravity')).toMatchObject({status:'ready',indexed:1});expect(snapshot.coverage.find((c:any)=>c.target==='cursor')).toMatchObject({status:'unavailable',files:0});
   await service.proxy.setAccountEnabled(accounts[0].id,false);await service.app.close();service=await createDesktopService(options);await service.proxy.start();const restarted=await overview();expect(restarted.nativeRows).toEqual(snapshot.nativeRows);
   expect(await readFile(join(root,'local-usage-index.json'),'utf8')).not.toMatch(/DO_NOT_STORE|fixture-access|example\.test/);
  }finally{await service.app.close();await rm(root,{recursive:true,force:true});}

@@ -72,6 +72,10 @@ flowchart TB
 
 反重力 SQLite 会话由 [antigravity-usage.ts](../packages/core/src/antigravity-usage.ts) 只读提取生成用量，Worker 监测数据库与 WAL，排除步骤中的重复副本。账号元数据通过 `nativeUsageAccounts()` 独立于切换资格读取，过期／停用授权仍能关联历史；连续登录观察只是注明的归属补充，不能回填无证据的旧记录。采集范围随 API 返回并在界面展示；未适配客户端不冒充零用量。各平台的格式、验证和未覆盖范围见 [客户端直连用量](testing/native-direct-usage.md)。
 
+Cursor 的 SQLite 会话只有上下文或零 Token 字段，不能用来估算消耗。[cursor-conversations.ts](../packages/core/src/cursor-conversations.ts) 在 Worker 中仅查询 composer ID／创建时间并转成哈希；[cursor-native-usage.ts](../packages/core/src/cursor-native-usage.ts) 在后台通过已保存 SDK 授权读取 [cursor-usage.ts](../packages/core/src/cursor-usage.ts) 的官方事件，核对授权身份并与本机会话精确相交，生成 `native / official / billing` 行。它不读取 Cursor 认证字段、不创建 Key、不写客户端配置，网络请求也不阻塞页面快照。
+
+网关创建 Cursor agent 后、发送推理前，将其会话哈希写入 `cursor-gateway-conversations.jsonl`，排重不依赖可清空的轨迹文件。官方直连明细只以哈希、时间、模型和计数保存在 `cursor-native-usage.json`；账单修正替换同一事件，失败或延迟保留此前计数。停用／过期授权不再发起新账单查询，已核对历史仍能关联账号。全局官方账单不直接累加到本机用量。
+
 ## 数据、构建与边界
 
 桌面资料根目录由 [profile.ts](../apps/desktop/src/profile.ts) 统一选择，可通过 `AGENT_DATA_ROOT` 指向独立测试目录；headless 默认使用项目 `.data/`。客户端自己的配置目录由 `agentPaths()` 等模块解析，不是 TokenFlow 数据根目录的子目录。

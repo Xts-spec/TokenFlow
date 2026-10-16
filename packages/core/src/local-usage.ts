@@ -3,9 +3,9 @@ import type {UsageRow} from './usage-ledger.js';
 import {dayOf} from './usage-ledger.js';
 
 export type UsageChannel='official'|'api'|'unknown';
-export type LocalUsageRow=UsageRow&{origin:'native';channel:UsageChannel;provider:string;nativeAccountId?:string;nativeOrganizationId?:string;nativeAccountLabel?:string;nativeEmailHash?:string;nativeAccountEvidence?:'otel'|'conflict'|'login-snapshot';nativeThreadId?:string;sampleId?:string;responseHash?:string};
+export type LocalUsageRow=UsageRow&{origin:'native';channel:UsageChannel;provider:string;nativeAccountId?:string;nativeOrganizationId?:string;nativeAccountLabel?:string;nativeEmailHash?:string;nativeAccountEvidence?:'otel'|'conflict'|'login-snapshot'|'billing';nativeThreadId?:string;sampleId?:string;responseHash?:string};
 export type UsageCoverage={target:string;files:number;indexed:number;skipped:number;status:'ready'|'scanning'|'unavailable'|'unsupported';note?:string};
-export type LocalUsageSnapshot={rows:LocalUsageRow[];recent?:LocalUsageRow[];coverage:UsageCoverage[];scanning:boolean;updatedAt?:string;warning?:string};
+export type LocalUsageSnapshot={rows:LocalUsageRow[];recent?:LocalUsageRow[];coverage:UsageCoverage[];scanning:boolean;updatedAt?:string;warning?:string;cursorConversations?:import('./cursor-conversations.js').CursorConversation[]};
 export const nativeIdentity=(provider:string,id:string)=>createHash('sha256').update(`${provider}:${id}`).digest('hex');
 const number=(v:unknown)=>typeof v==='number'&&Number.isFinite(v)&&v>=0?Math.min(Number.MAX_SAFE_INTEGER,Math.round(v)):0;
 const gatewayModel=(v:unknown)=>typeof v==='string'&&/^(?:token-flow[/: ·]|(?:custom-local:)?(?:api-[a-f0-9]{24}\/|(?:codex|claude|antigravity|workbuddy|qoder|zcode|kimi|trae|cursor)\/))/i.test(v);

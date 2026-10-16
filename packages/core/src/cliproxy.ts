@@ -549,7 +549,7 @@ export class CLIProxyManager {
         const organizationId=provider==='claude'?text(raw.organization_uuid):provider==='antigravity'?text(raw.project_id):a.provider==='workbuddy'?text(raw.enterprise_id):null;
         return {id:a.id,provider,accountId,email,organizationId,label:a.label};
       }catch{return null;}
-    }));return rows.filter((row):row is NonNullable<typeof row>=>row!==null);
+    }));return [...rows.filter((row):row is NonNullable<typeof row>=>row!==null),...this.cursor.nativeUsageAccounts()];
   }
   private async nativeCredentialFile(provider:NativeProvider|DesktopProvider,id:string){
     id=this.preferredCredential(id);

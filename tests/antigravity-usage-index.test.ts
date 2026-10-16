@@ -19,7 +19,7 @@ it('indexes Antigravity once across copies, notices WAL appends, preserves accou
   const logins=await NativeUsageLogins.open(root);await logins.observe({antigravity:login('a')},now);await logins.observe({antigravity:login('a')},now+5000);
   index.snapshot();let snapshot=await ready();expect(snapshot.rows).toHaveLength(1);expect(snapshot.rows[0]).toMatchObject({target:'antigravity',requests:1,inputTokens:100,nativeAccountId:nativeIdentity('antigravity','a@example.test'),nativeAccountEvidence:'login-snapshot'});
   expect(snapshot.coverage.find(c=>c.target==='antigravity')).toMatchObject({files:2,indexed:2,status:'ready'});
-  expect(snapshot.coverage.find(c=>c.target==='cursor')).toMatchObject({status:'unsupported'});
+  expect(snapshot.coverage.find(c=>c.target==='cursor')).toMatchObject({status:'unavailable',files:0});
   await logins.observe({antigravity:login('b')},now+10000);await logins.observe({antigravity:login('b')},now+15000);
   db=new DatabaseSync(file);db.exec('PRAGMA journal_mode=WAL;PRAGMA wal_autocheckpoint=0');db.prepare('SELECT * FROM gen_metadata').all();const old=await stat(file),data=agGeneration('b',now+12000);db.prepare('INSERT INTO gen_metadata VALUES (1,?,?)').run(data,data.length);
   expect((await stat(file)).mtimeMs).toBe(old.mtimeMs);expect((await stat(file+'-wal')).size).toBeGreaterThan(0);

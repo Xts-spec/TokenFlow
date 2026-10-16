@@ -27,6 +27,8 @@ import {CodexContext,codexContextScope,portableCodexItem} from './codex-context.
 import { CodexAccounts } from './codex-accounts.js';
 import { AgentInstallationManager,detectAgent } from './agent-installation.js';
 import {LocalUsageIndex} from './local-usage-index.js';
+import {CursorNativeUsage} from './cursor-native-usage.js';
+import {mergeLocalUsageRows,recentLocalUsageRows} from './local-usage.js';
 import {UsageAttribution,mapNativeAccounts} from './usage-attribution.js';
 import {NativeUsageLogins} from './native-usage-logins.js';
 import {AgentUpdates} from './agent-updates.js';
@@ -215,7 +217,8 @@ export async function createDesktopService(options:ServiceOptions) {
   app.post('/local-telemetry/codex/v1/logs',{bodyLimit:1024*1024},async(req,reply)=>{if(!same(String(req.headers['x-tokenflow-recorder']??''),attribution.token))return reply.code(401).send({error:'Recorder authentication required'});attribution.accept(req.body);return {};});
   const enableAttribution=async()=>{const address=app.server.address();if(address&&typeof address==='object')try{await attribution.enable(connections.paths.codex,`http://127.0.0.1:${address.port}`);}catch{attributionWarning='Codex 请求账号记录尚未启用，未收到证据的请求继续显示未确认。';}};
   app.addHook('onListen',enableAttribution);
-  const localUsage=new LocalUsageIndex(root,connections.paths,()=>{const address=app.server.address();return [proxy.port,...(address&&typeof address==='object'?[address.port]:[])];});
+  const localUsage=new LocalUsageIndex(root,connections.paths,()=>{const address=app.server.address();return [proxy.port,...(address&&typeof address==='object'?[address.port]:[])];},options.cursorLocalPath?{cursor:[options.cursorLocalPath]}:{});
+  const cursorNativeUsage=await CursorNativeUsage.open(root,()=>proxy.cursor.nativeUsageReaders());
   // A managed Agent uses the model selected here even if an existing conversation retains an older model ID.
   // Bind by saved connection key, never by its editable display name or by an arbitrary single-model key.
   const fixedRoutes=new Map<string,{target:Target;sourceId:string;model:string;selections?:ModelSelection[];modelAliases?:Record<string,string>}>((await connections.status()).flatMap(t=>t.connection?.state==='applied'?[[t.connection.keyId,{target:t.id,sourceId:t.connection.sourceId,model:t.connection.model,selections:t.connection.selections,modelAliases:t.connection.modelAliases}] as const]:[]));
@@ -248,8 +251,10 @@ export async function createDesktopService(options:ServiceOptions) {
   app.addHook('onListen',async()=>{await observeNativeLogins();nativeLoginTimer=setInterval(()=>void observeNativeLogins(),5000);nativeLoginTimer.unref();});
   const nativeUsageSnapshot=async()=>{
     await observeNativeLogins();const snapshot=localUsage.snapshot();
+    const cursor=cursorNativeUsage.snapshot(snapshot);
     const accounts=await proxy.nativeUsageAccounts();
-    return {...snapshot,rows:mapNativeAccounts(snapshot.rows,accounts,nativeUsageLogins.accounts()),recent:mapNativeAccounts(snapshot.recent??[],accounts,nativeUsageLogins.accounts()),warning:snapshot.warning||nativeUsageLogins.warning};
+    const rows=mergeLocalUsageRows([...snapshot.rows,...cursor.rows]),recent=recentLocalUsageRows([...(snapshot.recent??[]),...cursor.rows]);
+    return {...snapshot,rows:mapNativeAccounts(rows,accounts,nativeUsageLogins.accounts()),recent:mapNativeAccounts(recent,accounts,nativeUsageLogins.accounts()),coverage:[...snapshot.coverage.filter(c=>c.target!=='cursor'),cursor.coverage],scanning:snapshot.scanning||cursor.scanning,warning:snapshot.warning||nativeUsageLogins.warning||cursor.warning};
   };
   const desktopLifecycle=new QoderLifecycle();
   let discoveryTask:Promise<void>|undefined;
@@ -1079,6 +1084,6 @@ export async function createDesktopService(options:ServiceOptions) {
     }
   }});
   if(options.uiRoot)await app.register(staticPlugin,{root:resolve(options.uiRoot),prefix:'/'});
-  app.addHook('onClose',async()=>{serviceClosing=true;clearInterval(nativeLoginTimer);await nativeLoginObservation;await nativeUsageLogins.close();await workbuddySDK.close();clearTimeout(startupCheckTimer);await localUsage.close();await attribution.close();await ledger.close();await traces.close();await localMaintenance.close();await maintenance.close();await approval.close();await proxy.shutdown();await apiSources.close();for(const saved of internalKeys.values()){const created=await saved.catch(()=>undefined);if(created&&gatewayKeys.list().some(k=>k.id===created.key.id))await gatewayKeys.remove(created.key.id);}});
+  app.addHook('onClose',async()=>{serviceClosing=true;clearInterval(nativeLoginTimer);await nativeLoginObservation;await nativeUsageLogins.close();await cursorNativeUsage.close();await workbuddySDK.close();clearTimeout(startupCheckTimer);await localUsage.close();await attribution.close();await ledger.close();await traces.close();await localMaintenance.close();await maintenance.close();await approval.close();await proxy.shutdown();await apiSources.close();for(const saved of internalKeys.values()){const created=await saved.catch(()=>undefined);if(created&&gatewayKeys.list().some(k=>k.id===created.key.id))await gatewayKeys.remove(created.key.id);}});
   return {app,proxy,discoverLocal};
 }

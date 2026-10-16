@@ -10,6 +10,8 @@ import type { AccountQuota } from './quota/types.js';
 import type { LoginSession } from './login/types.js';
 import {CursorUsage} from './cursor-usage.js';
 import {localCursorSession} from './cursor-local.js';
+import {rememberCursorGatewayConversation} from './cursor-conversations.js';
+import type {CursorUsageReader} from './cursor-native-usage.js';
 
 import {parseCursorInput,cursorResponse,type CursorToolCall} from './cursor-protocol.js';
 export {parseCursorInput,cursorResponse} from './cursor-protocol.js';
@@ -29,6 +31,7 @@ class CursorAccount {
  private catalogCredential?:Credential;
  private sdkBillingUnavailable?:{key:string;until:number};
  private billing?:{key:string;client:CursorUsage};private quota?:AccountQuota;private quotaCheckedAt=0;
+ private usageIdentity?:{key:string;email:string};
  private usageClient(credential:Credential){if(this.billing?.key!==credential.apiKey)this.billing={key:credential.apiKey,client:new CursorUsage(credential.apiKey)};return this.billing.client;}
  private catalogCheckedAt=0;private catalogVerifiedAt=0;
  private observedAt=new Date().toISOString();private catalogStatus:'loading'|'ready'|'error'='loading';
@@ -41,6 +44,11 @@ class CursorAccount {
  get busy(){return this.generating||!!this.loginTask;}
  get id(){return this.credential?createHash('sha256').update(`cursor:${this.credential.email||this.credential.apiKey}`).digest('hex').slice(0,24):undefined;}
  owns(id:string){return !!this.id&&id===this.id;}
+ nativeUsageEmail(){return credentialEmail(this.credential?.email)??(this.usageIdentity?.key===this.credential?.apiKey?this.usageIdentity?.email:undefined);}
+ nativeUsageReader():CursorUsageReader|undefined{
+  const c=this.credential,email=this.nativeUsageEmail();if(!c||!this.id||c.disabled||c.apiKeyExpiresAtMs&&c.apiKeyExpiresAtMs<=Date.now())return;
+  return {id:this.id,email,revision:createHash('sha256').update(`${this.id}:${c.apiKey}`).digest('hex'),read:async(start,end,signal)=>{const result=await this.usageClient(c).events(start,end,signal);if(this.credential?.apiKey===c.apiKey&&(!email||result.email===email))this.usageIdentity={key:c.apiKey,email:result.email};return result;}};
+ }
  async load(){if(this.loaded)return;const raw=await this.secrets.get('cursor-account');if(raw)this.credential=credentialSchema.parse(JSON.parse(raw));this.loaded=true;await this.refresh();}
  async refreshIfStale(){if(this.loaded&&!this.closed&&Date.now()-this.catalogCheckedAt>=300000)await this.refresh(false);}
  async refresh(forceQuota=true):Promise<void>{if(this.refreshTask){await this.refreshTask;if(this.catalogCredential!==this.credential)return this.refresh();return;}this.refreshTask=(async()=>{
@@ -138,6 +146,7 @@ class CursorAccount {
    agent=await Agent.create({apiKey:credential.apiKey,model:{id:model.id,...(params.length?{params}: {})},tools:input.tools.length?['mcp']:[],mcpServers:{},agents:{},local:{cwd:temp,settingSources:[],customTools,store:new JsonlLocalAgentStore(join(temp,'store'))}});
    if(signal.aborted||this.closed||this.credential?.disabled||this.credential?.apiKey!==credential.apiKey)return errorResponse('请求已取消',499);
    const startedAt=Date.now();
+   if(agent.agentId)await rememberCursorGatewayConversation(this.root,agent.agentId,startedAt);
    this.active=await agent.send(input.prompt);if(signal.aborted)cancel();
    const wait=this.active.wait();
    const outcome=await Promise.race([wait,toolRequested]);
@@ -182,6 +191,8 @@ export class CursorProvider {
  private identity(c:Credential){return credentialEmail(c.email)??c.email?.trim().toLowerCase()??credentialFingerprint(c);}
  get id(){return this.accounts.find(a=>a.id)?.id;}
  owns(id:string){return this.accounts.some(a=>a.owns(this.aliases[id]??id));}
+ nativeUsageReaders(){return this.accounts.flatMap(a=>{const reader=a.nativeUsageReader();return reader?[reader]:[];});}
+ nativeUsageAccounts(){const rows=this.accounts.flatMap(a=>{const email=a.nativeUsageEmail();return a.id&&email?[{id:a.id,provider:'cursor',accountId:email,email,organizationId:null,label:email}]:[];});return [...new Map(rows.map(row=>[row.email,row])).values()];}
  private account(id:string|undefined){const account=this.accounts.find(a=>a.owns(this.aliases[id??'']??id??''));if(!account)throw failure('Cursor 账号当前不可用。',409);return account;}
  private make(initial?:Credential){
   const account=new CursorAccount(this.root,{get:async()=>{const value=this.values.get(account);return value?JSON.stringify(value):'';},set:async(_name,raw)=>{

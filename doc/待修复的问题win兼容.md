@@ -24,6 +24,8 @@
 
 本次只补充交接记录，不合并或改写 `win-fix`。已发布提交保持原提交号；不要为了补提交说明而 amend、重写历史或强制推送。Windows 接手者同步时需要同时保留两边修改，不能用整文件覆盖解决冲突。
 
+下列提交表是当时快照。后续 Cursor 原生直连已在 main 接入并完成 macOS 实测，当前范围见 [USAGE-004](TODO.md) 与本页 U13，不再按 `66c65e8` 时的“尚未接入”判断。
+
 ### main 的问题、改进与对应提交
 
 | 提交（按先后顺序） | 遇到的问题与原因 | 已完成的改进／交接重点 |
@@ -357,7 +359,8 @@ node scripts/check-file-cleanup-native.mjs
 | U09 | 在测试目录执行回收站／永久删除、取消与恢复测试 | 按明确确认的范围处理；受保护项有影响说明；Windows 回收站语义正确；不能影响真实对话和账号数据 |
 | U10 | 设置、复制、外链、侧栏宽度、拖动排序、通知、弹窗、长名称 | 状态持久化、复制反馈正确、官方链接只开浏览器；键盘和滚动不跳位；页面不溢出 |
 | U11 | Claude Code 分别使用官方登录、直接 API、TokenFlow 反重力来源；反重力两个账号提供同名 Gemini／Claude 模型 | 核对 target／provider／sourceId／channel／origin；同名模型不串来源，停用账号不改路由；导出 Key 不冒称客户端身份，重启／重扫不重复累计。反重力 SQLite v1 已接入，Windows 需实测 DB／WAL 更新、双账号／项目切换和旧 `.pb` 明确不可读；无身份历史单列。详见 [直连采集](testing/native-direct-usage.md) |
-| U12 | 所有已授权平台分别从客户端直连一次，再经 TokenFlow 使用一次；覆盖 WorkBuddyAI 国际版与 Qoder 官方／自定义模型共存 | 来源、渠道和目标不串；重复授权／过期／停用不丢历史身份，跳过安全存储不弹读取提示；无支持的采集器必须显示“尚未采集”。Kimi／ZCode／Trae／Cursor／Grok 等未适配项按 USAGE-004 采集脱敏结构和实际 Token 对账，不勾为通过，不用额度反推 Token |
+| U12 | 所有已授权平台分别从客户端直连一次，再经 TokenFlow 使用一次；覆盖 WorkBuddyAI 国际版与 Qoder 官方／自定义模型共存 | 来源、渠道和目标不串；重复授权／过期／停用不丢历史身份，跳过安全存储不弹读取提示；无支持的采集器必须显示“尚未采集”。Kimi／ZCode／Trae／Grok 等未适配项按 USAGE-004 采集脱敏结构和实际 Token 对账，不勾为通过，不用额度反推 Token；Cursor 单列 U13 |
+| U13 | Cursor：原生 No Repo／无工具消息一次，再经 TokenFlow SDK 一次；重复扫描、重启并清空可清空的活动轨迹后核对 | main 已在 macOS Cursor 3.25.6 实测原生 14,052 Token。Windows 仍未测：核对 `%APPDATA%/Cursor/User/globalStorage/state.vscdb`／WAL、代理与普通权限；本机 composer＋授权账号官方事件精确关联，不能用 `isHeadless=false` 判断。直连只进 native，SDK 只进 gateway，来源账号／活动一致；排重文件不随清空轨迹删除，重启或导入 SDK 副本不双算。测试双账号、无邮箱授权、停用、空／延迟／不完整账单，网络失败保留旧计数；无 Key 创建或客户端认证／配置写回。更多版本、同步会话和大账单范围见[直连文档](testing/native-direct-usage.md#cursor-原生客户端直连采集2026-10-17) |
 
 ### 5.8 最终 Windows 包交付（P0）
 
@@ -419,7 +422,7 @@ Windows 版本／架构／终端：
 脚本索引也包含构建、补丁、探测、真实账号 live 和历史修复工具，**不是批量执行清单**。运行 live／repair／replay／stress 类工具前必须读其文件头、参数、路径和副作用，适配 Windows 并使用测试账号／测试配置；已有脚本里有硬编码 macOS 路径，不得直接照搬执行。
 
 <details>
-<summary>Vitest 测试文件：113 个</summary>
+<summary>Vitest 测试文件：114 个</summary>
 
 - [packages/contracts/fixtures.test.ts](../packages/contracts/fixtures.test.ts)
 - [tests/a2a-interoperability.test.ts](../tests/a2a-interoperability.test.ts)
@@ -459,6 +462,8 @@ Windows 版本／架构／终端：
 - [tests/credential-identity.test.ts](../tests/credential-identity.test.ts)
 - [tests/cursor-local-service.test.ts](../tests/cursor-local-service.test.ts)
 - [tests/cursor-local.test.ts](../tests/cursor-local.test.ts)
+- [tests/cursor-native-usage-service.test.ts](../tests/cursor-native-usage-service.test.ts)
+- [tests/cursor-native-usage.test.ts](../tests/cursor-native-usage.test.ts)
 - [tests/cursor-usage.test.ts](../tests/cursor-usage.test.ts)
 - [tests/cursor.test.ts](../tests/cursor.test.ts)
 - [tests/deepseek-config.test.ts](../tests/deepseek-config.test.ts)
@@ -560,7 +565,7 @@ Windows 版本／架构／终端：
 </details>
 
 <details>
-<summary>脚本完整索引（需逐个确认平台和副作用）：80 个</summary>
+<summary>脚本完整索引（需逐个确认平台和副作用）：82 个</summary>
 
 - [scripts/a2a-desktop-live.ts](../scripts/a2a-desktop-live.ts)
 - [scripts/account-startup-ui-check.cjs](../scripts/account-startup-ui-check.cjs)
@@ -593,6 +598,8 @@ Windows 版本／架构／终端：
 - [scripts/codex-subagent-routing-smoke.mjs](../scripts/codex-subagent-routing-smoke.mjs)
 - [scripts/codex-workbuddy-tools-live.ts](../scripts/codex-workbuddy-tools-live.ts)
 - [scripts/context-codex-smoke.ts](../scripts/context-codex-smoke.ts)
+- [scripts/cursor-native-usage-check.cjs](../scripts/cursor-native-usage-check.cjs)
+- [scripts/cursor-native-usage-check.ts](../scripts/cursor-native-usage-check.ts)
 - [scripts/cursor-usage-live.cjs](../scripts/cursor-usage-live.cjs)
 - [scripts/cursor-usage-live.ts](../scripts/cursor-usage-live.ts)
 - [scripts/deepseek-settings-check.ts](../scripts/deepseek-settings-check.ts)

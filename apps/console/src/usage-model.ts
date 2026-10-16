@@ -1,5 +1,5 @@
 import type { UsageRow as GatewayUsageRow } from '../../../packages/core/src/usage-ledger';
-export type UsageRow=GatewayUsageRow&{origin?:'gateway'|'native';channel?:'official'|'api'|'unknown';provider?:string;nativeAccountId?:string;nativeEmailHash?:string;nativeOrganizationId?:string;nativeAccountLabel?:string;nativeAccountEvidence?:'otel'|'conflict'|'login-snapshot'};
+export type UsageRow=GatewayUsageRow&{origin?:'gateway'|'native';channel?:'official'|'api'|'unknown';provider?:string;nativeAccountId?:string;nativeEmailHash?:string;nativeOrganizationId?:string;nativeAccountLabel?:string;nativeAccountEvidence?:'otel'|'conflict'|'login-snapshot'|'billing'};
 
 /** Time windows offered next to every usage summary. */
 export type RangeId = 'today' | '7d' | '30d' | 'all';

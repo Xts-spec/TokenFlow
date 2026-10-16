@@ -19,7 +19,7 @@ export function TracePanel({range,filter={},title='调用轨迹',includeNative=f
  useEffect(()=>{if(!selected)return;let live=true;setDetail(undefined);setDetailError('');void requestJSON<{record:ActivityTraceDetail}>(`${endpoint}/${selected}`).then(data=>{if(live)setDetail(data.record);}).catch(e=>{if(live)setDetailError(e.message);});return()=>{live=false;};},[selected,endpoint]);
  useEffect(()=>setSelected(''),[query]);
  const duration=(row:ActivityTrace|ActivityTraceDetail)=>row.timingKnown===false?'未记录耗时':durationText(row.durationMs);
- const originLabel=(row:ActivityTrace|ActivityTraceDetail)=>row.origin==='native'?`本机直连 · ${row.channel==='official'?'官方登录':row.channel==='api'?'API':'渠道未确认'}${row.accountLabel?` · ${row.accountLabel}`:''}${row.accountEvidence==='login-snapshot'?' · 按本机登录识别':''}`:'经 TokenFlow';
+ const originLabel=(row:ActivityTrace|ActivityTraceDetail)=>row.origin==='native'?`本机直连 · ${row.channel==='official'?'官方登录':row.channel==='api'?'API':'渠道未确认'}${row.accountLabel?` · ${row.accountLabel}`:''}${row.accountEvidence==='login-snapshot'?' · 按本机登录识别':row.accountEvidence==='billing'?' · 官方明细核对':''}`:'经 TokenFlow';
  const shown=rows.filter(r=>`${r.agent} ${originLabel(r)} ${r.model} ${r.protocol} ${(r.toolNames??[]).join(' ')}`.toLowerCase().includes(search.toLowerCase()));
  const runs=new Set(shown.filter(r=>r.origin!=='native').map(r=>r.runId));const toolCalls=shown.reduce((n,r)=>n+r.toolCalls,0),toolResults=shown.reduce((n,r)=>n+r.toolResults,0);
  const chronological=[...shown].reverse();const start=Math.min(...shown.map(r=>Date.parse(r.startedAt))),end=Math.max(...shown.map(r=>Date.parse(r.startedAt)+r.durationMs)),span=Math.max(1,end-start);
