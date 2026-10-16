@@ -12,7 +12,7 @@ async function fixture(){
  let running=false,failOn='',archiveFailure=false,calls=0;
  const client=async():Promise<MigrationClient>=>({pid:100,setArchived:async(id,archived)=>{if(archived&&archiveFailure)throw Error('archive fixture failure');db.prepare('update threads set archived=? where id=?').run(Number(archived),id);},close:async()=>{},resume:async(id,provider,model)=>{calls++;if(id===failOn)throw Error('fixture failure');const row=db.prepare('select rollout_path from threads where id=?').get(id);await readFile(String(row?.rollout_path));db.prepare('update threads set model_provider=?,model=? where id=?').run(provider,model,id);}});
  const migration=new CodexThreadMigration(root,join(home,'config.toml'),async()=>running?[99]:[],client);
- return {root,home,db,migration,reopen:()=>new CodexThreadMigration(root,join(home,'config.toml'),async()=>running?[99]:[],client),setArchiveFailure:(v:boolean)=>archiveFailure=v,setRunning:(v:boolean)=>running=v,setFailure:(v:string)=>failOn=v,calls:()=>calls,close:async()=>{db.close();await rm(root,{recursive:true,force:true});}};
+ return {root,home,db,migration,reopen:()=>new CodexThreadMigration(root,join(home,'config.toml'),async()=>running?[99]:[],client),setArchiveFailure:(v:boolean)=>archiveFailure=v,setRunning:(v:boolean)=>running=v,setFailure:(v:string)=>failOn=v,calls:()=>calls,close:async()=>{try{db.close();}catch{}await rm(root,{recursive:true,force:true});}};
 }
 describe('Codex old thread migration',()=>{
  it('requires exit before backup or configuration writes',async()=>{const f=await fixture();try{f.setRunning(true);await expect(f.migration.prepare('gateway')).rejects.toMatchObject({code:'codex_exit_required'});expect(f.calls()).toBe(0);expect((await f.migration.status()).backups).toBe(0);}finally{await f.close();}});
@@ -123,6 +123,7 @@ it('does not confuse changed thread sources or a missing database with deletion'
  f.db.prepare("update threads set source='exec' where id='old'").run();
  await expect(f.migration.restore()).rejects.toThrow('其他程序');
  expect((await f.migration.status()).restorable).toBe(2);
+ try{f.db.close();}catch{}
  await rm(join(f.home,'state_5.sqlite'));
  await expect(f.migration.restore()).rejects.toThrow('数据库');
  expect((await f.migration.status()).restorable).toBe(2);

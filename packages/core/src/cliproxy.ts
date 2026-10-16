@@ -208,7 +208,8 @@ export class CLIProxyManager {
         server.once('error', () => reject(new Error(`端口 ${this.port} 已被占用，未接管已有服务。`)));
         server.listen(this.port, '127.0.0.1', () => server.close(() => resolve()));
       });
-      const child = spawn(this.binary, ['-config', this.configPath], {
+      const isScript = /\.[cm]?js$/i.test(this.binary);
+      const child = spawn(isScript ? process.execPath : this.binary, isScript ? [this.binary, '-config', this.configPath] : ['-config', this.configPath], {
         env: safeEnvironment(), stdio: ['ignore', 'pipe', 'pipe'], cwd: join(this.root, 'cliproxy'),
       });
       this.child = child;

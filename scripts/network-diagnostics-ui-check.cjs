@@ -48,6 +48,6 @@ async function main(){
   assert.equal(report.platform,'win32');assert.equal(report.networkCheck.results.length,3);assert.equal(report.login.diagnostic.stage,'token_exchange');assert.match(report.logs.at(-1),/timeout/);
   await writeFile(resolve('.tmp/network-diagnostics-ui.png'),(await win.webContents.capturePage()).toPNG());
   console.log('PASS: network-check button, separate app/gateway results, 403 wording, failure details, and copied diagnostic report.');
- }catch(error){console.error(await evaluate('document.body.innerText.slice(0,1500)'));throw error;}finally{win.destroy();server.closeAllConnections();await new Promise(r=>server.close(r));await rm(root,{recursive:true,force:true});}
+ }catch(error){console.error(await evaluate('document.body.innerText.slice(0,1500)'));throw error;}finally{win.destroy();server.closeAllConnections();await new Promise(r=>server.close(r));await rm(root,{recursive:true,force:true,maxRetries:3,retryDelay:100}).catch(()=>{});}
 }
 main().then(()=>app.exit(0),error=>{console.error(error);app.exit(1);});

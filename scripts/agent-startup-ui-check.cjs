@@ -56,6 +56,6 @@ async function main(){
   const beforeRestart=reads();win.reload();await wait('!!document.querySelector(".tfAgentTitle")');await pause(200);
   check('new app session reads again',()=>{for(const path of Object.keys(startup))assert.equal(counts[path],beforeRestart[path]+1,path);});
   if(errors.length)throw Error(errors.join('\n'));
- }finally{win.destroy();server.close();server.closeAllConnections();await rm(root,{recursive:true,force:true});}
+ }finally{win.destroy();server.close();server.closeAllConnections();await rm(root,{recursive:true,force:true,maxRetries:3,retryDelay:100}).catch(()=>{});}
 }
 main().then(()=>app.exit(0),error=>{console.error(error);app.exit(1);});

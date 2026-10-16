@@ -53,7 +53,7 @@ export async function windowsStoreApp(target:Target,options:{cli?:boolean;run?:P
  const script=`$p=Get-AppxPackage -Name '${name}' -ErrorAction SilentlyContinue|Select-Object -First 1
 if($p){
 $a=Get-StartApps|Where-Object{$_.AppID -like ($p.PackageFamilyName+'!*')}|Select-Object -First 1
-$c=${options.cli?"Get-ChildItem -LiteralPath $p.InstallLocation -Filter codex.exe -Recurse -Depth 6 -File -ErrorAction SilentlyContinue|Select-Object -First 1 -ExpandProperty FullName":'$null'}
+$c=${options.cli?"Get-ChildItem -LiteralPath $p.InstallLocation -Filter codex.exe -Recurse -Depth 6 -File -ErrorAction SilentlyContinue|Sort-Object -Property Length -Descending|Select-Object -First 1 -ExpandProperty FullName":'$null'}
 [pscustomobject]@{version=[string]$p.Version;location=$p.InstallLocation;appId=$a.AppID;cli=$c}|ConvertTo-Json -Compress
 }`;
  try{
