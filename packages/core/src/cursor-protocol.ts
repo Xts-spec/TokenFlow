@@ -14,11 +14,15 @@ const item=z.union([message,z.object({type:z.literal('function_call'),call_id:z.
 const fn=z.object({name:z.string().min(1).max(128),description:z.string().optional(),parameters:object.optional(),strict:z.boolean().nullish()});
 const customTool=z.object({type:z.literal('custom'),name:z.string().min(1).max(128),description:z.string().optional(),format:object.optional()});
 const tool=z.union([customTool,fn.extend({type:z.literal('function')}),z.object({type:z.literal('function'),function:fn}),z.object({name:z.string().min(1).max(128),description:z.string().optional(),input_schema:object})]);
+const toolGroup=z.union([tool,z.object({type:z.literal('namespace'),name:z.string().min(1).max(128),description:z.string().optional(),tools:z.array(tool).max(2048)})]);
 const request=z.object({
- model:z.string(),stream:z.boolean().default(false),input:z.union([z.string(),z.array(item)]).optional(),messages:z.array(message).optional(),instructions:z.string().optional(),system:content.optional(),tools:z.array(tool).max(2048).default([]),tool_choice:z.unknown().optional(),parallel_tool_calls:z.boolean().optional(),
+ model:z.string(),stream:z.boolean().default(false),input:z.union([z.string(),z.array(item)]).optional(),messages:z.array(message).optional(),instructions:z.string().optional(),system:content.optional(),tools:z.array(toolGroup).max(2048).default([]),tool_choice:z.unknown().optional(),parallel_tool_calls:z.boolean().optional(),
  max_tokens:z.number().int().positive().optional(),max_output_tokens:z.number().int().positive().optional(),max_completion_tokens:z.number().int().positive().optional(),
- stream_options:z.object({include_usage:z.boolean().optional()}).optional(),store:z.boolean().optional(),metadata:object.optional(),user:z.string().optional(),prompt_cache_key:z.string().optional(),safety_identifier:z.string().optional(),
+ stream_options:z.object({include_usage:z.boolean().optional()}).optional(),store:z.boolean().optional(),client_metadata:object.optional(),metadata:object.optional(),user:z.string().optional(),prompt_cache_key:z.string().optional(),safety_identifier:z.string().optional(),
  reasoning:z.object({effort:z.string().optional(),summary:z.string().optional()}).optional(),reasoning_effort:z.string().optional(),include:z.array(z.string()).optional(),
+ thinking:z.union([z.object({type:z.literal('adaptive')}),z.object({type:z.literal('disabled')}),z.object({type:z.literal('enabled'),budget_tokens:z.number().int().positive()})]).optional(),
+ context_management:z.object({edits:z.array(z.object({type:z.literal('clear_thinking_20251015'),keep:z.union([z.literal('all'),z.object({type:z.literal('thinking_turns'),value:z.number().int().nonnegative()})]).optional()}))}).optional(),
+ output_config:z.object({effort:z.string().optional()}).strict().optional(),
  text:z.object({format:z.object({type:z.literal('text')}).optional(),verbosity:z.string().optional()}).optional(),response_format:z.object({type:z.literal('text')}).optional(),
  truncation:z.enum(['auto','disabled']).optional(),service_tier:z.string().optional(),
 }).strict();
@@ -26,14 +30,16 @@ export function parseCursorInput(path:string,body:unknown){
  if(!['responses','chat/completions','messages'].includes(path))throw new Error('Cursor 不支持此接口。');
  const value=request.parse(body);const history=path==='responses'?value.input:value.messages;
  if(!history||Array.isArray(history)&&!history.length)throw new Error('缺少对话内容。');
- let tools=value.tools.map(t=>{const f='function'in t?t.function:t;return {name:f.name,custom:'type'in t&&t.type==='custom',description:(f.description??'')+('format'in f&&f.format?` Input format: ${JSON.stringify(f.format)}`:''),parameters:'type'in t&&t.type==='custom'?{type:'object',properties:{input:{type:'string'}},required:['input'],additionalProperties:false}:('input_schema'in f?f.input_schema:'parameters'in f?f.parameters:undefined)??{type:'object',properties:{}}};});
- if(new Set(tools.map(t=>t.name)).size!==tools.length)throw new Error('工具名称重复。');
+ const declared=value.tools.flatMap<{tool:z.infer<typeof tool>;namespace?:string}>(t=>'type'in t&&t.type==='namespace'?t.tools.map(tool=>({tool,namespace:t.name})): [{tool:t}]);
+ if(declared.length>2048)throw new Error('工具过多。');
+ let tools=declared.map(({tool:t,namespace})=>{const f='function'in t?t.function:t;return {name:f.name,namespace,custom:'type'in t&&t.type==='custom',description:(f.description??'')+('format'in f&&f.format?` Input format: ${JSON.stringify(f.format)}`:''),parameters:'type'in t&&t.type==='custom'?{type:'object',properties:{input:{type:'string'}},required:['input'],additionalProperties:false}:('input_schema'in f?f.input_schema:'parameters'in f?f.parameters:undefined)??{type:'object',properties:{}}};});
+ if(new Set(tools.map(t=>JSON.stringify([t.namespace??null,t.name]))).size!==tools.length)throw new Error('工具名称重复。');
  const choice=value.tool_choice;let required=false;
  if(choice==='none'||choice&&typeof choice==='object'&&'type'in choice&&choice.type==='none')tools=[];
  else if(choice==='required'||choice&&typeof choice==='object'&&'type'in choice&&choice.type==='any')required=true;
  else if(choice!==undefined&&choice!=='auto'&&!(choice&&typeof choice==='object'&&'type'in choice&&choice.type==='auto')){
-  const selected=z.union([z.object({type:z.enum(['function','custom']),name:z.string()}),z.object({type:z.literal('function'),function:z.object({name:z.string()})}),z.object({type:z.literal('tool'),name:z.string()})]).parse(choice);
-  const name='function'in selected?selected.function.name:selected.name;tools=tools.filter(t=>t.name===name);required=true;
+  const selected=z.union([z.object({type:z.enum(['function','custom']),name:z.string(),namespace:z.string().optional()}),z.object({type:z.literal('function'),function:z.object({name:z.string()})}),z.object({type:z.literal('tool'),name:z.string()})]).parse(choice);
+  const name='function'in selected?selected.function.name:selected.name;const namespace='namespace'in selected?selected.namespace:undefined;tools=tools.filter(t=>t.name===name&&t.namespace===namespace);required=true;
  }
  if(required&&!tools.length)throw new Error('指定的工具不可用。');
  const limit=value.max_output_tokens??value.max_completion_tokens??value.max_tokens;
@@ -46,13 +52,13 @@ export function parseCursorInput(path:string,body:unknown){
   JSON.stringify({instructions:value.instructions,system:value.system,history}),
  ].filter(Boolean).join('\n\n');
  if(prompt.length>4000000)throw new Error('Cursor 对话过长，请先压缩。');
- return {model:value.model,stream:value.stream,prompt,tools:tools.map(t=>({...t,parameters:t.parameters as Record<string,SDKJsonValue>})),required,parallel_tool_calls:value.parallel_tool_calls,effort:value.reasoning?.effort??value.reasoning_effort,limit};
+ return {model:value.model,stream:value.stream,prompt,tools:tools.map(t=>({...t,parameters:t.parameters as Record<string,SDKJsonValue>})),required,parallel_tool_calls:value.parallel_tool_calls,effort:value.reasoning?.effort??value.reasoning_effort??value.output_config?.effort,limit};
 }
 
 export function cursorResponse(path:string,model:string,text:string,usage:{input_tokens:number;output_tokens:number;cached_tokens?:number;cache_write_tokens?:number}|undefined,stream:boolean,calls:CursorToolCall[]=[],provider='cursor'){
  const id=`resp_${provider}_${randomUUID().replaceAll('-','')}`;const created=Math.floor(Date.now()/1000);
  const content={type:'output_text',text,annotations:[]};const message={id:`msg_${randomUUID()}`,type:'message',role:'assistant',status:'completed',content:[content]};
- const output=[...(text?[message]:[]),...calls.map(c=>c.custom?{id:`ct_${c.id}`,type:'custom_tool_call',status:'completed',call_id:c.id,name:c.name,...(c.namespace?{namespace:c.namespace}:{}),input:JSON.parse(c.arguments).input as string}:{id:`fc_${c.id}`,type:'function_call',status:'completed',call_id:c.id,name:c.name,...(c.namespace?{namespace:c.namespace}:{}),arguments:c.arguments})];
+ const output=[...(text?[message]:[]),...calls.map(c=>c.custom?{id:`ctc_${c.id}`,type:'custom_tool_call',status:'completed',call_id:c.id,name:c.name,...(c.namespace?{namespace:c.namespace}:{}),input:JSON.parse(c.arguments).input as string}:{id:`fc_${c.id}`,type:'function_call',status:'completed',call_id:c.id,name:c.name,...(c.namespace?{namespace:c.namespace}:{}),arguments:c.arguments})];
  const details=usage?.cached_tokens!==undefined?{cached_tokens:usage.cached_tokens,cache_write_tokens:usage.cache_write_tokens??0}:undefined;
  const response={id,object:'response',created_at:created,status:'completed',model,output,usage:usage?{input_tokens:usage.input_tokens,output_tokens:usage.output_tokens,total_tokens:usage.input_tokens+usage.output_tokens,...(details?{input_tokens_details:details}:{})}:null};
  const chatUsage=usage?{prompt_tokens:usage.input_tokens,completion_tokens:usage.output_tokens,total_tokens:usage.input_tokens+usage.output_tokens,...(details?{prompt_tokens_details:details}:{})}:undefined;

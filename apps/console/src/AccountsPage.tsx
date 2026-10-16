@@ -15,7 +15,7 @@ import {DragHandle,dropOrder,orderModels,useModelOrder} from './display-order';
 import { ProviderIcon } from './ProviderIcon';
 import type { Notify } from './notify';
 
-const importable=new Set(['doubao','trae','workbuddy','zcode']);
+const importable=new Set(['doubao','trae','workbuddy','zcode','cursor']);
 const pendingStates=['starting','waiting_for_browser','verifying'];
 const tabKey='token-flow.accounts.provider';
 

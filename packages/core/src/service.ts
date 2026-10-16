@@ -116,7 +116,7 @@ export async function createDesktopService(options:ServiceOptions) {
       const route=url.pathname.slice('/v1/'.length);
       if(route==='models'&&request.method==='GET'){const models=model.startsWith('workbuddy/')?(proxy.snapshot().accounts.find(a=>a.id===sourceId)?.models??[]).map(id=>({id,object:'model',owned_by:'workbuddy'})):proxy.cursor.snapshot().models.map(m=>({id:m.id,object:'model',owned_by:'cursor'}));return Response.json({object:'list',data:models});}
       const body=await request.json() as {model:string};if(body.model!==model)throw new Error('Cursor model scope mismatch');
-      const send=(path:string,value:unknown)=>model.startsWith('workbuddy/')?workbuddySDK.response(sourceId!,path,value,request.signal):proxy.cursor.response(path,value,request.signal);
+      const send=(path:string,value:unknown)=>model.startsWith('workbuddy/')?workbuddySDK.response(sourceId!,path,value,request.signal):proxy.cursor.response(path,value,request.signal,sourceId);
       return ['responses','responses/compact'].includes(route)?gatewayContext.response(route,body,owner,sourceId,send):send(route,body);
     };
   };
@@ -781,7 +781,7 @@ export async function createDesktopService(options:ServiceOptions) {
   });
   app.post('/api/local-agent/import-local/:provider',async req=>{
     await idle();
-    const provider=z.enum(['doubao','trae','workbuddy','zcode']).parse((req.params as {provider:string}).provider);
+    const provider=z.enum(['doubao','trae','workbuddy','zcode','cursor']).parse((req.params as {provider:string}).provider);
     return localOperation(()=>proxy.importLocal(provider));
   });
   app.get('/api/history',async()=>{
@@ -870,7 +870,7 @@ export async function createDesktopService(options:ServiceOptions) {
       const bridgeContext=(path==='responses'||path==='responses/compact')&&!!(client||config.kind==='cliproxy'||apiSource)&&typeof model==='string'&&(fixed?.target==='codex'||/^(qoder|workbuddy|cursor)\//.test(model)||!!apiSource);
       const workbuddyModel=!!model?.startsWith('workbuddy/')&&!apiSource;
       const sdkSourceId=client?.modelSources?.[model!]??client?.sourceId??proxy.snapshot().accounts.find(a=>a.provider==='workbuddy'&&!a.disabled&&a.models?.includes(model!))?.id;
-      const dispatch=cursorModel?async(route:string,body:unknown)=>abort.watch(await proxy.cursor.response(route,body,abort.signal)):workbuddyModel&&path!=='messages/count_tokens'?async(route:string,body:unknown)=>{if(!sdkSourceId)throw new Error('WorkBuddy source unavailable');return abort.watch(await workbuddySDK.response(sdkSourceId,route,body,abort.signal));}:send;
+      const dispatch=cursorModel?async(route:string,body:unknown)=>abort.watch(await proxy.cursor.response(route,body,abort.signal,client?.modelSources?.[model!]??client?.sourceId)):workbuddyModel&&path!=='messages/count_tokens'?async(route:string,body:unknown)=>{if(!sdkSourceId)throw new Error('WorkBuddy source unavailable');return abort.watch(await workbuddySDK.response(sdkSourceId,route,body,abort.signal));}:send;
       const response=bridgeContext?await gatewayContext.response(path,req.body as {model:string},client?.id??'workspace',client?.modelSources?.[model]??client?.sourceId??apiSource?.id??upstreamURL,dispatch,fixed?.target==='codex'?{scope:codexContextScope,normalize:portableCodexItem,recover:async item=>codexContext.recover(item,await codexContextScopes())}:undefined):await dispatch(path,req.body);
       if(!response.ok){
         await settle({inputTokens:null,outputTokens:null},response.status>=500);

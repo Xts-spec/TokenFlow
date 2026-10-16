@@ -1,7 +1,7 @@
 import type { LocalAgentSnapshot } from '../../../packages/core/src/cliproxy';
 
 // Restore each provider here after its adaptation is ready for release.
-const hiddenProviders = new Set(['doubao', 'cursor']);
+const hiddenProviders = new Set(['doubao']);
 export const isProviderVisible = (provider: string) => !hiddenProviders.has(provider);
 
 /** Keep unreleased sources out of account entries and all frontend model pickers. */

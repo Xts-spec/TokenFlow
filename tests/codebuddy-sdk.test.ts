@@ -91,7 +91,7 @@ it('round-trips colliding tool identities and custom results over the SDK bounda
  try{
   const response=await sdk.response('source','responses',original,new AbortController().signal);expect(response.status).toBe(200);
   const first=await response.json();const call=first.output[0];
-  expect(call).toMatchObject({type:'custom_tool_call',name:'read',namespace:'fs',input:'client-file.txt'});
+  expect(call.id).toMatch(/^ctc_/);expect(call).toMatchObject({type:'custom_tool_call',name:'read',namespace:'fs',input:'client-file.txt'});
   const second=await sdk.response('source','responses',{...original,tool_choice:'auto',tools:[tools[1]],input:[...original.input,...first.output,{type:'custom_tool_call_output',call_id:call.call_id,output:'CLIENT_RESULT'}]},new AbortController().signal);
   expect(second.status).toBe(200);expect(JSON.stringify(await second.json())).toContain('Received CLIENT_RESULT');
  }finally{await sdk.close();await rm(root,{recursive:true,force:true});}

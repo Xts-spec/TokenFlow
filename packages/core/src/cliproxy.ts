@@ -270,6 +270,7 @@ export class CLIProxyManager {
     return this.refreshTask;
   }
   private async loadAccounts(providerScope?:LoginProviderId) {
+    if(!providerScope)void this.cursor.refreshIfStale().catch(()=>undefined);
     if (this.state !== 'running') throw new Error('请先启动 Local Agent');
     try {
       const result = z.object({files: z.array(accountSchema)}).parse(await this.request('/auth-files'));
@@ -420,7 +421,7 @@ export class CLIProxyManager {
     return this.snapshot();
   }
   async setAccountEnabled(id: string, enabled: boolean) {
-    if(this.cursor.owns(id)){await this.cursor.setEnabled(enabled);return this.snapshot();}
+    if(this.cursor.owns(id)){await this.cursor.setEnabled(enabled,id);return this.snapshot();}
     const name = this.names.get(id);
     if (!name) throw new Error('账号已变更，请刷新账号列表');
     await this.request('/auth-files/status', 'PATCH', {name, disabled: !enabled});
@@ -498,7 +499,7 @@ export class CLIProxyManager {
     return this.refreshAccounts();
   }
   async deleteAccount(id: string) {
-    if(this.cursor.owns(id)){await this.cursor.remove();return this.snapshot();}
+    if(this.cursor.owns(id)){await this.cursor.remove(id);return this.snapshot();}
     const name = this.names.get(id);
     if (!name) throw new Error('账号已变更，请刷新账号列表');
     await this.request(`/auth-files?name=${encodeURIComponent(name)}`, 'DELETE');
@@ -568,7 +569,8 @@ export class CLIProxyManager {
   }
   // 登录层入口：所有 Provider 共用同一个会话控制器。
   async login(provider: LoginProviderId | 'cursor') {this.cursorLoginSelected=provider==='cursor';if(provider==='cursor'){if(this.login_.isPending())throw new Error('请先完成当前授权');await this.cursor.beginLogin();}else{if(['starting','waiting_for_browser'].includes(this.cursor.snapshot().login?.status??''))throw new Error('请先完成 Cursor 授权');await this.login_.login(provider);}return this.snapshot();}
-  async importLocal(provider: 'doubao' | 'trae' | 'workbuddy' | 'zcode', onlyNew=false) {
+  async importLocal(provider: 'doubao' | 'trae' | 'workbuddy' | 'zcode' | 'cursor', onlyNew=false) {
+    if(provider==='cursor'){await this.cursor.importLocal();return this.snapshot();}
     if (this.state !== 'running') await this.start();
     // Startup must never replace a pool credential refreshed independently of the native app.
     if(onlyNew&&this.accounts.some(account=>account.provider===provider))return this.snapshot();

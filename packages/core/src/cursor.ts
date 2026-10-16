@@ -6,6 +6,8 @@ import type { SDKModel,Run,SDKCustomTool,TokenUsage } from '@cursor/sdk';
 import type { LocalAccount,LocalModel } from './cliproxy.js';
 import type { AccountQuota } from './quota/types.js';
 import type { LoginSession } from './login/types.js';
+import {CursorUsage} from './cursor-usage.js';
+import {localCursorSession} from './cursor-local.js';
 
 import {parseCursorInput,cursorResponse,type CursorToolCall} from './cursor-protocol.js';
 export {parseCursorInput,cursorResponse} from './cursor-protocol.js';
@@ -16,13 +18,17 @@ type Credential=z.infer<typeof credentialSchema>;
 type Secrets={get:(name:string)=>Promise<string>;set:(name:string,value:string)=>Promise<void>};
 const failure=(message:string,statusCode=400)=>Object.assign(new Error(message),{statusCode});
 const errorResponse=(message:string,status=400)=>Response.json({error:{message,type:'cursor_error'}},{status});
-export const cursorCatalog={id:'cursor' as const,label:'Cursor',flow:'device' as const,hint:'官方 SDK 授权 · 支持文本与客户端工具；可接入其他 Agent，个人剩余额度请查看官方用量页'};
+export const cursorCatalog={id:'cursor' as const,label:'Cursor',flow:'device' as const,hint:'官方 SDK 授权 · 支持文本、客户端工具与官方用量查询'};
 
 // Only client-declared tools are exposed. No local filesystem or shell tools.
-export class CursorProvider {
+class CursorAccount {
  private credential?:Credential;private loaded=false;private models:SDKModel[]=[];private login?:CursorLogin;
  private loginAbort?:AbortController;private loginTask?:Promise<void>;private refreshTask?:Promise<void>;
  private catalogCredential?:Credential;
+ private sdkBillingUnavailable?:{key:string;until:number};
+ private billing?:{key:string;client:CursorUsage};private quota?:AccountQuota;private quotaCheckedAt=0;
+ private usageClient(credential:Credential){if(this.billing?.key!==credential.apiKey)this.billing={key:credential.apiKey,client:new CursorUsage(credential.apiKey)};return this.billing.client;}
+ private catalogCheckedAt=0;private catalogVerifiedAt=0;
  private observedAt=new Date().toISOString();private catalogStatus:'loading'|'ready'|'error'='loading';
  private active?:Run;private generating=false;private closed=false;private error?:string;
  constructor(private root:string,private secrets:Secrets,private openExternal?:(url:string)=>Promise<void>){}
@@ -30,10 +36,12 @@ export class CursorProvider {
   if(process.env.CURSOR_BACKEND_URL)throw failure('Cursor SDK 后端覆盖未获支持，请移除 CURSOR_BACKEND_URL 后重试。');
   return import('@cursor/sdk');
  }
+ get busy(){return this.generating||!!this.loginTask;}
  get id(){return this.credential?createHash('sha256').update(`cursor:${this.credential.email||this.credential.apiKey}`).digest('hex').slice(0,24):undefined;}
  owns(id:string){return !!this.id&&id===this.id;}
  async load(){if(this.loaded)return;const raw=await this.secrets.get('cursor-account');if(raw)this.credential=credentialSchema.parse(JSON.parse(raw));this.loaded=true;await this.refresh();}
- async refresh():Promise<void>{if(this.refreshTask){await this.refreshTask;if(this.catalogCredential!==this.credential)return this.refresh();return;}this.refreshTask=(async()=>{
+ async refreshIfStale(){if(this.loaded&&!this.closed&&Date.now()-this.catalogCheckedAt>=30000)await this.refresh(false);}
+ async refresh(forceQuota=true):Promise<void>{if(this.refreshTask){await this.refreshTask;if(this.catalogCredential!==this.credential)return this.refresh();return;}this.refreshTask=(async()=>{
   const credential=this.credential;if(!credential||credential.disabled)return;
   this.catalogCredential=credential;this.catalogStatus='loading';
   try{
@@ -48,15 +56,21 @@ export class CursorProvider {
     models=z.object({items:z.array(z.object({id:z.string(),displayName:z.string().default('')}).passthrough())}).parse(await response.json()).items as SDKModel[];
    }
    if(this.credential!==credential||this.closed)return;
-   this.models=models.filter(m=>m.id&&m.id.length<280);this.error=this.models.length?undefined:'Cursor 未返回此账号可用的模型，请检查官方 API 权限后刷新。';this.catalogStatus=this.error?'error':'ready';
-  }catch(error){if(this.credential===credential&&!this.closed){const cause=cursorFailure(error);if(cause.blocked)this.models=[];this.error=cause.message;this.catalogStatus='error';}}
-  finally{this.observedAt=new Date().toISOString();}
+   this.catalogVerifiedAt=Date.now();this.models=models.filter(m=>m.id&&m.id.length<280);this.error=this.models.length?undefined:'Cursor 未返回此账号可用的模型，请检查官方 API 权限后刷新。';this.catalogStatus=this.error?'error':'ready';
+  }catch(error){if(this.credential===credential&&!this.closed){const cause=cursorFailure(error);if(cause.blocked||Date.now()-this.catalogVerifiedAt>=15*60000)this.models=[];this.error=cause.message;this.catalogStatus='error';}}
+  finally{this.catalogCheckedAt=Date.now();this.observedAt=new Date().toISOString();}
+  if(this.credential===credential&&!this.closed&&(forceQuota||Date.now()-this.quotaCheckedAt>=60000)){
+   const previous=this.quota&&this.quota.accountId===this.id?this.quota:undefined;
+   try{const report=await this.usageClient(credential).quota();if(this.credential===credential&&!this.closed)this.quota={...report,accountId:this.id!,provider:'cursor',status:'ok',observedAt:new Date().toISOString(),lastSuccessfulAt:new Date().toISOString()};}
+   catch{if(this.credential===credential&&!this.closed)this.quota={...previous,accountId:this.id!,provider:'cursor',status:'error',observedAt:new Date().toISOString(),windows:previous?.windows??[],error:'Cursor 官方用量查询暂不可用，请稍后刷新。',note:'可在 Cursor 官方用量页核对；查询失败不代表额度为零。'};}
+   finally{this.quotaCheckedAt=Date.now();}
+  }
  })().finally(()=>{this.refreshTask=undefined;});return this.refreshTask;}
  snapshot():{accounts:LocalAccount[];models:LocalModel[];login?:CursorLogin;quotas:Record<string,AccountQuota>}{
   const c=this.credential;const expired=!!c?.apiKeyExpiresAtMs&&c.apiKeyExpiresAtMs<=Date.now();const enabled=!!c&&!c.disabled&&!expired;
-  const models=enabled?this.models.map(m=>({id:`cursor/${m.id}`,provider:'cursor' as const,displayName:m.displayName,capabilities:{text:true,tools:true,images:false}})):[];
+  const models=enabled&&Date.now()-this.catalogVerifiedAt<15*60000?this.models.map(m=>({id:`cursor/${m.id}`,provider:'cursor' as const,displayName:m.displayName,capabilities:{text:true,tools:true,images:false}})):[];
   return {accounts:c?[{id:this.id!,provider:'cursor',label:c.email||'Cursor SDK 账号',status:expired?'授权已过期':this.catalogStatus==='loading'?'模型同步中':this.error?(this.models.length?'使用上次模型目录':'模型同步失败'):'active',modelError:this.error,disabled:c.disabled,unavailable:expired,models:models.map(m=>m.id)}]:[],models,login:this.login,
-   quotas:c?{[this.id!]:{accountId:this.id!,provider:'cursor' as const,status:'ok' as const,observedAt:this.observedAt,windows:[],note:'个人套餐剩余额度暂无已确认的公开查询接口，请查看 Cursor 官方用量页。本应用调用的 Token 用量在 API 总览记录；这不代表账户剩余额度。'}}:{}};
+   quotas:c?{[this.id!]:this.quota&&this.quota.accountId===this.id?this.quota:{accountId:this.id!,provider:'cursor' as const,status:'ok' as const,observedAt:this.observedAt,windows:[],note:'正在查询 Cursor 官方用量与额度…'}}:{}};
  }
  assertSource(id:string,model:string){if(!this.owns(id)||!this.snapshot().models.some(m=>m.id===model))throw failure('Cursor 账号或模型当前不可用。',409);return `cursor:${id}`;}
  async beginLogin(){
@@ -73,7 +87,7 @@ export class CursorProvider {
     void this.openExternal?.(url.href).catch(()=>{});
    }});
    if(controller.signal.aborted||this.closed)return;
-   const next=credentialSchema.parse(result);await this.secrets.set('cursor-account',JSON.stringify(next));this.credential=next;this.models=[];await this.refresh();
+   const next=credentialSchema.parse(result);await this.secrets.set('cursor-account',JSON.stringify(next));this.credential=next;this.models=[];this.quota=undefined;this.billing=undefined;await this.refresh();
    login.status='completed';login.message=this.error?'Cursor 已授权，模型同步未完成；可刷新重试，无需重复登录。':'Cursor 已连接，模型目录已刷新。';
   }catch{if(login.status!=='cancelled'){login.status=controller.signal.aborted?'expired':'failed';login.message=controller.signal.aborted?'Cursor 授权已超时，请重试。':'Cursor 授权未完成，请重试。';}}
   finally{clearTimeout(timer);this.loginTask=undefined;this.loginAbort=undefined;}})();
@@ -81,7 +95,7 @@ export class CursorProvider {
  async openLogin(id:string){if(this.login?.id!==id||!this.login.url||this.login.status!=='waiting_for_browser')throw failure('授权会话已变更');await this.openExternal?.(this.login.url);}
  cancelLogin(id:string){if(this.login?.id!==id)throw failure('授权会话已变更');this.login.status='cancelled';this.login.message='已取消 Cursor 授权。';this.loginAbort?.abort();}
  async setEnabled(enabled:boolean){if(this.loginTask)throw failure('请先结束 Cursor 授权',409);if(!this.credential)throw failure('Cursor 尚未连接');const next={...this.credential,disabled:!enabled};await this.secrets.set('cursor-account',JSON.stringify(next));this.credential=next;if(!enabled)await this.active?.cancel();await this.refresh();}
- async remove(){if(this.loginTask)throw failure('请先结束 Cursor 授权',409);await this.secrets.set('cursor-account','');this.credential=undefined;this.models=[];await this.active?.cancel();}
+ async remove(){if(this.loginTask)throw failure('请先结束 Cursor 授权',409);await this.secrets.set('cursor-account','');this.credential=undefined;this.models=[];this.quota=undefined;this.billing=undefined;await this.active?.cancel();}
  async close(){this.closed=true;this.loginAbort?.abort();await this.active?.cancel().catch(()=>{});await this.loginTask;}
  async response(path:string,body:unknown,signal:AbortSignal):Promise<Response>{
   let input:ReturnType<typeof parseCursorInput>;try{input=parseCursorInput(path,body);}catch{return errorResponse('Cursor 请求格式不支持：请使用文本、函数工具及工具结果；图片、服务端工具和严格 JSON 输出暂不可用。');}
@@ -101,10 +115,10 @@ export class CursorProvider {
    if(input.effort){const parameter=model.parameters?.find(p=>['reasoning_effort','effort'].includes(p.id)&&p.values.some(v=>v.value===input.effort));if(parameter){const existing=params.find(p=>p.id===parameter.id);if(existing)existing.value=input.effort;else params.push({id:parameter.id,value:input.effort});}}
    const calls:CursorToolCall[]=[];let handoff!:()=>void;const toolRequested=new Promise<'tool'>(resolve=>{handoff=()=>resolve('tool');});
    const customTools:Record<string,SDKCustomTool>=Object.fromEntries(input.tools.map((tool,index)=>[`client_${index}`,{
-    description:`Client tool: ${tool.name}. ${tool.description??''}`,inputSchema:tool.parameters,
+    description:`Client tool: ${tool.namespace?`${tool.namespace}.`:""}${tool.name}. ${tool.description??''}`,inputSchema:tool.parameters,
     execute:(args:Record<string,import('@cursor/sdk').SDKJsonValue>)=>{
      if(tool.custom&&typeof args.input!=='string')throw new Error('Custom tool requires text input');
-     calls.push({id:`call_${randomUUID().replaceAll('-','')}`,name:tool.name,arguments:JSON.stringify(args),custom:tool.custom});handoff();
+     calls.push({id:`call_${randomUUID().replaceAll('-','')}`,name:tool.name,namespace:tool.namespace,arguments:JSON.stringify(args),custom:tool.custom});handoff();
      // Hold the callback until cancellation stops the SDK loop. The caller, not
      // this process, executes the tool and submits its result on the next turn.
      return new Promise<string>(resolve=>releases.push(()=>resolve('Tool execution handed back to the client.')));
@@ -112,6 +126,7 @@ export class CursorProvider {
    }]));
    agent=await Agent.create({apiKey:credential.apiKey,model:{id:model.id,...(params.length?{params}: {})},tools:input.tools.length?['mcp']:[],mcpServers:{},agents:{},local:{cwd:temp,settingSources:[],customTools,store:new JsonlLocalAgentStore(join(temp,'store'))}});
    if(signal.aborted||this.closed||this.credential?.disabled||this.credential?.apiKey!==credential.apiKey)return errorResponse('请求已取消',499);
+   const startedAt=Date.now();
    this.active=await agent.send(input.prompt);if(signal.aborted)cancel();
    const wait=this.active.wait();
    const outcome=await Promise.race([wait,toolRequested]);
@@ -123,14 +138,66 @@ export class CursorProvider {
    if(!calls.length&&result.status!=='finished')return errorResponse(cursorFailure(result.error).message,502);
    if(input.required&&!calls.length)return errorResponse('Cursor 未按要求生成工具调用，请重试或选择其他模型。',502);
    let tokens:TokenUsage|undefined=result.usage??this.active.usage;
-   if(!tokens&&agent.getUsage){try{const billed=await bounded(agent.getUsage(),5000);if(billed.runs.length)tokens=billed.usage;}catch{/* Unknown usage stays unknown; the gateway budget guard applies. */}}
-   const usage=tokens?{input_tokens:tokens.inputTokens+tokens.cacheReadTokens+tokens.cacheWriteTokens,output_tokens:tokens.outputTokens}:undefined;
+   // Remember only the explicit unsupported-feature response, per credential.
+   // The official per-agent ledger still settles every request before it returns.
+   if(!tokens&&agent.getUsage&&!(this.sdkBillingUnavailable?.key===credential.apiKey&&this.sdkBillingUnavailable.until>Date.now())){
+    try{const billed=await bounded(agent.getUsage(),5000);this.sdkBillingUnavailable=undefined;if(billed.runs.length)tokens=billed.usage;}
+    catch(error){const unavailable=z.object({status:z.literal(403),code:z.literal('feature_unavailable')}).safeParse(error);if(unavailable.success)this.sdkBillingUnavailable={key:credential.apiKey,until:Date.now()+5*60000};}
+   }
+   if(!tokens&&agent.agentId){try{tokens=await this.usageClient(credential).runUsage(agent.agentId,startedAt,signal);}catch{/* Preserve the budget guard if official settlement is unavailable. */}}
+   if(signal.aborted||this.closed||this.credential!==credential)return errorResponse('请求已取消',499);
+   const usage=tokens?{input_tokens:tokens.inputTokens+tokens.cacheReadTokens+tokens.cacheWriteTokens,output_tokens:tokens.outputTokens,cached_tokens:tokens.cacheReadTokens,cache_write_tokens:tokens.cacheWriteTokens}:undefined;
    const response=cursorResponse(path,input.model,calls.length?'':result.result??'',usage,input.stream,calls);
    if(input.limit)response.headers.set('X-Token-Flow-Output-Limit','advisory; Cursor SDK does not expose a hard output token limit');
    return response;
   }catch(error){return errorResponse(cursorFailure(error).message,signal.aborted?499:502);}
   finally{signal.removeEventListener('abort',cancel);for(const release of releases)release();if(agent){if(agent[Symbol.asyncDispose])await agent[Symbol.asyncDispose]().catch(()=>{});else agent.close();}this.active=undefined;this.generating=false;if(temp)await rm(temp,{recursive:true,force:true});}
  }
+}
+/** Per-account SDK state stays isolated; persisted legacy single-account records
+ * migrate on the next explicit mutation. Keys always route to their bound account. */
+export class CursorProvider {
+ private accounts:CursorAccount[]=[];private values=new Map<CursorAccount,Credential>();
+ private loading?:Promise<void>;private loaded=false;private loginAccount?:CursorAccount;
+ private importing=false;private closed=false;private writes=Promise.resolve();
+ constructor(private root:string,private secrets:Secrets,private openExternal?:(url:string)=>Promise<void>){}
+ get id(){return this.accounts.find(a=>a.id)?.id;}
+ owns(id:string){return this.accounts.some(a=>a.owns(id));}
+ private account(id:string|undefined){const account=this.accounts.find(a=>a.owns(id??''));if(!account)throw failure('Cursor 账号当前不可用。',409);return account;}
+ private make(initial?:Credential){
+  const account=new CursorAccount(this.root,{get:async()=>{const value=this.values.get(account);return value?JSON.stringify(value):'';},set:async(_name,raw)=>{
+   const work=async()=>{const next=raw?credentialSchema.parse(JSON.parse(raw)):undefined;const values=new Map(this.values);values.delete(account);
+    const duplicate=next?this.accounts.find(a=>a!==account&&this.values.get(a)?.email&&this.values.get(a)?.email===next.email):undefined;
+    if(duplicate?.busy)throw failure('此 Cursor 账号正在使用，请结束请求后再更新授权。',409);
+    if(duplicate)values.delete(duplicate);if(next)values.set(account,next);
+    const records=[...values.values()];await this.secrets.set('cursor-account',records.length?JSON.stringify({version:1,accounts:records}):'');
+    this.values=values;if(duplicate){this.accounts=this.accounts.filter(a=>a!==duplicate);await duplicate.close();}
+   };const result=this.writes.then(work);this.writes=result.catch(()=>{});await result;
+  }},this.openExternal);
+  if(initial)this.values.set(account,initial);this.accounts.push(account);return account;
+ }
+ async load(){if(this.loaded)return;if(this.loading)return this.loading;this.loading=(async()=>{const raw=await this.secrets.get('cursor-account');if(raw){const value=JSON.parse(raw);const entries=Array.isArray(value.accounts)?z.object({version:z.literal(1),accounts:z.array(credentialSchema).max(100)}).parse(value).accounts:[credentialSchema.parse(value)];for(const entry of entries)this.make(entry);}this.loaded=true;await Promise.all(this.accounts.map(a=>a.load()));})().finally(()=>{this.loading=undefined;});return this.loading;}
+ async refresh(forceQuota=true){await this.load();await Promise.all(this.accounts.map(a=>a.refresh(forceQuota)));}
+ async refreshIfStale(){if(this.loaded&&!this.closed)await Promise.all(this.accounts.map(a=>a.refreshIfStale()));}
+ snapshot(){const snapshots=this.accounts.map(a=>a.snapshot());return {accounts:snapshots.flatMap(s=>s.accounts),models:[...new Map(snapshots.flatMap(s=>s.models).map(m=>[m.id,m])).values()],quotas:Object.assign({},...snapshots.map(s=>s.quotas)) as Record<string,AccountQuota>,login:this.loginAccount?.snapshot().login};}
+ assertSource(id:string,model:string){return this.account(id).assertSource(id,model);}
+ async beginLogin(){await this.load();if(this.closed)throw failure('应用正在退出');if(this.importing||this.accounts.some(a=>a.busy))throw failure('Cursor 正在处理请求或授权，请稍后重试。',409);this.loginAccount=this.make();await this.loginAccount.beginLogin();}
+ async importLocal(){await this.load();if(this.closed)throw failure('应用正在退出');if(this.importing||this.accounts.some(a=>a.busy))throw failure('Cursor 正在处理请求或授权，请稍后重试。',409);this.importing=true;
+  try{const session=await localCursorSession();const existing=this.accounts.find(a=>this.values.get(a)?.email===session.email);if(existing){await existing.refresh();return;}
+   const credential=credentialSchema.parse(await session.createCredential());const entries=[...this.values.values(),credential];
+   await this.secrets.set('cursor-account',JSON.stringify({version:1,accounts:entries}));const account=this.make(credential);await account.load();
+  }finally{this.importing=false;}
+ }
+ async openLogin(id:string){if(!this.loginAccount)throw failure('授权会话已变更');await this.loginAccount.openLogin(id);}
+ cancelLogin(id:string){if(!this.loginAccount)throw failure('授权会话已变更');this.loginAccount.cancelLogin(id);}
+ async setEnabled(enabled:boolean,id=this.id){if(this.importing)throw failure('正在导入 Cursor 账号，请稍候。',409);await this.account(id).setEnabled(enabled);}
+ async remove(id=this.id){if(this.importing)throw failure('正在导入 Cursor 账号，请稍候。',409);const account=this.account(id);await account.remove();this.accounts=this.accounts.filter(a=>a!==account);await account.close();}
+ async response(path:string,body:unknown,signal:AbortSignal,sourceId?:string){
+  const model=(body as {model?:string})?.model;const id=sourceId??this.accounts.find(a=>a.snapshot().models.some(m=>m.id===model))?.id;
+  if(!id)return errorResponse('Cursor 尚未授权或模型不可用',503);
+  return this.account(id).response(path,body,signal);
+ }
+ async close(){this.closed=true;await Promise.all(this.accounts.map(a=>a.close()));await this.writes;}
 }
 async function bounded<T>(promise:Promise<T>,ms:number):Promise<T>{
  let timer:ReturnType<typeof setTimeout>|undefined;

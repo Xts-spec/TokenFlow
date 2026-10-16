@@ -1,0 +1,36 @@
+{
+  "date": "2026-10-16",
+  "client": "Codex CLI 0.154.0",
+  "models": [
+    "cursor/grok-4.6",
+    "cursor/grok-4.5"
+  ],
+  "scenarios": [
+    "Two conversations, two user turns each, switching models in both directions",
+    "35-second commands with session polling and independently checked random receipts",
+    "Finite-token keys continue after tool handoffs with no unsettled usage"
+  ],
+  "modelRequests": 10,
+  "meteredTokensIncludingCache": 161345,
+  "cachedInputTokens": 45952,
+  "verification": {
+    "typecheck": "passed",
+    "build": "passed",
+    "regressionTests": 72,
+    "finiteKeysContinuouslyUsable": true,
+    "longToolsAndPolling": true,
+    "crossModelConversationMemory": true
+  },
+  "optimization": "Removes the measured 1.138\u20134.115 seconds failed lookup from subsequent tool handoffs while the hint remains valid; upstream network and model variance prevent an end-to-end speedup claim.",
+  "limitations": [
+    "Two small conversations, not a sustained load or large-repository benchmark.",
+    "Codex emits model-metadata warnings because the gateway model catalog uses OpenAI-compatible data[] instead of Codex models[]; explicit model selection worked.",
+    "SDK initialization and model generation still dominate waiting; responses are buffered until generation and usage settlement complete.",
+    "Long-tool verification is 35 seconds per command, not an hours-long process.",
+    "Token totals include cached input; they are gateway metered tokens, not monetary spend or remaining plan allowance."
+  ],
+  "sources": [
+    "https://learn.chatgpt.com/docs/config-file/config-advanced",
+    "https://learn.chatgpt.com/docs/config-file/config-reference"
+  ]
+}

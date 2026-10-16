@@ -7,7 +7,7 @@ export type QuotaWindow = {
   id: string; label: string;
   /** 已用百分比 0–100；上游只给剩余比例或原始计数时由各 Provider 换算。 */
   usedPercent: number | null;
-  used?: number; limit?: number; unit?: string;
+  used?: number; limit?: number; remaining?: number; unit?: string;
   /** ISO 时间，窗口重置时刻。 */
   resetsAt?: string;
   note?: string;

@@ -27,7 +27,7 @@ export function QuotaDetails({quota,label,compact=false}:{quota:AccountQuota;lab
   {quota.windows.map(window=><span className="quotaWindow quotaWindowRing" key={window.id}>
    <QuotaRing compact={compact} remaining={window.usedPercent===null?null:100-window.usedPercent} label={window.label}/>
    <span className="quotaWindowDetails"><span className="quotaMeta"><span title={window.label}>{window.label}</span></span>
-    <b>{window.usedPercent===null?'额度暂未提供':`已用 ${Math.round(Math.max(0,Math.min(100,window.usedPercent)))}% · 剩余 ${Math.round(Math.max(0,Math.min(100,100-window.usedPercent)))}%`}{window.note?` · ${window.note}`:''}</b>
+    <b>{window.usedPercent===null?(window.remaining!==undefined?`余额 ${formatAmount(window.remaining,window.unit)}`:'额度暂未提供'):`已用 ${Math.round(Math.max(0,Math.min(100,window.usedPercent)))}% · 剩余 ${Math.round(Math.max(0,Math.min(100,100-window.usedPercent)))}%`}{window.note?` · ${window.note}`:''}</b>
     <small>{window.used!==undefined&&window.limit!==undefined?`已用 ${formatAmount(window.used,window.unit)} / ${formatAmount(window.limit,window.unit)}`:window.used!==undefined?`已用 ${formatAmount(window.used,window.unit)}`:''}{window.resetsAt?`${window.used!==undefined?' · ':''}${resetLabel(window.resetsAt)}`:''}</small>
    </span>
   </span>)}

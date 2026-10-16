@@ -76,7 +76,7 @@ export function parseCodeBuddyInput(path:string,body:unknown){
  if(choice&&typeof choice==='object'){
   const name=choice.function?.name??choice.name;
   const alias=name&&aliases.get(identity(name,choice.namespace));
-  if(alias)normalized.tool_choice=choice.function?{...choice,function:{...choice.function,name:alias}}:{...choice,name:alias};
+  if(alias)normalized.tool_choice=choice.function?{...choice,namespace:undefined,function:{...choice.function,name:alias}}:{...choice,namespace:undefined,name:alias};
  }
 
  // SDK query() accepts user input, not arbitrary assistant/tool history.
