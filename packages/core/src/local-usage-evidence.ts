@@ -2,6 +2,7 @@ import {createHmac} from 'node:crypto';
 import {readFile,stat} from 'node:fs/promises';
 import {join} from 'node:path';
 import type {UsageChannel} from './local-usage.js';
+import {nativeIdentity} from './local-usage.js';
 
 export type RouteEvidence={threadId:string;time:number;channel:UsageChannel|'gateway'};
 /** A nearby inference endpoint in the same thread is evidence; model names and current logins aren't. */
@@ -36,6 +37,6 @@ export async function gatewayResponseEvidence(root:string){
    if(/^[a-f0-9]{64}$/.test(row.responseHash??''))hashes.add(row.responseHash);
    if(typeof row.keyId==='string'&&/^[a-f0-9]{64}$/.test(row.responseRef??'')){const set=refs.get(row.keyId)??new Set<string>();set.add(row.responseRef);refs.set(row.keyId,set);}
   }
-  return {hashes,matches:(id:string)=>{for(const[key,set]of refs)if(set.has(createHmac('sha256',data.salt).update(`${key}\n${id}`).digest('hex')))return true;return false;}};
+  return {hashes,matches:(id:string)=>{if(hashes.has(nativeIdentity('response',id)))return true;for(const[key,set]of refs)if(set.has(createHmac('sha256',data.salt).update(`${key}\n${id}`).digest('hex')))return true;return false;}};
  }catch{return {hashes:new Set<string>(),matches:(_id:string)=>false};}
 }

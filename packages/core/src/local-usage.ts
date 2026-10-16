@@ -4,11 +4,11 @@ import {dayOf} from './usage-ledger.js';
 
 export type UsageChannel='official'|'api'|'unknown';
 export type LocalUsageRow=UsageRow&{origin:'native';channel:UsageChannel;provider:string;nativeAccountId?:string;nativeOrganizationId?:string;nativeAccountLabel?:string;nativeEmailHash?:string;nativeAccountEvidence?:'otel'|'conflict'|'login-snapshot';nativeThreadId?:string;sampleId?:string;responseHash?:string};
-export type UsageCoverage={target:string;files:number;indexed:number;skipped:number;status:'ready'|'scanning'|'unavailable'};
+export type UsageCoverage={target:string;files:number;indexed:number;skipped:number;status:'ready'|'scanning'|'unavailable'|'unsupported';note?:string};
 export type LocalUsageSnapshot={rows:LocalUsageRow[];recent?:LocalUsageRow[];coverage:UsageCoverage[];scanning:boolean;updatedAt?:string;warning?:string};
 export const nativeIdentity=(provider:string,id:string)=>createHash('sha256').update(`${provider}:${id}`).digest('hex');
 const number=(v:unknown)=>typeof v==='number'&&Number.isFinite(v)&&v>=0?Math.min(Number.MAX_SAFE_INTEGER,Math.round(v)):0;
-const gatewayModel=(v:unknown)=>typeof v==='string'&&/^(?:token-flow[/: ·]|(?:custom-local:)?(?:api-[a-f0-9]{24}\/|(?:codex|claude|workbuddy|qoder|zcode)\/))/i.test(v);
+const gatewayModel=(v:unknown)=>typeof v==='string'&&/^(?:token-flow[/: ·]|(?:custom-local:)?(?:api-[a-f0-9]{24}\/|(?:codex|claude|antigravity|workbuddy|qoder|zcode|kimi|trae|cursor)\/))/i.test(v);
 type Sample={id:string;timestamp:string;model:string;provider:string;channel:UsageChannel;account?:string;input:number;read:number;write:number;output:number;reasoning:number;cacheKnown:boolean;responseId?:string};
 
 export function authChannel(meta:any):UsageChannel{
@@ -56,15 +56,16 @@ export class LocalUsageParser{
   const model=record.requestedModel??source.requestModelId??m.model??this.model;
   const provider=m.provider??record.provider??this.provider;
   const routed=gatewayModel(model)||gatewayModel(m.model)||gatewayModel(source.requestModelName)||record.customProviderId==='token-flow'||provider==='token-flow'||/token.?flow/i.test(this.provider);
-  const id=this.target==='workbuddy'?`${source.messageId??u.request_id??record.id??''}:${source.stepSeq??''}`:String(u.request_id??m.id??record.id??record.uuid??'');if(!id||id===':')return;
+  const workbuddy=this.target==='workbuddy'||this.target==='workbuddy-ai';
+  const id=workbuddy?`${source.messageId??u.request_id??record.id??''}:${source.stepSeq??''}`:String(u.request_id??m.id??record.id??record.uuid??'');if(!id||id===':')return;
   if(this.target==='pi'){
    const platform=provider==='openai-codex'||provider==='openai'?'codex':provider==='anthropic'?'claude':provider;
    this.add({id,responseId:m.id??record.responseId,timestamp,model,provider:platform,channel:recordChannel!=='unknown'?recordChannel:this.explicit!=='unknown'?this.explicit:provider==='openai-codex'?'official':['openai','deepseek','mistral','groq','xai','cerebras','openrouter'].includes(provider)?'api':'unknown',account:this.account,input:number(u.input)+number(u.cacheRead)+number(u.cacheWrite),read:number(u.cacheRead),write:number(u.cacheWrite),output:number(u.output),reasoning:number(u.reasoning),cacheKnown:u.cacheRead!==undefined},routed);return;
   }
-  if(this.target==='workbuddy'){
+  if(workbuddy){
    const raw=source.rawUsage??u;const inclusive=raw.prompt_tokens!==undefined||raw.total_tokens!==undefined&&raw.cache_read_input_tokens===undefined;
    const read=number(raw.prompt_tokens_details?.cached_tokens??raw.cache_read_input_tokens),write=number(raw.cache_creation_input_tokens);
-   this.add({id,timestamp,model,provider:'workbuddy',channel:record.modelSource==='custom'||String(model).startsWith('custom-local:')?'api':'official',account:this.account,input:number(raw.prompt_tokens??raw.input_tokens)+(inclusive?0:read+write),read,write,output:number(raw.completion_tokens??raw.output_tokens),reasoning:number(raw.completion_tokens_details?.reasoning_tokens),cacheKnown:raw.prompt_tokens_details?.cached_tokens!==undefined||raw.cache_read_input_tokens!==undefined},routed);return;
+   this.add({id,timestamp,model,provider:this.target,channel:record.modelSource==='custom'||String(model).startsWith('custom-local:')?'api':'official',account:this.account,input:number(raw.prompt_tokens??raw.input_tokens)+(inclusive?0:read+write),read,write,output:number(raw.completion_tokens??raw.output_tokens),reasoning:number(raw.completion_tokens_details?.reasoning_tokens),cacheKnown:raw.prompt_tokens_details?.cached_tokens!==undefined||raw.cache_read_input_tokens!==undefined},routed);return;
   }
   const read=number(u.cache_read_input_tokens),write=number(u.cache_creation_input_tokens);
   const sampleChannel:UsageChannel=recordChannel!=='unknown'?recordChannel:this.explicit!=='unknown'?this.explicit:this.target==='qoder'?(record.modelSource==='custom'?'api':record.modelSource==='builtin'||record.modelSource==='official'?'official':'unknown'):record.authType==='oauth'?'official':record.authType==='api-key'?'api':'unknown';

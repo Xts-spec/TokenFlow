@@ -48,6 +48,7 @@ export class AntigravityAccountStore implements NativeStore {
   }
   private snapshot(db:DatabaseSync):NativeState{return Object.fromEntries(keys.map(key=>{const row=db.prepare('SELECT value FROM ItemTable WHERE key=?').get(key);const v=row?.value;if(v!==undefined&&typeof v!=='string')throw nativeConflict('反重力登录数据库格式不受支持。');return [key,sentinels[key]?topicValue(v as string|undefined??null,sentinels[key])?.toString('base64')??null:v??null];}));}
   async read(){const db=await this.database(true);try{return this.snapshot(db);}finally{db.close();}}
+  async usageLogin(){const state=await this.read(),email=this.describe(state).email?.trim().toLowerCase(),project=state[enterpriseKey]?get(decode(state[enterpriseKey]),3)?.toString():undefined;return email&&state[oauthKey]?{provider:'antigravity' as const,accountId:email,email,...(project?{organizationId:project}:{})}:null;}
   describe(state:NativeState){const user=state[userKey]?decode(state[userKey]):null;return {email:user?get(user,7)?.toString()??null:null,model:null};}
   prepare(before:NativeState,c:NativeCredential){
     // Topic -> map entry -> Row.value (base64 protobuf), verified against the native IDE schema.

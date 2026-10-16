@@ -630,3 +630,10 @@ body:has(dialog[open]) .tfOperationFeedback{display:none}
 .tfWorkBuddyPanel .tfAgentVersion{min-width:108px}
 .tfAgentsPage a.tfAgentUpdate{min-height:36px;color:var(--muted);text-decoration:none}
 @media(min-width:951px){.tfDesktopOfficialColumns{grid-template-columns:minmax(0,var(--split,36%)) 8px minmax(0,1fr);gap:12px}}
+
+.tfNativeUsageCoverage{margin-top:24px;color:var(--muted);font-size:12px}
+.tfNativeUsageCoverage summary{cursor:pointer;padding:8px 0}
+.tfNativeUsageCoverage ul{list-style:none;padding:0;margin:12px 0;display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px 24px}
+.tfNativeUsageCoverage li{display:grid;grid-template-columns:1fr auto;gap:4px 12px;align-content:start}
+.tfNativeUsageCoverage strong{font-weight:500;color:var(--text)}
+.tfNativeUsageCoverage small{grid-column:1/-1;font-size:11px;line-height:1.6}

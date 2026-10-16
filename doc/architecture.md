@@ -70,7 +70,7 @@ flowchart TB
 - 本机：客户端日志经 [local-usage-index.ts](../packages/core/src/local-usage-index.ts) 和 [local-usage-worker.ts](../packages/core/src/local-usage-worker.ts) 索引，通过 [usage-attribution.ts](../packages/core/src/usage-attribution.ts)、[native-usage-logins.ts](../packages/core/src/native-usage-logins.ts) 关联请求证据或有效登录时间段；证据不足保留未知。
 - 展示：`/api/usage/overview` 合并网关与去重后的本机行；前端 [usage-data.ts](../apps/console/src/usage-data.ts)、[usage-model.ts](../apps/console/src/usage-model.ts) 统一筛选与汇总。
 
-反重力目前是受支持的来源和原生登录切换对象，但不在本机用量 Worker 的采集目标中。额度查询成功不能替代反重力客户端直连 Token 采集。具体测试与缺口见 [用量验证](testing/usage-attribution.md)。
+反重力 SQLite 会话由 [antigravity-usage.ts](../packages/core/src/antigravity-usage.ts) 只读提取生成用量，Worker 监测数据库与 WAL，排除步骤中的重复副本。账号元数据通过 `nativeUsageAccounts()` 独立于切换资格读取，过期／停用授权仍能关联历史；连续登录观察只是注明的归属补充，不能回填无证据的旧记录。采集范围随 API 返回并在界面展示；未适配客户端不冒充零用量。各平台的格式、验证和未覆盖范围见 [客户端直连用量](testing/native-direct-usage.md)。
 
 ## 数据、构建与边界
 

@@ -159,7 +159,9 @@ class CursorAccount {
    // The run has stopped and SDK billing has completed. Disposal no longer
    // needs to delay the independent official ledger request.
    void cleanup();
-   if(!tokens&&agentId){try{tokens=await this.usageClient(credential).runUsage(agentId,startedAt,signal);}catch{/* Preserve the budget guard if official settlement is unavailable. */}}
+   // SDK completion counters can differ from the bill (observed 5 versus 29 output tokens).
+   // Settle this exact fresh agent even when the SDK already returned counters.
+   if(agentId){try{tokens=await this.usageClient(credential).runUsage(agentId,startedAt,signal)??tokens;}catch{/* Retain SDK counters if official settlement is unavailable. */}}
    if(signal.aborted||this.closed||this.credential!==credential)return errorResponse('请求已取消',499);
    const usage=tokens?{input_tokens:tokens.inputTokens+tokens.cacheReadTokens+tokens.cacheWriteTokens,output_tokens:tokens.outputTokens,cached_tokens:tokens.cacheReadTokens,cache_write_tokens:tokens.cacheWriteTokens}:undefined;
    const response=cursorResponse(path,input.model,calls.length?'':result.result??'',usage,input.stream,calls);

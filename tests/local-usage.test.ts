@@ -2,6 +2,10 @@ import {describe,it,expect} from 'vitest';
 import {LocalUsageParser,mergeLocalUsageRows} from '../packages/core/src/local-usage.js';
 const timestamp='2026-10-12T08:00:00.000Z';
 describe('local program token accounting',()=>{
+ it('collects WorkBuddyAI separately and still excludes its imported gateway models',()=>{
+  const p=new LocalUsageParser('workbuddy-ai','intl');for(const model of ['builtin','custom-local:antigravity/Gemini'])p.accept({id:model,timestamp,message:{usage:{input_tokens:20,output_tokens:5}},providerData:{messageId:model,requestModelId:model,rawUsage:{prompt_tokens:20,completion_tokens:5,prompt_tokens_details:{cached_tokens:10}}}});
+  expect(p.rows()).toHaveLength(1);expect(p.rows()[0]).toMatchObject({target:'workbuddy-ai',provider:'workbuddy-ai',channel:'official',inputTokens:20,cachedTokens:10,outputTokens:5});
+ });
  it('prefers Codex per-response records over repeated cumulative notifications and dedupes copied sessions',()=>{
   const p=new LocalUsageParser('codex','one');p.accept({type:'session_meta',payload:{model_provider:'openai',creator_account_id:'owner-not-billing'}});p.accept({type:'turn_context',payload:{model:'gpt-test'}});
   const usage={input_tokens:100,cached_input_tokens:60,output_tokens:20,reasoning_output_tokens:10};

@@ -21,7 +21,7 @@
 | 独立 Key → TokenFlow → 反重力 | 独立 Key 的 `sourceId` 与模型权限 | 来源可确定；目标记为 `key`，不能仅因授权 `agents=['claude']` 就认定客户端身份 |
 | Claude Code 本机官方直连 | 本机 JSONL、请求证据或有效登录观察时间段 | 夹具回归通过；复杂真实环境及包内历史失败仍待验收 |
 | Claude Code 本机 API／第三方直连 | 日志中的认证证据，证据不足时未知 | 不能拿当前 TokenFlow 来源、当前登录或模型名倒填历史归属 |
-| 反重力客户端自身的官方直连 | 本机用量索引尚无 Antigravity 采集目标 | 待实现／评估；本轮不声称已统计 |
+| 反重力客户端自身的官方直连 | 2026-10-17 已接入原生 SQLite v1 的生成 Token 记录 | 生产 Worker 已在本机数据验证；旧 `.pb`、其他版本和无身份历史有边界，见 [直连采集](native-direct-usage.md) |
 | 反重力周／5 小时额度 | `quota/antigravity.ts` 独立查询两个模型组、四个窗口 | 属于额度信息，不能从百分比反推 Token 或逐请求账号归属 |
 
 ## 本轮可复跑测试
@@ -52,5 +52,5 @@ npx vitest run tests/usage-attribution.test.ts tests/usage-attribution-service.t
 
 - **Claude 包内归属**：此前 `check-packaged-runtime.mjs` 在 Intel 包的 Claude 本机账号归属断言失败。本轮源码夹具通过，未重新构建并跑完整包内检查，继续保留在 TODO，不标记修复。
 - **真实 Claude 渠道切换**：官方登录、独立 API、经 TokenFlow、直接第三方四条路径，需要在真实客户端逐条核对来源、账号、目标和 Token；权限跳过、账号切换、历史无证据与重复索引也要覆盖。
-- **反重力直连采集**：先确认可靠的逐请求本机证据、版本格式和账号标识，再决定适配；不能用剩余额度或者当前登录推测。
+- **反重力直连采集**：SQLite v1 已实现，继续验收其他版本、真实账号／项目切换及完整厂商对账；不能用剩余额度或者当前登录推测历史。当前覆盖见 [直连采集](native-direct-usage.md)。
 - **跨平台**：Windows 重跑本页回归并执行 [U04 / U11](../待修复的问题win兼容.md)，不能沿用 macOS 夹具结果。

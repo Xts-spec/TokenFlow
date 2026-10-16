@@ -58,3 +58,12 @@ it('preserves a damaged attribution file and leaves usage unattributed',async()=
  const {root}=await setup(),file=join(root,'native-usage-logins.json');await writeFile(file,'damaged-original');const store=await NativeUsageLogins.open(root);await store.observe({claude:login('a'),codex:null},now);
  expect(store.warning).toContain('保留原文件');expect(await readFile(file,'utf8')).toBe('damaged-original');expect(await readNativeLoginIntervals(root)).toEqual([]);
 });
+
+it.each(['antigravity','workbuddy','workbuddy-ai','qoder'] as const)('joins %s only during its own observed official interval, never its coexisting API or unlabelled requests',async provider=>{
+ const {root,store}=await setup(),email='native@example.test',accountId=provider==='antigravity'?email:'uid';const login={provider,accountId,email};
+ await store.observe({[provider]:login},now);await store.observe({[provider]:login},now+5000);
+ const source=row(now+1000,{target:provider,provider,channel:'official'}),intervals=await readNativeLoginIntervals(root),rows=enrichNativeLoginRows([source,{...source,channel:'api'},{...source,channel:'unknown'},{...source,last:new Date(now-5000).toISOString()}],intervals);
+ expect(rows.map(r=>r.nativeAccountId)).toEqual([nativeIdentity(provider,accountId),undefined,undefined,undefined]);expect(rows[0].nativeEmailHash).toBe(nativeIdentity('email',email));
+ expect(mapNativeAccounts(rows,[{id:'source',provider,accountId,email}])[0].sourceId).toBe('source');
+ expect(mapNativeAccounts(rows,[{id:'other',provider:'different',accountId,email}])[0].sourceId).toBe('');
+});

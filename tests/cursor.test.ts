@@ -73,6 +73,13 @@ it('accepts Claude Code adaptive thinking and context hints without claiming nat
 });
 
 const tokenUsage={inputTokens:7,outputTokens:3,cacheReadTokens:2,cacheWriteTokens:1,totalTokens:13};
+it('settles the exact agent against the official bill even when SDK usage already reports a smaller visible output',async()=>{
+ const {root,secrets}=await setup();await secrets.set('cursor-account',JSON.stringify({apiKey:'fixture'}));const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();
+ sdk.create.mockResolvedValue({agentId:'exact-billed-agent',close:sdk.close,send:async()=>({wait:async()=>({status:'finished',result:'OK',usage:{inputTokens:2000,outputTokens:5,cacheReadTokens:0,cacheWriteTokens:0,totalTokens:2005}}),cancel:sdk.cancel})});
+ sdk.runUsage.mockResolvedValue({inputTokens:2000,outputTokens:29,cacheReadTokens:0,cacheWriteTokens:0,totalTokens:2029});
+ const result=await provider.response('responses',{model:'cursor/fixture-model',input:'OK'},new AbortController().signal);
+ expect((await result.json()).usage).toMatchObject({input_tokens:2000,output_tokens:29,total_tokens:2029});expect(sdk.runUsage).toHaveBeenCalledWith('exact-billed-agent',expect.any(Number),expect.any(AbortSignal));
+});
 function toolRun(hasUsage=true){
  sdk.create.mockImplementation(async options=>({agentId:'agent-fixture',close:sdk.close,send:async()=>{
   let finish!:(value:unknown)=>void;
@@ -118,7 +125,7 @@ it('connects Cursor to all local Agent targets and routes maintenance through th
   const state=(await service.app.inject({url:'/api/a2a',headers})).json().targets.find((t:{id:string})=>t.id===target);
   const connected=await service.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload:{target,sourceId,model,revision:state.revision}});
   expect(connected.statusCode,connected.body).toBe(200);expect(connected.json().verification.checks.every((c:{ok:boolean})=>c.ok)).toBe(true);
-  expect(await readFile(paths[target as keyof typeof paths],'utf8')).toContain(model);
+  const written=await readFile(paths[target as keyof typeof paths],'utf8');if(target==='workbuddy')expect(JSON.parse(written)).toMatchObject([{id:'cursor/Fixture-model',name:'cursor/Fixture-model'}]);else expect(written).toContain(model);
  }
  const selected=await service.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:{sourceId,model}});expect(selected.statusCode,selected.body).toBe(200);
  await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
@@ -232,7 +239,7 @@ it.each([{status:403,code:'plan_required'},{status:500,code:'feature_unavailable
  const getUsage=vi.fn().mockRejectedValueOnce(Object.assign(new Error('Failure'),error)).mockResolvedValue({runs:[{}],usage:tokenUsage});
  sdk.create.mockResolvedValue({agentId:'agent-fixture',getUsage,close:sdk.close,send:async()=>({wait:async()=>({status:'finished',result:'ok'}),cancel:sdk.cancel})});sdk.runUsage.mockResolvedValue(tokenUsage);
  for(let i=0;i<2;i++)expect((await provider.response('responses',{model:'cursor/fixture-model',input:'hi'},new AbortController().signal)).status).toBe(200);
- expect(getUsage).toHaveBeenCalledTimes(2);expect(sdk.runUsage).toHaveBeenCalledTimes(1);
+ expect(getUsage).toHaveBeenCalledTimes(2);expect(sdk.runUsage).toHaveBeenCalledTimes(2);
 });
 
 it('keeps SDK workspace paths out of client tools and allows the model to correct the path',async()=>{

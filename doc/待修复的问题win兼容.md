@@ -2,7 +2,7 @@
 
 记录日期：2026-10-16。最近已发布基线：v10.15.26.12，提交 `b5c30fd`；Windows 标题栏修复基线为 `5fe1177`。本轮窗口修复尚需 Windows 实机验收。
 
-文档入口见 [项目文档](README.md)；当前待办统一在 [TODO](TODO.md) 维护。Claude 和反重力的渠道／来源统计分别对应 USAGE-001、USAGE-002、USAGE-003，本页保留 Windows 执行步骤，不另行维护重复状态。
+文档入口见 [项目文档](README.md)；当前待办统一在 [TODO](TODO.md) 维护。Claude 和反重力的渠道／来源统计分别对应 USAGE-001、USAGE-002、USAGE-003；全部客户端直连采集范围对应 USAGE-004，本页保留 Windows 执行步骤，不另行维护重复状态。
 
 ## 仓库与交付约定（按用户最新确认）
 
@@ -289,7 +289,8 @@ node scripts/check-file-cleanup-native.mjs
 | U08 | 缓存／依赖／安装包候选、受保护文件、同名副本、文件扫描后变化 | 分类与元数据证据一致；不只按名字断言重复；失效扫描和变化条目不直接删除 |
 | U09 | 在测试目录执行回收站／永久删除、取消与恢复测试 | 按明确确认的范围处理；受保护项有影响说明；Windows 回收站语义正确；不能影响真实对话和账号数据 |
 | U10 | 设置、复制、外链、侧栏宽度、拖动排序、通知、弹窗、长名称 | 状态持久化、复制反馈正确、官方链接只开浏览器；键盘和滚动不跳位；页面不溢出 |
-| U11 | Claude Code 分别使用官方登录、直接 API、TokenFlow 反重力来源；反重力两个账号提供同名 Gemini／Claude 模型 | 核对 target／provider／sourceId／channel／origin；同名模型不串来源，停用账号不改路由；导出 Key 不冒称客户端身份，重启／重扫不重复累计；反重力客户端原生直连采集目前未实现，不能把无采集记成零用量。详见 [验证口径](testing/usage-attribution.md) |
+| U11 | Claude Code 分别使用官方登录、直接 API、TokenFlow 反重力来源；反重力两个账号提供同名 Gemini／Claude 模型 | 核对 target／provider／sourceId／channel／origin；同名模型不串来源，停用账号不改路由；导出 Key 不冒称客户端身份，重启／重扫不重复累计。反重力 SQLite v1 已接入，Windows 需实测 DB／WAL 更新、双账号／项目切换和旧 `.pb` 明确不可读；无身份历史单列。详见 [直连采集](testing/native-direct-usage.md) |
+| U12 | 所有已授权平台分别从客户端直连一次，再经 TokenFlow 使用一次；覆盖 WorkBuddyAI 国际版与 Qoder 官方／自定义模型共存 | 来源、渠道和目标不串；重复授权／过期／停用不丢历史身份，跳过安全存储不弹读取提示；无支持的采集器必须显示“尚未采集”。Kimi／ZCode／Trae／Cursor／Grok 等未适配项按 USAGE-004 采集脱敏结构和实际 Token 对账，不勾为通过，不用额度反推 Token |
 
 ### 5.8 最终 Windows 包交付（P0）
 
@@ -351,20 +352,23 @@ Windows 版本／架构／终端：
 脚本索引也包含构建、补丁、探测、真实账号 live 和历史修复工具，**不是批量执行清单**。运行 live／repair／replay／stress 类工具前必须读其文件头、参数、路径和副作用，适配 Windows 并使用测试账号／测试配置；已有脚本里有硬编码 macOS 路径，不得直接照搬执行。
 
 <details>
-<summary>Vitest 测试文件：106 个</summary>
+<summary>Vitest 测试文件：113 个</summary>
 
+- [packages/contracts/fixtures.test.ts](../packages/contracts/fixtures.test.ts)
 - [tests/a2a-interoperability.test.ts](../tests/a2a-interoperability.test.ts)
 - [tests/a2a-service.test.ts](../tests/a2a-service.test.ts)
 - [tests/account-label.test.ts](../tests/account-label.test.ts)
 - [tests/account-startup.test.ts](../tests/account-startup.test.ts)
 - [tests/activity-traces.test.ts](../tests/activity-traces.test.ts)
 - [tests/agent-connections.test.ts](../tests/agent-connections.test.ts)
-- [tests/workbuddy-model-labels.test.ts](../tests/workbuddy-model-labels.test.ts)
 - [tests/agent-installation.test.ts](../tests/agent-installation.test.ts)
 - [tests/agent-lifecycle.test.ts](../tests/agent-lifecycle.test.ts)
 - [tests/agent-model-switching.test.ts](../tests/agent-model-switching.test.ts)
 - [tests/agent-processes.test.ts](../tests/agent-processes.test.ts)
 - [tests/agent-updates.test.ts](../tests/agent-updates.test.ts)
+- [tests/antigravity-usage-index.test.ts](../tests/antigravity-usage-index.test.ts)
+- [tests/antigravity-usage-service.test.ts](../tests/antigravity-usage-service.test.ts)
+- [tests/antigravity-usage.test.ts](../tests/antigravity-usage.test.ts)
 - [tests/api-protocol.test.ts](../tests/api-protocol.test.ts)
 - [tests/api-source-draft.test.ts](../tests/api-source-draft.test.ts)
 - [tests/api-sources.test.ts](../tests/api-sources.test.ts)
@@ -424,6 +428,8 @@ Windows 版本／架构／终端：
 - [tests/native-accounts.test.ts](../tests/native-accounts.test.ts)
 - [tests/native-login-identity.test.ts](../tests/native-login-identity.test.ts)
 - [tests/native-login-visibility.test.ts](../tests/native-login-visibility.test.ts)
+- [tests/native-usage-accounts.test.ts](../tests/native-usage-accounts.test.ts)
+- [tests/native-usage-coverage.test.ts](../tests/native-usage-coverage.test.ts)
 - [tests/native-usage-login-readers.test.ts](../tests/native-usage-login-readers.test.ts)
 - [tests/native-usage-logins.test.ts](../tests/native-usage-logins.test.ts)
 - [tests/network-check.test.ts](../tests/network-check.test.ts)
@@ -444,6 +450,7 @@ Windows 版本／架构／终端：
 - [tests/secrets.test.ts](../tests/secrets.test.ts)
 - [tests/service.test.ts](../tests/service.test.ts)
 - [tests/source-options.test.ts](../tests/source-options.test.ts)
+- [tests/startup-credential-order.test.ts](../tests/startup-credential-order.test.ts)
 - [tests/switch-journal.test.ts](../tests/switch-journal.test.ts)
 - [tests/trae-acceptance-platform.test.ts](../tests/trae-acceptance-platform.test.ts)
 - [tests/trae-codex-config.test.ts](../tests/trae-codex-config.test.ts)
@@ -459,6 +466,7 @@ Windows 版本／架构／终端：
 - [tests/usage-overview.test.ts](../tests/usage-overview.test.ts)
 - [tests/window-options.test.ts](../tests/window-options.test.ts)
 - [tests/windows-agent-lifecycle.test.ts](../tests/windows-agent-lifecycle.test.ts)
+- [tests/workbuddy-model-labels.test.ts](../tests/workbuddy-model-labels.test.ts)
 
 </details>
 
@@ -485,7 +493,7 @@ Windows 版本／架构／终端：
 </details>
 
 <details>
-<summary>脚本完整索引（需逐个确认平台和副作用）：77 个</summary>
+<summary>脚本完整索引（需逐个确认平台和副作用）：80 个</summary>
 
 - [scripts/a2a-desktop-live.ts](../scripts/a2a-desktop-live.ts)
 - [scripts/account-startup-ui-check.cjs](../scripts/account-startup-ui-check.cjs)
@@ -498,6 +506,7 @@ Windows 版本／架构／终端：
 - [scripts/before-pack.cjs](../scripts/before-pack.cjs)
 - [scripts/build-sidecar.mjs](../scripts/build-sidecar.mjs)
 - [scripts/catalog-smoke.ts](../scripts/catalog-smoke.ts)
+- [scripts/check-antigravity-native-usage.mjs](../scripts/check-antigravity-native-usage.mjs)
 - [scripts/check-file-cleanup-native.mjs](../scripts/check-file-cleanup-native.mjs)
 - [scripts/check-packaged-runtime.mjs](../scripts/check-packaged-runtime.mjs)
 - [scripts/check-runtime-bundle.mjs](../scripts/check-runtime-bundle.mjs)
@@ -517,6 +526,8 @@ Windows 版本／架构／终端：
 - [scripts/codex-subagent-routing-smoke.mjs](../scripts/codex-subagent-routing-smoke.mjs)
 - [scripts/codex-workbuddy-tools-live.ts](../scripts/codex-workbuddy-tools-live.ts)
 - [scripts/context-codex-smoke.ts](../scripts/context-codex-smoke.ts)
+- [scripts/cursor-usage-live.cjs](../scripts/cursor-usage-live.cjs)
+- [scripts/cursor-usage-live.ts](../scripts/cursor-usage-live.ts)
 - [scripts/deepseek-settings-check.ts](../scripts/deepseek-settings-check.ts)
 - [scripts/fetch-upstream.mjs](../scripts/fetch-upstream.mjs)
 - [scripts/file-cleanup-native-check.ts](../scripts/file-cleanup-native-check.ts)
@@ -527,8 +538,8 @@ Windows 版本／架构／终端：
 - [scripts/network-connectivity-check.ts](../scripts/network-connectivity-check.ts)
 - [scripts/network-diagnostics-ui-check.cjs](../scripts/network-diagnostics-ui-check.cjs)
 - [scripts/official-catalog-overlay.mjs](../scripts/official-catalog-overlay.mjs)
-- [scripts/official-login-ui-check.ts](../scripts/official-login-ui-check.ts)
 - [scripts/official-login-coexist-ui-check.cjs](../scripts/official-login-coexist-ui-check.cjs)
+- [scripts/official-login-ui-check.ts](../scripts/official-login-ui-check.ts)
 - [scripts/package-release.mjs](../scripts/package-release.mjs)
 - [scripts/provider-login-overlay.mjs](../scripts/provider-login-overlay.mjs)
 - [scripts/provider-matrix-live.ts](../scripts/provider-matrix-live.ts)

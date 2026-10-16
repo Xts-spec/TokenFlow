@@ -232,27 +232,26 @@ export async function createDesktopService(options:ServiceOptions) {
   };
   const codexAccounts=new CodexAccounts(root,connections.paths.codex,options.agentProcesses?()=>options.agentProcesses!('codex'):undefined);
   const claudeAccountStore=new ClaudeAccountStore(connections.paths.claude,options.claudeCredentialStore);
+  const antigravityAccountStore=new AntigravityAccountStore(options.antigravityPath??await antigravityDatabasePath());
+  const desktopAccounts=Object.fromEntries((['workbuddy','workbuddy-ai','qoder'] as const).map(provider=>[provider,new DesktopAccounts(provider,options.secrets,()=>options.desktopProcesses?options.desktopProcesses(provider):provider!=='workbuddy-ai'&&options.agentProcesses?options.agentProcesses(provider):agentProcesses(provider),options.desktopAccounts)])) as Record<DesktopProvider,DesktopAccounts>;
   const nativeAccounts={
     claude:new NativeAccounts(join(root,'claude-account-backup.json'),claudeAccountStore,()=>options.nativeProcesses?options.nativeProcesses('claude'):options.agentProcesses?options.agentProcesses('claude'):agentProcesses('claude')),
-    antigravity:new NativeAccounts(join(root,'antigravity-account-backup.json'),new AntigravityAccountStore(options.antigravityPath??await antigravityDatabasePath()),()=>options.nativeProcesses?options.nativeProcesses('antigravity'):agentProcesses('antigravity')),
+    antigravity:new NativeAccounts(join(root,'antigravity-account-backup.json'),antigravityAccountStore,()=>options.nativeProcesses?options.nativeProcesses('antigravity'):agentProcesses('antigravity')),
   };
   const nativeUsageLogins=await NativeUsageLogins.open(root);
   let nativeLoginObservation:Promise<void>|undefined,nativeLoginTimer:ReturnType<typeof setInterval>|undefined;
   const observeNativeLogins=()=>nativeLoginObservation??=(async()=>{
-    const [codex,claude]=await Promise.all([codexAccounts.usageLogin().catch(()=>null),claudeAccountStore.usageLogin().catch(()=>null)]);
-    await nativeUsageLogins.observe({codex,claude});
+    const [codex,claude,antigravity,workbuddy,workbuddyAI,qoder]=await Promise.all([codexAccounts.usageLogin().catch(()=>null),claudeAccountStore.usageLogin().catch(()=>null),antigravityAccountStore.usageLogin().catch(()=>null),desktopAccounts.workbuddy.usageLogin().catch(()=>null),desktopAccounts['workbuddy-ai'].usageLogin().catch(()=>null),desktopAccounts.qoder.usageLogin().catch(()=>null)]);
+    await nativeUsageLogins.observe({codex,claude,antigravity,workbuddy,'workbuddy-ai':workbuddyAI,qoder});
   })().finally(()=>{nativeLoginObservation=undefined;});
   await observeNativeLogins();
   app.addHook('onListen',async()=>{await observeNativeLogins();nativeLoginTimer=setInterval(()=>void observeNativeLogins(),5000);nativeLoginTimer.unref();});
   const nativeUsageSnapshot=async()=>{
     await observeNativeLogins();const snapshot=localUsage.snapshot();
-    const [codex,claude]=await Promise.all([proxy.codexNativeAccounts(true),proxy.nativeAccounts('claude',true)]);
-    const labels=new Map(proxy.snapshot().accounts.map(a=>[a.id,a.label]));
-    const accounts=[...codex.map(a=>({...a,provider:'codex',label:labels.get(a.id)})),...claude.map(a=>({...a,accountId:a.accountId??null,organizationId:a.organizationId??null,provider:'claude',label:labels.get(a.id)}))];
+    const accounts=await proxy.nativeUsageAccounts();
     return {...snapshot,rows:mapNativeAccounts(snapshot.rows,accounts,nativeUsageLogins.accounts()),recent:mapNativeAccounts(snapshot.recent??[],accounts,nativeUsageLogins.accounts()),warning:snapshot.warning||nativeUsageLogins.warning};
   };
   const desktopLifecycle=new QoderLifecycle();
-  const desktopAccounts=Object.fromEntries((['workbuddy','workbuddy-ai','qoder'] as const).map(provider=>[provider,new DesktopAccounts(provider,options.secrets,()=>options.desktopProcesses?options.desktopProcesses(provider):provider!=='workbuddy-ai'&&options.agentProcesses?options.agentProcesses(provider):agentProcesses(provider),options.desktopAccounts)])) as Record<DesktopProvider,DesktopAccounts>;
   let discoveryTask:Promise<void>|undefined;
   let startupCheckTimer:ReturnType<typeof setTimeout>|undefined;
   let serviceClosing=false;
