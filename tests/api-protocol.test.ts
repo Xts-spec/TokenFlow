@@ -1,9 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { detectProtocol, sourceNameFromURL, validateQuickSource } from '../packages/core/src/api-protocol.js';
 
 const servers:Server[]=[];
-afterEach(async()=>{await Promise.all(servers.splice(0).map(s=>new Promise(r=>s.close(()=>r(null)))));});
+afterEach(async()=>{vi.unstubAllGlobals();await Promise.all(servers.splice(0).map(s=>new Promise(r=>s.close(()=>r(null)))));});
 type Handler=(path:string,headers:Record<string,unknown>,body:Record<string,unknown>)=>{status:number;json:unknown};
 async function upstream(handler:Handler){
  const calls:string[]=[];
@@ -53,9 +53,47 @@ describe('API source protocol detection',()=>{
   const missing=await upstream(()=>notFound);
   await expect(detectProtocol({baseURL:`${missing.origin}/v1`,apiKey:'k',model:'m'})).rejects.toMatchObject({code:'api_source_not_found'});
  });
- it('stops at the first network failure instead of trying every protocol',async()=>{
+ it('reports an unreachable host after exhausting protocol candidates',async()=>{
   const {origin}=await upstream(()=>notFound);const dead=origin.replace(/:\d+$/,':1');
   await expect(detectProtocol({baseURL:`${dead}/v1`,apiKey:'k',model:'m'})).rejects.toMatchObject({code:'api_source_unreachable'});
+ });
+ it('tries all protocols even when an individual endpoint disconnects',async()=>{
+  const calls:string[]=[];
+  vi.stubGlobal('fetch',vi.fn(async(url:string)=>{
+   calls.push(url);
+   if(url.endsWith('/responses'))throw new TypeError('socket closed');
+   return new Response(JSON.stringify(url.endsWith('/messages')?{type:'message',content:[]}:{error:'missing'}),{status:url.endsWith('/messages')?200:404});
+  }));
+  await expect(detectProtocol({baseURL:'https://relay.test/custom',apiKey:'k',model:'m'})).resolves.toEqual({protocol:'messages',baseURL:'https://relay.test/custom'});
+  expect(calls).toEqual(['https://relay.test/custom/responses','https://relay.test/custom/chat/completions','https://relay.test/custom/messages']);
+ });
+ it('keeps a corporate prefix when probing the versioned Messages endpoint',async()=>{
+  const {origin,calls}=await upstream(path=>path==='/company/anthropic/v1/messages'?{status:200,json:{type:'message',content:[]}}:notFound);
+  await expect(detectProtocol({baseURL:`${origin}/company/anthropic`,apiKey:'k',model:'claude'})).resolves.toEqual({protocol:'messages',baseURL:`${origin}/company/anthropic/v1`});
+  expect(calls.slice(0,3)).toEqual(['/company/anthropic/messages','/company/anthropic/chat/completions','/company/anthropic/responses']);
+ });
+ it('prioritizes an explicit Chat endpoint even for a Claude model name',async()=>{
+  const {origin,calls}=await upstream(path=>path==='/company/v1/chat/completions'?{status:200,json:{choices:[]}}:notFound);
+  await expect(detectProtocol({baseURL:`${origin}/company/v1/chat/completions/`,apiKey:'k',model:'claude'})).resolves.toEqual({protocol:'chat',baseURL:`${origin}/company/v1`});
+  expect(calls).toEqual(['/company/v1/chat/completions']);
+ });
+ it('reports all three attempted endpoints only after all fail',async()=>{
+  const {origin,calls}=await upstream(()=>notFound);
+  const error=await detectProtocol({baseURL:`${origin}/v1`,apiKey:'k',model:'m'}).catch(e=>e);
+  expect(calls).toEqual(['/v1/responses','/v1/chat/completions','/v1/messages']);
+  for(const path of calls)expect(error.message).toContain(`${origin}${path}：HTTP 404`);
+ });
+ it('does not send more requests after cancellation',async()=>{
+  const controller=new AbortController();
+  const fetcher=vi.fn(async()=>{controller.abort();throw new TypeError('aborted');});vi.stubGlobal('fetch',fetcher);
+  await expect(detectProtocol({baseURL:'https://relay.test/v1',apiKey:'k',model:'m'},controller.signal)).rejects.toMatchObject({code:'api_source_cancelled'});
+  expect(fetcher).toHaveBeenCalledTimes(1);
+ });
+ it('does not cache a protocol merely because an endpoint returned a rate limit',async()=>{
+  const {origin}=await upstream(path=>path==='/v1/chat/completions'?{status:200,json:{choices:[]}}:{status:429,json:{error:{message:'rate limited'}}});
+  await expect(detectProtocol({baseURL:`${origin}/v1/responses`,apiKey:'k',model:'m'})).resolves.toEqual({protocol:'chat',baseURL:`${origin}/v1`});
+  const limited=await upstream(()=>({status:429,json:{error:{message:'rate limited'}}}));
+  await expect(detectProtocol({baseURL:`${limited.origin}/v1`,apiKey:'k',model:'m'})).rejects.toMatchObject({code:'api_source_rate_limited'});
  });
  it('names a source after its host',()=>{
   expect(sourceNameFromURL('https://api.openai.com/v1')).toBe('openai.com');

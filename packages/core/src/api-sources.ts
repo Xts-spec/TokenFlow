@@ -1,3 +1,4 @@
+import { apiModelRoute } from '../../../apps/shared/api-endpoint.js';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdir, readFile, writeFile, rename, copyFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -11,7 +12,7 @@ import type { Secrets } from './service.js';
 
 const modelID=z.string().trim().min(1).max(200).refine(v=>!/[\x00-\x1f\x7f]/.test(v));
 export const apiSourceInput=z.object({name:z.string().trim().min(1,'请填写来源名称。').max(80,'来源名称不能超过 80 个字符。'),baseURL:providerSchema.shape.baseURL,
- protocol:z.enum(['responses','chat','messages']),enabled:z.boolean().default(true),models:z.array(modelID).max(2000).transform(v=>[...new Set(v)]),
+ protocol:z.enum(['responses','chat','messages']),modelRoutes:z.record(modelID,z.object({protocol:z.enum(['responses','chat','messages']),baseURL:providerSchema.shape.baseURL}).strict()).optional(),enabled:z.boolean().default(true),models:z.array(modelID).max(2000).transform(v=>[...new Set(v)]),
  apiKey:z.string().trim().min(1,'请填写 API Key。').max(4096,'API Key 不能超过 4096 个字符。').refine(v=>!/[\r\n]/.test(v),'API Key 不能包含换行。').optional(),acknowledge:z.boolean().optional()}).strict();
 export function parseApiSourceInput(input:unknown){
  const result=apiSourceInput.safeParse(input);if(result.success)return result.data;
@@ -52,6 +53,19 @@ export function genericResponsesBodies(body:Record<string,unknown>):Record<strin
  if(!('include' in cleaned)&&!('prompt_cache_key' in cleaned))return [cleaned];
  const {include:_include,prompt_cache_key:_cache,...plain}=cleaned;
  return [cleaned,plain];
+}
+
+/** Replayed Responses history may contain placeholder text blocks. Anthropic
+ * rejects whitespace-only text even when the next block has a valid answer. */
+export function genericMessagesBody(body:Record<string,unknown>):Record<string,unknown>{
+ const clean=(content:unknown)=>Array.isArray(content)?content.filter(part=>!(part&&typeof part==='object'&&part.type==='text'&&typeof part.text==='string'&&!part.text.trim())):content;
+ const result={...body};
+ if(Array.isArray(body.messages))result.messages=body.messages.map(message=>message&&typeof message==='object'?{...message,content:clean(message.content)}:message);
+ if(Array.isArray(body.system)){
+  const system=clean(body.system) as unknown[];
+  if(system.length)result.system=system;else delete result.system;
+ }
+ return result;
 }
 
 /** The sidecar sees only a loopback relay credential, never an upstream API key.
@@ -101,7 +115,10 @@ export class ApiSources {
   if(!old&&!apiKey)throw conflict('新来源需要 API Key。');
   const ref=apiKey?`source-${sourceId}-${randomBytes(8).toString('hex')}`:old!.credentialRef;
   if(apiKey)try{await this.secrets.set(ref,apiKey);}catch{throw new RunnerCoreError('API 密钥无法写入系统加密存储，请解锁安全存储后重试。原来源已保留。',{statusCode:400,code:'credential_storage_unavailable'});}
-  const changed=apiKey||old?.baseURL!==value.baseURL||old?.protocol!==value.protocol;
+  const sameRoute=old?.baseURL===value.baseURL&&old?.protocol===value.protocol;
+  const routes=value.modelRoutes??(sameRoute&&!apiKey?old?.modelRoutes:undefined);
+  fields.modelRoutes=routes?Object.fromEntries(Object.entries(routes).filter(([model])=>fields.models.includes(model))):undefined;
+  const changed=apiKey||!sameRoute||JSON.stringify(old?.modelRoutes)!==JSON.stringify(fields.modelRoutes);
   const source:StoredSource={...fields,id:sourceId,credentialRef:ref,createdAt:old?.createdAt??new Date().toISOString(),checks:changed?{}:Object.fromEntries(Object.entries(old?.checks??{}).filter(([m])=>fields.models.includes(m)))};
   const previous=this.entries;this.entries=[...previous.filter(s=>s.id!==sourceId),source];
   try{await this.persist();}catch(e){this.entries=previous;if(apiKey)await this.secrets.remove?.(ref);throw e;}
@@ -129,10 +146,12 @@ export class ApiSources {
  sidecarModelIDs(){return this.entries.filter(s=>s.enabled).flatMap(s=>s.models.map(model=>apiModelID(s.id,model)));}
  sidecarConfig(){
   const chat:unknown[]=[],responses:unknown[]=[],messages:unknown[]=[];
-  for(const s of this.entries.filter(s=>s.enabled&&s.models.length)){
-   const common={'base-url':`${this.relayURL}/${s.id}${s.protocol==='messages'?'':'/v1'}`,models:s.models.map(name=>({name,alias:apiModelID(s.id,name),'force-mapping':true})),'request-retry':0,'disable-cooling':true};
-   if(s.protocol==='chat')chat.push({...common,name:`api-${s.id}`,'api-key-entries':[{'api-key':this.relayKey}]});
-   else (s.protocol==='responses'?responses:messages).push({...common,'api-key':this.relayKey});
+  for(const s of this.entries.filter(s=>s.enabled&&s.models.length))for(const protocol of ['responses','chat','messages'] as const){
+   const models=s.models.filter(model=>apiModelRoute(s,model).protocol===protocol);
+   if(!models.length)continue;
+   const common={'base-url':`${this.relayURL}/${s.id}${protocol==='messages'?'':'/v1'}`,models:models.map(name=>({name,alias:apiModelID(s.id,name),'force-mapping':true})),'request-retry':0,'disable-cooling':true};
+   if(protocol==='chat')chat.push({...common,name:`api-${s.id}`,'api-key-entries':[{'api-key':this.relayKey}]});
+   else (protocol==='responses'?responses:messages).push({...common,'api-key':this.relayKey});
   }
   return `openai-compatibility: ${JSON.stringify(chat)}\ncodex-api-key: ${JSON.stringify(responses)}\nclaude-api-key: ${JSON.stringify(messages)}\n`;
  }
@@ -149,19 +168,20 @@ export class ApiSources {
     const match=/^\/([a-f0-9]{24})\/(?:v1\/)?(chat\/completions|responses(?:\/compact)?|messages(?:\/count_tokens)?)$/.exec(requestURL.pathname);
     const s=match&&this.entries.find(s=>s.id===match[1]);
     if(!s?.enabled||req.method!=='POST'){fail(503,'Source unavailable');return;}
-    const allowed=s.protocol==='chat'?['chat/completions']:s.protocol==='responses'?['responses','responses/compact']:['messages','messages/count_tokens'];
-    if(!allowed.includes(match![2])){fail(400,'Source protocol mismatch');return;}
     let bytes=0;const chunks:Buffer[]=[];for await(const c of req){bytes+=c.length;if(bytes>LIMIT){fail(413,'Source request too large');return;}chunks.push(c);}
     const body=JSON.parse(Buffer.concat(chunks).toString());if(!s.models.includes(body.model)){fail(403,'Source model mismatch');return;}
+    const {protocol,baseURL}=apiModelRoute(s,body.model);
+    const allowed=protocol==='chat'?['chat/completions']:protocol==='responses'?['responses','responses/compact']:['messages','messages/count_tokens'];
+    if(!allowed.includes(match![2])){fail(400,'Source protocol mismatch');return;}
     const key=await this.secrets.get(s.credentialRef);if(!key){fail(503,'Encrypted API credential unavailable');return;}
-    const headers:Record<string,string>={'content-type':'application/json',...(s.protocol==='messages'?{'x-api-key':key,'anthropic-version':typeof req.headers['anthropic-version']==='string'?req.headers['anthropic-version']:'2023-06-01'}:{Authorization:`Bearer ${key}`})};
+    const headers:Record<string,string>={'content-type':'application/json',...(protocol==='messages'?{'x-api-key':key,'anthropic-version':typeof req.headers['anthropic-version']==='string'?req.headers['anthropic-version']:'2023-06-01'}:{Authorization:`Bearer ${key}`})};
     // Forward only protocol headers, never local routing or administrator credentials.
-    if(s.protocol==='messages'&&typeof req.headers['anthropic-beta']==='string')headers['anthropic-beta']=req.headers['anthropic-beta'];
+    if(protocol==='messages'&&typeof req.headers['anthropic-beta']==='string')headers['anthropic-beta']=req.headers['anthropic-beta'];
     // Same-protocol calls arrive from the gateway untouched; only sidecar-translated Responses bodies need cleaning.
-    const bodies=s.protocol==='responses'&&req.headers[nativeHeader]!=='1'?genericResponsesBodies(body):[body];
+    const bodies=protocol==='messages'?[genericMessagesBody(body)]:protocol==='responses'&&req.headers[nativeHeader]!=='1'?genericResponsesBodies(body):[body];
     let r!:Response;
     for(const [index,attempt] of bodies.entries()){
-     r=idle.watch(await fetch(`${s.baseURL.replace(/\/$/,'')}/${match![2]}${s.protocol==='messages'?requestURL.search:''}`,{method:'POST',headers,body:JSON.stringify(attempt),redirect:'error',signal:idle.signal}));
+     r=idle.watch(await fetch(`${baseURL.replace(/\/$/,'')}/${match![2]}${protocol==='messages'?requestURL.search:''}`,{method:'POST',headers,body:JSON.stringify(attempt),redirect:'error',signal:idle.signal}));
      if(r.ok||r.status!==400||index===bodies.length-1)break;
      await r.body?.cancel();
     }

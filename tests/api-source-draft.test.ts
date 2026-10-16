@@ -1,5 +1,6 @@
+import { apiModelRoute, normalizeApiBaseURL, protocolFromURL } from '../apps/shared/api-endpoint';
 import { describe, expect, it } from 'vitest';
-import { parseModels, validateDraft } from '../apps/console/src/api-source-draft';
+import { parseModels, sourceProtocolLabel, validateDraft } from '../apps/console/src/api-source-draft';
 
 const draft={name:'公司中转',baseURL:'https://api.example.test/v1',apiKey:'sk-fixture',model:'gpt-5'};
 describe('API source draft with a user-defined name',()=>{
@@ -18,5 +19,26 @@ describe('API source draft with a user-defined name',()=>{
  it('splits models on commas and newlines without duplicates',()=>{
   expect(parseModels('a, b\na，c')).toEqual(['a','b','c']);
   expect(validateDraft({...draft,model:'bad\tmodel'},false).model).toBeTruthy();
+ });
+});
+
+describe('skip-verification protocol inference',()=>{
+ it.each([['/v1/responses','responses'],['/v1/chat/completions/','chat'],['/custom/messages','messages'],['/company/anthropic','messages'],['/company/anthropic/v1','messages']])('infers %s as %s',(path,protocol)=>{
+  expect(protocolFromURL(`https://relay.test${path}`)).toBe(protocol);
+ });
+ it.each(['/v1','/custom','/models','/anthropic-relay'])('requires a choice for ambiguous %s',path=>expect(protocolFromURL(`https://relay.test${path}`)).toBeUndefined());
+ it('removes the endpoint suffix while retaining a company prefix',()=>expect(normalizeApiBaseURL(' https://relay.test/company/v1/messages/ ')).toBe('https://relay.test/company/v1'));
+});
+
+describe('model-specific routes',()=>{
+ const source={id:'fixture',baseURL:'https://relay.test/v1',protocol:'responses' as const,models:['gpt','claude'],modelRoutes:{claude:{protocol:'messages' as const,baseURL:'https://relay.test/anthropic/v1'}}};
+ it('uses the default for legacy models and overrides for qualified model IDs',()=>{
+  expect(apiModelRoute(source,'gpt')).toEqual({protocol:'responses',baseURL:source.baseURL});
+  expect(apiModelRoute(source,'api-fixture/claude')).toEqual(source.modelRoutes.claude);
+  expect(apiModelRoute(source,'constructor')).toEqual({protocol:'responses',baseURL:source.baseURL});
+ });
+ it('shows a mixed label only when models actually use different protocols',()=>{
+  expect(sourceProtocolLabel(source)).toBe('按模型路由');
+  expect(sourceProtocolLabel({...source,models:['claude']})).toBe('Anthropic Messages');
  });
 });

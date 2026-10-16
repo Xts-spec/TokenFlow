@@ -1,3 +1,4 @@
+import { apiModelRoute } from '../../../apps/shared/api-endpoint.js';
 import {CodexSwitchLifecycle} from './codex-switch-lifecycle.js';
 import {WorkBuddySDKProvider} from './codebuddy.js';
 import {CodexThreadMigration} from './codex-thread-migration.js';
@@ -291,7 +292,7 @@ export async function createDesktopService(options:ServiceOptions) {
   const validateSelection=async(selected:{sourceId:string;model:string;channel?:string})=>{
     if(selected.channel!=='direct')return resolveSource(selected.sourceId,selected.model);
     const source=apiSources.assert(selected.sourceId,selected.model);
-    if(source.protocol!=='responses'||!(await apiSources.list()).find(s=>s.id===selected.sourceId)?.hasKey)throw Object.assign(new Error('备用通道仅支持有可读取密钥的 Responses API 来源'),{statusCode:409});
+    if(apiModelRoute(source,selected.model).protocol!=='responses'||!(await apiSources.list()).find(s=>s.id===selected.sourceId)?.hasKey)throw Object.assign(new Error('备用通道仅支持有可读取密钥的 Responses API 来源'),{statusCode:409});
     return '';
   };
   const restoreConnection=async(id:string,approval?:{revision:string;allowRunning:boolean},officialModel?:string|(()=>Promise<string|undefined>),restoreHistory=false)=>{
@@ -707,7 +708,7 @@ export async function createDesktopService(options:ServiceOptions) {
     const {id,acknowledge}=input.data;const old=id?(await apiSources.list()).find(s=>s.id===id):undefined;
     if(id&&!old)throw new RunnerCoreError('API 来源已变更，请刷新。',{statusCode:409,code:'api_source_conflict'});
     const models=[...new Set(input.data.model.split(/[\n,，]/).map(m=>m.trim()).filter(Boolean))];
-    if(old&&!input.data.apiKey?.trim()&&input.data.baseURL.trim()===old.baseURL&&JSON.stringify(models)===JSON.stringify(old.models)){
+    if(old&&input.data.name!==undefined&&input.data.name!==old.name&&!input.data.apiKey?.trim()&&input.data.baseURL.trim()===old.baseURL&&JSON.stringify(models)===JSON.stringify(old.models)){
       return apiSources.save({name:input.data.name??old.name,baseURL:old.baseURL,protocol:old.protocol,enabled:old.enabled,models:old.models},id);
     }
     const apiKey=input.data.apiKey?.trim()||(id?await apiSources.keyFor(id):'');
@@ -716,8 +717,20 @@ export async function createDesktopService(options:ServiceOptions) {
     if(id)await assertSourceEditable(id,acknowledge);
     const controller=new AbortController();const cancel=()=>{if(!reply.raw.writableEnded)controller.abort();};reply.raw.once('close',cancel);
     try{
-      const found=await detectProtocol({baseURL:checked.baseURL,apiKey,model:checked.models[0]},controller.signal);
-      const source=await apiSources.save({name:input.data.name??old?.name??sourceNameFromURL(found.baseURL),baseURL:found.baseURL,protocol:found.protocol,enabled:old?.enabled??true,models:checked.models,...(input.data.apiKey?.trim()?{apiKey}:{})},id);
+      const modelRoutes:NonNullable<import('./api-sources.js').ApiSource['modelRoutes']>=Object.create(null);
+      const timeout=AbortSignal.timeout(80000),signal=AbortSignal.any([controller.signal,timeout]);
+      // Limit concurrent probes; each model stops as soon as the preferred protocol works.
+      try{
+        for(let offset=0;offset<checked.models.length;offset+=3){
+          await Promise.all(checked.models.slice(offset,offset+3).map(async model=>{
+            try{modelRoutes[model]=await detectProtocol({baseURL:input.data.baseURL,apiKey,model},signal);}
+            catch(error){throw new RunnerCoreError(`模型 ${model} 验证未通过：${error instanceof Error?error.message:'接口不可用'}。未保存本次修改。`,{statusCode:400,code:error instanceof RunnerCoreError?error.code:'api_source_rejected'});}
+          }));
+        }
+      }catch(error){controller.abort();if(timeout.aborted)throw new RunnerCoreError('模型协议验证超时，未保存本次修改。请减少模型数量或稍后重试。',{statusCode:400,code:'api_source_timeout'});throw error;}
+      if(signal.aborted)throw new RunnerCoreError('已取消验证，未保存本次修改。',{statusCode:400,code:'api_source_cancelled'});
+      const found=modelRoutes[checked.models[0]];
+      const source=await apiSources.save({name:input.data.name??old?.name??sourceNameFromURL(found.baseURL),baseURL:found.baseURL,protocol:found.protocol,modelRoutes,enabled:old?.enabled??true,models:checked.models,...(input.data.apiKey?.trim()?{apiKey}:{})},id);
       const routingError=await synchronizeSources();return {...source,...(routingError?{routingError}:{})};
     }finally{reply.raw.off('close',cancel);}
   });
@@ -820,8 +833,8 @@ export async function createDesktopService(options:ServiceOptions) {
     let selectedAuth:string|undefined;
     if(client) {
       const direct=directKeys.has(client.id)&&path.startsWith('responses');
-      const directSource=direct&&client.sourceId?(await apiSources.list()).find(s=>s.id===client.sourceId&&s.enabled&&s.hasKey&&s.protocol==='responses'):undefined;
-      const available:LocalModel[]=[...(await localSnapshot()).models,...(directSource?directSource.models.map(id=>({id:apiModelID(directSource.id,id),provider:'api' as const})):[])].filter(model=>client.models.includes(model.id));
+      const directSource=direct&&client.sourceId?(await apiSources.list()).find(s=>s.id===client.sourceId&&s.enabled&&s.hasKey):undefined;
+      const available:LocalModel[]=[...(await localSnapshot()).models,...(directSource?directSource.models.filter(id=>apiModelRoute(directSource,id).protocol==='responses').map(id=>({id:apiModelID(directSource.id,id),provider:'api' as const})):[])].filter(model=>client.models.includes(model.id));
       if(client.modelSources){
         if(path==='models'){
           for(let index=available.length-1;index>=0;index--){const sourceId=client.modelSources[available[index].id];try{if(!sourceId)throw new Error('Not selected');resolveSource(sourceId,available[index].id);}catch{available.splice(index,1);}}
@@ -834,7 +847,7 @@ export async function createDesktopService(options:ServiceOptions) {
           }
         }
       }else if(client.sourceId){
-        const sourceAuth=(model:string)=>directSource?(apiSources.assert(client.sourceId!,model),''):resolveSource(client.sourceId!,model,path!=='models');
+        const sourceAuth=(model:string)=>directSource&&apiModelRoute(directSource,model).protocol==='responses'?(apiSources.assert(client.sourceId!,model),''):resolveSource(client.sourceId!,model,path!=='models');
         if(path==='models'){
           for(let index=available.length-1;index>=0;index--)try{sourceAuth(available[index].id);}catch{available.splice(index,1);}
         }else{
@@ -853,7 +866,7 @@ export async function createDesktopService(options:ServiceOptions) {
     }
     const apiSource=apiSources.sourceFor((req.body as {model?:string})?.model??'');
     if(/^api-[a-f0-9]{24}\//.test((req.body as {model?:string})?.model??'')&&!apiSource){record(503);await settle({inputTokens:null,outputTokens:null},false);return reply.code(503).send({error:{message:'API source or model unavailable',type:'source_unavailable'}});}
-    if(apiSource){try{if(client&&directKeys.has(client.id)&&path.startsWith('responses')&&apiSource.protocol==='responses')apiSources.assert(apiSource.id,(req.body as {model:string}).model);else resolveSource(apiSource.id,(req.body as {model:string}).model);}catch{record(503);await settle({inputTokens:null,outputTokens:null},false);return reply.code(503).send({error:{message:'API source unavailable',type:'source_unavailable'}});}}
+    if(apiSource){try{if(client&&directKeys.has(client.id)&&path.startsWith('responses')&&apiModelRoute(apiSource,(req.body as {model:string}).model).protocol==='responses')apiSources.assert(apiSource.id,(req.body as {model:string}).model);else resolveSource(apiSource.id,(req.body as {model:string}).model);}catch{record(503);await settle({inputTokens:null,outputTokens:null},false);return reply.code(503).send({error:{message:'API source unavailable',type:'source_unavailable'}});}}
     const upstreamURL=client||apiSource?proxy.gateway().baseURL:config.baseURL;
     const upstreamKey=client||apiSource?proxy.gateway().apiKey:await key();
     const abort=upstreamIdle();
@@ -862,7 +875,8 @@ export async function createDesktopService(options:ServiceOptions) {
       const cursorModel=typeof (req.body as {model?:unknown})?.model==='string'&&(req.body as {model:string}).model.startsWith('cursor/');
       if(cursorModel&&proxy.snapshot().state!=='running'){record(503);await settle({inputTokens:null,outputTokens:null},false);abort.close();return reply.code(503).send({error:{message:'网关未启动',type:'provider_error'}});}
       const send=async(route:string,body:unknown)=>{
-        const native=apiSource&&(apiSource.protocol==='responses'&&route.startsWith('responses')||apiSource.protocol==='chat'&&route==='chat/completions'||apiSource.protocol==='messages'&&route.startsWith('messages'));
+        const protocol=apiSource?apiModelRoute(apiSource,(body as {model:string}).model).protocol:undefined;
+        const native=apiSource&&(protocol==='responses'&&route.startsWith('responses')||protocol==='chat'&&route==='chat/completions'||protocol==='messages'&&route.startsWith('messages'));
         if(native){const headers:Record<string,string>={};for(const name of ['anthropic-version','anthropic-beta'])if(typeof req.headers[name]==='string')headers[name]=req.headers[name];return abort.watch(await apiSources.response(apiSource.id,route,body as {model:string},abort.signal,headers));}
         return abort.watch(await fetch(`${upstreamURL.replace(/\/$/,'')}/${route}`,{method:req.method,headers:{...(selectedAuth?{'X-Token-Flow-Auth':selectedAuth}:{}),Authorization:`Bearer ${upstreamKey}`,'Content-Type':'application/json',...(typeof req.headers['anthropic-version']==='string'?{'anthropic-version':req.headers['anthropic-version']}:{}),...(typeof req.headers['anthropic-beta']==='string'?{'anthropic-beta':req.headers['anthropic-beta']}:{}),...(typeof req.headers['x-stainless-lang']==='string'?{'x-stainless-lang':req.headers['x-stainless-lang']}:{})},body:req.method==='POST'?JSON.stringify(body):undefined,redirect:'error',signal:abort.signal}));
       };

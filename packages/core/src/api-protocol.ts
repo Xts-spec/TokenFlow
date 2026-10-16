@@ -1,14 +1,14 @@
+import { normalizeApiBaseURL, protocolFromURL } from '../../../apps/shared/api-endpoint.js';
 import { providerSchema } from './providers.js';
 import { RunnerCoreError } from './errors.js';
 
 export type SourceProtocol='responses'|'chat'|'messages';
 const PATHS:Record<SourceProtocol,string>={responses:'responses',chat:'chat/completions',messages:'messages'};
-const ENDPOINT_SUFFIX=/\/(?:chat\/completions|responses|messages|models)\/?$/;
 const bad=(message:string,code='api_source_invalid')=>new RunnerCoreError(message,{statusCode:400,code});
 
 /** Cheap shape checks that never touch the network. */
 export function validateQuickSource(input:{baseURL:string;apiKey?:string;model:string}){
- const trimmed=input.baseURL.trim().replace(ENDPOINT_SUFFIX,'').replace(/\/+$/,'');
+ const trimmed=normalizeApiBaseURL(input.baseURL);
  const url=providerSchema.shape.baseURL.safeParse(trimmed);
  if(!url.success)throw bad(url.error.issues[0]?.message??'请输入完整的 API 地址，例如 https://api.example.com/v1。');
  const key=input.apiKey?.trim();
@@ -42,7 +42,7 @@ async function probe(protocol:SourceProtocol,base:string,key:string,model:string
  for(const tokenField of protocol==='chat'?['max_tokens','max_completion_tokens']:['']){
   const {headers,body}=request(protocol,model,key,tokenField||undefined);
   let response:Response;
-  try{response=await fetch(`${base}/${PATHS[protocol]}`,{method:'POST',headers:{...headers,'content-type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.any([signal,AbortSignal.timeout(20000)]),redirect:'error'});}
+  try{response=await fetch(`${base}/${PATHS[protocol]}`,{method:'POST',headers:{...headers,'content-type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.any([signal,AbortSignal.timeout(10000)]),redirect:'error'});}
   catch{return {ok:false,status:null,message:signal.aborted?'已取消验证。':'无法连接或超时，请检查网络和 API 地址。'};}
   const text=await readLimited(response).catch(()=> '');
   let json:Record<string,unknown>={};try{json=JSON.parse(text);}catch{/* Non-JSON bodies are a mismatch, not a crash. */}
@@ -51,8 +51,6 @@ async function probe(protocol:SourceProtocol,base:string,key:string,model:string
   const message=clip(typeof error==='string'?error:typeof error?.message==='string'?error.message:typeof json.message==='string'?json.message:'',key);
   // Some newer models only accept the other token-limit field; try it once before giving up on Chat.
   if(protocol==='chat'&&response.status===400&&tokenField==='max_tokens'&&/max_completion_tokens|max_tokens/.test(message))continue;
-  // Rate limits prove the endpoint exists and the key is recognised.
-  if(response.status===429)return {ok:true,status:429,message};
   return {ok:false,status:response.status,message};
  }
  return {ok:false,status:400,message:''};
@@ -61,22 +59,29 @@ async function probe(protocol:SourceProtocol,base:string,key:string,model:string
 /** Sends one tiny request per candidate protocol until one answers in the expected shape. */
 export async function detectProtocol(input:{baseURL:string;apiKey:string;model:string},signal:AbortSignal=new AbortController().signal):Promise<{protocol:SourceProtocol;baseURL:string}>{
  const {baseURL,models}=validateQuickSource(input);const model=models[0];
+ const explicit=protocolFromURL(input.baseURL);
  const hinted=/anthropic|claude/i.test(`${baseURL} ${model}`);
  const order:SourceProtocol[]=hinted?['messages','chat','responses']:['responses','chat','messages'];
+ if(explicit){order.splice(order.indexOf(explicit),1);order.unshift(explicit);}
  // A bare host such as https://api.example.com usually means /v1.
- const bases=new URL(baseURL).pathname.replace(/\/+$/,'')===''?[`${baseURL}/v1`,baseURL]:[baseURL];
+ const bases=new URL(baseURL).pathname.replace(/\/+$/,'')===''?[`${baseURL}/v1`,baseURL]:/\/v\d+$/.test(new URL(baseURL).pathname)?[baseURL]:[baseURL,`${baseURL}/v1`];
  const failures:Probe[]=[];
  for(const base of bases)for(const protocol of order){
+  if(signal.aborted)throw bad('已取消验证。','api_source_cancelled');
   const result=await probe(protocol,base,input.apiKey.trim(),model,signal);
   if(result.ok)return {protocol,baseURL:base};
-  if(result.status===null)throw bad(result.message,'api_source_unreachable');
+  if(signal.aborted)throw bad('已取消验证。','api_source_cancelled');
   failures.push(result);
  }
+ if(failures.every(f=>f.status===null))throw bad('无法连接或超时，请检查网络和 API 地址。','api_source_unreachable');
  const auth=failures.find(f=>f.status===401||f.status===403);
  if(auth)throw bad(`API Key 无效或没有权限（HTTP ${auth.status}）。${auth.message}`,'api_source_auth');
+ const limited=failures.find(f=>f.status===429);
+ if(limited)throw bad('接口限流（HTTP 429），暂时无法确认此模型的协议，请稍后重试。','api_source_rate_limited');
  const rejected=failures.find(f=>f.status===400||f.status===422);
  if(rejected)throw bad(`接口已响应但拒绝了请求，请检查模型名称。${rejected.message}`,'api_source_rejected');
- throw bad('没有找到可用的接口。请检查 URL（通常以 /v1 结尾）；支持 OpenAI Responses、Chat Completions 和 Anthropic Messages。','api_source_not_found');
+ const detail=failures.map((f,i)=>`${bases[Math.floor(i/order.length)]}/${PATHS[order[i%order.length]]}：${f.status===null?'连接失败或超时':`HTTP ${f.status}${f.message?`（${f.message}）`:''}`}`).join('；');
+ throw bad(`未找到可用接口。已尝试 Responses、Chat Completions 和 Anthropic Messages，并保留自定义路径尝试 /v1。请核对服务文档中的地址与模型支持的协议。${detail}`,'api_source_not_found');
 }
 
 export function sourceNameFromURL(baseURL:string){

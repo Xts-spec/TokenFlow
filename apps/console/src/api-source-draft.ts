@@ -1,3 +1,4 @@
+import { apiModelRoute, type RoutedApiSource } from '../../shared/api-endpoint';
 // An API source needs three things from the user. The protocol is found by the server.
 export const protocolNames={responses:'Responses',chat:'Chat Completions',messages:'Anthropic Messages'} as const;
 export type SourceDraft={name:string;baseURL:string;apiKey:string;model:string};
@@ -23,4 +24,9 @@ export function validateDraft(draft:SourceDraft,editing:boolean):DraftErrors{
  if(!models.length)errors.model='请填写模型名称。';
  else if(models.length>50||models.some(m=>m.length>200||/[\x00-\x1f\x7f]/.test(m)))errors.model='模型名称格式不正确。';
  return errors;
+}
+
+export function sourceProtocolLabel(source:RoutedApiSource&{models:string[]}){
+ const protocols=new Set(source.models.map(model=>apiModelRoute(source,model).protocol));
+ return protocols.size>1?'按模型路由':protocolNames[protocols.values().next().value??source.protocol];
 }

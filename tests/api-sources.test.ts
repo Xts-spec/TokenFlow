@@ -4,14 +4,14 @@ import { createServer } from 'node:http';
 import { mkdtemp, rm, readFile, writeFile, mkdir, realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { ApiSources, apiModelID, genericResponsesBodies } from '../packages/core/src/api-sources.js';
+import { ApiSources, apiModelID, genericResponsesBodies, genericMessagesBody } from '../packages/core/src/api-sources.js';
 import { createDesktopService } from '../packages/core/src/service.js';
 import { defaultProvider, providerSchema } from '../packages/core/src/providers.js';
 import { createSecrets } from '../apps/desktop/src/secrets.js';
 import { parse } from 'smol-toml';
 const cleanup:Array<()=>Promise<unknown>>=[];
 afterEach(async()=>{for(const fn of cleanup.splice(0).reverse())await fn();});
-async function fixture(real=false,configure?:(app:Awaited<ReturnType<typeof createDesktopService>>['app'])=>void){
+async function fixture(real=false,configure?:(app:Awaited<ReturnType<typeof createDesktopService>>['app'])=>void,modelProtocols:Record<string,string>={},rejectBlankText=false){
  const root=await realpath(await mkdtemp(join(tmpdir(),'api-sources-')));cleanup.push(()=>rm(root,{recursive:true,force:true}));await mkdir(join(root,'secrets'));
  const storage={isEncryptionAvailable:()=>true,encryptString:(v:string)=>Buffer.from(Buffer.from(v).map(b=>b^0x73)),decryptString:(v:Buffer)=>Buffer.from(Buffer.from(v).map(b=>b^0x73)).toString()};
  const secrets=createSecrets(root,storage);const calls:Array<{path:string;key:string;body:Record<string,unknown>}>=[];
@@ -20,6 +20,9 @@ async function fixture(real=false,configure?:(app:Awaited<ReturnType<typeof crea
   res.setHeader('content-type','application/json');const pathname=new URL(req.url!,'http://127.0.0.1').pathname;let raw='';for await(const c of req)raw+=c;const body=raw?JSON.parse(raw):{};
   const key=String(req.headers.authorization??req.headers['x-api-key']??'');calls.push({path:req.url!,key,body});
   await paused;
+  if(rejectBlankText&&body.messages?.some((message:any)=>Array.isArray(message.content)&&message.content.some((part:any)=>part.type==='text'&&typeof part.text==='string'&&!part.text.trim()))){res.statusCode=400;res.end(JSON.stringify({error:{message:'text content block must contain non-whitespace text'}}));return;}
+  const expected=modelProtocols[body.model];
+  if(expected&&pathname!==`/v1/${expected}`){res.statusCode=400;res.end(JSON.stringify({error:{message:'Model does not support this protocol'}}));return;}
   if((JSON.stringify(body.input)??'').includes('secret-error')){res.setHeader('content-type','text/event-stream');res.end(`event: error\ndata: ${JSON.stringify({type:'error',message:key,error:{message:'secret-private-upstream-detail'}})}\n\n`);return;}
   if(pathname==='/v1/models'){res.end(JSON.stringify({data:[{id:'shared'},{id:'forbidden'}]}));return;}
   if(body.model==='forbidden'){res.writeHead(403);res.end(JSON.stringify({error:{message:'secret-key-DO-NOT-RETURN'}}));return;}
@@ -544,4 +547,99 @@ it('settles an admitted request after model removal without losing its usage or 
  }finally{release();}
  expect((await call).statusCode).toBe(200);
  expect((await service.app.inject({url:'/api/gateway-keys',headers})).json().keys.find((k:{id:string})=>k.id===key.id)).toMatchObject({models:[],usedTokens:10,pendingRequests:0});
+});
+
+it('prefers the URL suffix and persists different model routes in one source through the real gateway',async()=>{
+ const {service,headers,baseURL,calls,root,secrets}=await fixture(true,undefined,{'gpt-a':'responses','claude-b':'messages','chat-only':'chat/completions'});
+ const added=await service.app.inject({method:'POST',url:'/api/sources/quick',headers,payload:{name:'Mixed gateway',baseURL:`${baseURL}/responses`,apiKey:'mixed-private-key',model:'gpt-a,claude-b,chat-only'}});
+ expect(added.statusCode,added.body).toBe(200);const source=added.json();
+ expect(source.modelRoutes).toEqual({'gpt-a':{protocol:'responses',baseURL},'claude-b':{protocol:'messages',baseURL},'chat-only':{protocol:'chat',baseURL}});
+ expect(calls.filter(c=>c.body.model==='gpt-a').map(c=>c.path)).toEqual(['/v1/responses']);
+ expect(calls.filter(c=>c.body.model==='claude-b').map(c=>c.path)).toEqual(['/v1/responses','/v1/messages']);
+ expect(calls.filter(c=>c.body.model==='chat-only').map(c=>c.path)).toEqual(['/v1/responses','/v1/chat/completions']);
+ expect((await service.app.inject({url:'/api/sources',headers})).json().sources).toHaveLength(1);
+ const config=await readFile(join(root,'cliproxy/config.yaml'),'utf8');
+ for(const [field,model] of [['codex-api-key','gpt-a'],['claude-api-key','claude-b'],['openai-compatibility','chat-only']]){
+  const entries=JSON.parse(config.split('\n').find(line=>line.startsWith(field+': '))!.slice(field.length+2));
+  expect(entries.flatMap((entry:any)=>entry.models.map((m:any)=>m.name))).toEqual([model]);
+ }
+ const models=source.models.map((m:string)=>apiModelID(source.id,m));
+ for(const model of models)await expect.poll(()=>service.proxy.apiModelAvailable(model),{timeout:10000}).toBe(true);
+ const key=await service.app.inject({method:'POST',url:'/api/gateway-keys',headers,payload:{name:'Mixed client',sourceId:source.id,models,tokenLimit:200}});expect(key.statusCode,key.body).toBe(200);
+ const client={...headers,authorization:`Bearer ${key.json().apiKey}`};calls.length=0;
+ for(const [index,upstream] of source.models.entries()){
+  const response=await service.app.inject({method:'POST',url:'/v1/responses',headers:client,payload:{model:models[index],input:'Hi',stream:false}});
+  expect(response.statusCode,response.body).toBe(200);expect(response.body).toContain('mixed-private-key');
+  const call=calls.at(-1)!;expect(call.body.model).toBe(upstream);
+  expect(new URL(call.path,baseURL).pathname).toBe(upstream==='claude-b'?'/v1/messages':upstream==='chat-only'?'/v1/chat/completions':'/v1/responses');
+  expect(call.key).toBe(upstream==='claude-b'?'mixed-private-key':'Bearer mixed-private-key');
+ }
+ const native=await service.app.inject({method:'POST',url:'/v1/messages',headers:{...client,'anthropic-version':'2023-06-01'},payload:{model:models[1],messages:[{role:'user',content:'Hi'}],max_tokens:16}});
+ expect(native.statusCode,native.body).toBe(200);expect(native.json().type).toBe('message');
+ const reopened=await ApiSources.open(root,secrets,defaultProvider);cleanup.push(()=>reopened.close());expect((await reopened.list())[0].modelRoutes).toEqual(source.modelRoutes);
+ await reopened.save({name:'Renamed',baseURL,protocol:source.protocol,enabled:false,models:source.models},source.id);
+ expect((await reopened.list())[0].modelRoutes).toEqual(source.modelRoutes);
+ await reopened.save({name:'Trimmed',baseURL,protocol:source.protocol,models:['gpt-a']},source.id);
+ expect((await reopened.list())[0].modelRoutes).toEqual({'gpt-a':source.modelRoutes['gpt-a']});
+});
+
+it('does not partially save model routes or a replacement key when one model fails validation',async()=>{
+ const {service,headers,baseURL,root,secrets}=await fixture(false,undefined,{'bad-model':'unsupported'});
+ const added=await service.app.inject({method:'POST',url:'/api/sources/quick',headers,payload:{baseURL,apiKey:'original-mixed-key',model:'shared'}});
+ expect(added.statusCode,added.body).toBe(200);const source=added.json();const before=await readFile(join(root,'api-sources.json'),'utf8');
+ const failed=await service.app.inject({method:'POST',url:'/api/sources/quick',headers,payload:{id:source.id,baseURL,apiKey:'replacement-mixed-key',model:'shared,bad-model'}});
+ expect(failed.statusCode,failed.body).toBe(400);expect(failed.json().error).toContain('bad-model');expect(failed.json().error).not.toContain('replacement-mixed-key');
+ expect(await readFile(join(root,'api-sources.json'),'utf8')).toBe(before);
+ const reopened=await ApiSources.open(root,secrets,defaultProvider);cleanup.push(()=>reopened.close());expect(await reopened.keyFor(source.id)).toBe('original-mixed-key');
+});
+
+it('revalidates unchanged models on explicit verification and uses each route for offline repair eligibility',async()=>{
+ const {service,headers,baseURL,calls}=await fixture(false,undefined,{'claude-b':'messages','gpt-a':'responses'});
+ const added=await service.app.inject({method:'POST',url:'/api/sources/quick',headers,payload:{name:'Mixed repair',baseURL,apiKey:'mixed-repair-key',model:'claude-b,gpt-a'}});
+ expect(added.statusCode,added.body).toBe(200);const source=added.json();expect(source.protocol).toBe('messages');
+ calls.length=0;
+ const verified=await service.app.inject({method:'POST',url:'/api/sources/quick',headers,payload:{id:source.id,name:source.name,baseURL:source.baseURL,model:source.models.join(',')}});
+ expect(verified.statusCode,verified.body).toBe(200);expect(new Set(calls.map(c=>c.body.model))).toEqual(new Set(source.models));
+ await service.proxy.stop();
+ const rejected=await service.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:{sourceId:source.id,model:apiModelID(source.id,'claude-b'),channel:'direct'}});
+ expect(rejected.statusCode,rejected.body).toBe(409);
+ const accepted=await service.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:{sourceId:source.id,model:apiModelID(source.id,'gpt-a'),channel:'direct'}});
+ expect(accepted.statusCode,accepted.body).toBe(200);
+ await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
+ expect(calls.at(-1)).toMatchObject({path:'/v1/responses',key:'Bearer mixed-repair-key',body:{model:'gpt-a'}});
+});
+
+it('forwards a model to its detected custom base path rather than the source default',async()=>{
+ const paths:string[]=[];
+ const upstream=createServer(async(req,res)=>{
+  let raw='';for await(const chunk of req)raw+=chunk;
+  const body=JSON.parse(raw);paths.push(req.url!);
+  res.setHeader('content-type','application/json');res.end(JSON.stringify({type:'message',id:'custom-message',role:'assistant',model:body.model,content:[{type:'text',text:'OK'}],usage:{input_tokens:1,output_tokens:1},stop_reason:'end_turn'}));
+ });
+ await new Promise<void>(r=>upstream.listen(0,'127.0.0.1',r));cleanup.push(()=>new Promise<void>(r=>upstream.close(()=>r())));
+ const {service,headers,baseURL}=await fixture();const customBase=`http://127.0.0.1:${(upstream.address() as {port:number}).port}/company/anthropic/v1`;
+ const added=await service.app.inject({method:'POST',url:'/api/sources',headers,payload:{name:'Custom model paths',baseURL,apiKey:'custom-model-key',protocol:'responses',models:['shared','custom-claude'],modelRoutes:{'custom-claude':{protocol:'messages',baseURL:customBase}}}});
+ expect(added.statusCode,added.body).toBe(200);const source=added.json();
+ const response=await service.app.inject({method:'POST',url:'/v1/messages',headers,payload:{model:apiModelID(source.id,'custom-claude'),messages:[{role:'user',content:'Hi'}],max_tokens:16}});
+ expect(response.statusCode,response.body).toBe(200);expect(response.json().type).toBe('message');expect(paths).toEqual(['/company/anthropic/v1/messages']);
+});
+
+it('removes blank text blocks from replayed GPT history before sending it to a strict Messages source',async()=>{
+ const {service,headers,add,calls}=await fixture(true,undefined,{},true);const source=await add('Strict Claude','strict-claude-key','messages');const model=apiModelID(source.id,'shared');
+ await expect.poll(()=>service.proxy.apiModelAvailable(model),{timeout:10000}).toBe(true);
+ const response=await service.app.inject({method:'POST',url:'/v1/responses',headers,payload:{model,input:[{role:'user',content:'Remember MAPLE'},{role:'assistant',content:[{type:'output_text',text:' '},{type:'output_text',text:'GPT reply'}]},{role:'user',content:'What word?'}],max_output_tokens:32}});
+ expect(response.statusCode,response.body).toBe(200);
+ const messages=calls.at(-1)!.body.messages as any[];
+ expect(messages.flatMap(m=>Array.isArray(m.content)?m.content:[]).filter(p=>p.type==='text').every(p=>p.text.trim())).toBe(true);
+ expect(JSON.stringify(messages)).toContain('GPT reply');expect(JSON.stringify(messages)).toContain('MAPLE');
+});
+
+it('cleans only invalid Messages text blocks while keeping tool results, signatures and meaningful spacing',()=>{
+ const tool={type:'tool_result',tool_use_id:'call',content:[{type:'text',text:' '}]};
+ const thinking={type:'thinking',thinking:'reasoning',signature:'provider-signature'};
+ const body={model:'claude',max_tokens:128,system:[{type:'text',text:' \n'}],messages:[{role:'assistant',content:[{type:'text',text:' '},{type:'text',text:' preserved '},thinking]},{role:'user',content:[tool]}]};
+ const original=structuredClone(body);const cleaned=genericMessagesBody(body);
+ expect(cleaned.system).toBeUndefined();expect(cleaned.max_tokens).toBe(128);
+ expect(cleaned.messages).toEqual([{role:'assistant',content:[{type:'text',text:' preserved '},thinking]},{role:'user',content:[tool]}]);
+ expect(body).toEqual(original);
 });
