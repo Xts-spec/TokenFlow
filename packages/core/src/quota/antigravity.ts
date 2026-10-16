@@ -3,9 +3,10 @@ import { isoFromAny, num, pick, record, str, parseJSON, QuotaHTTPError } from '.
 import type { QuotaProvider, QuotaWindow } from './types.js';
 
 const urls = [
+  // Production includes Gemini and third-party groups; daily may return only third-party quota.
+  'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary',
   'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary',
   'https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary',
-  'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary',
 ];
 const headers = {
   Authorization: 'Bearer $TOKEN$', 'Content-Type': 'application/json',

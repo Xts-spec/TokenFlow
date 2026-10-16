@@ -11,6 +11,10 @@ import { projectWindowOpenHandler } from '../../shared/project-links.js';
 import { createDesktopService } from '../../../packages/core/src/service.js';
 import { desktopCleanupFiles } from './file-cleanup.js';
 import {createNetworkProxy} from '../../../packages/core/src/network-proxy.js';
+import {createStartupWindow} from './startup-window.js';
+import {guardCredentialAccess} from './credential-access.js';
+import {claudeKeychain} from '../../../packages/core/src/claude-accounts.js';
+import {agentPaths} from '../../../packages/core/src/agent-connections.js';
 
 const here=dirname(fileURLToPath(import.meta.url));
 if(process.argv.includes('--tokenflow-qoder-crypto')){void runQoderCrypto();}
@@ -31,6 +35,9 @@ async function start() {
   let closing=false;
   let tray:Tray|undefined;
   await app.whenReady();
+  const icon=join(here,'console','app-icon.png');
+  const startup=await createStartupWindow(icon);
+  await startup.update('正在准备网络连接…');
   // Resolve external traffic using a separate OS-proxy session. The workspace
   // only loads loopback URLs and must remain reachable with any system proxy.
   const networkSession=session.fromPartition('tokenflow-outbound',{cache:false});
@@ -38,12 +45,12 @@ async function start() {
   const network=await createNetworkProxy(url=>networkSession.resolveProxy(url));
   network.installFetch();
   await session.defaultSession.setProxy({mode:'direct'});
+  await startup.update('正在读取已保存的凭据…',process.platform==='darwin'?'系统可能请求钥匙串权限，用于解密已保存的凭据。':'正在通过系统安全存储读取已保存的密钥。');
   if(process.platform==='darwin'){
     // Keep the legacy service name if the keychain cannot initialize; Secrets exposes its warning.
     try{if(safeStorage.isEncryptionAvailable()){safeStorage.encryptString('');app.setName('TokenFlow');}}catch{}
   }
   if(process.platform==='linux')app.setName('TokenFlow');
-  const icon=join(here,'console','app-icon.png');
   app.setAboutPanelOptions({applicationName:'TokenFlow',iconPath:icon});
   // The keychain-compatible internal name may stay token-flow. Visible menus
   // should still use the product name, including when encryption is unavailable.
@@ -63,6 +70,10 @@ async function start() {
   }
   const token=randomBytes(32).toString('hex');
   const base=app.isPackaged?process.resourcesPath:resolve(here,'..');
+  const allowClientCredentials=await startup.confirmCredentialAccess();
+  const claudeKeychainStore=process.platform==='darwin'?claudeKeychain(dirname(agentPaths().claude)):undefined;
+  const claudeCredentialStore=claudeKeychainStore?{read:guardCredentialAccess(allowClientCredentials,()=>claudeKeychainStore.read()),write:guardCredentialAccess(allowClientCredentials,(value:string|null)=>claudeKeychainStore.write(value))}:undefined;
+  await startup.update('正在启动本地服务…');
   const service=await createDesktopService({root,token,localKey,secrets,outboundProxyURL:network.url,networkSnapshot:network.snapshot,fileCleanup:{
     ...desktopCleanupFiles(app,shell),
     pickDirectory:async()=>{
@@ -70,7 +81,7 @@ async function start() {
       const result=window?await dialog.showOpenDialog(window,picker):await dialog.showOpenDialog(picker);
       return result.canceled?undefined:result.filePaths[0];
     },
-  },desktopAccounts:{crypto:qoderCrypto},qoderIde:{crypto:qoderIdeCrypto},credentialWarnings:secrets.warnings,openExternal:url=>shell.openExternal(url),proxyPort:process.env.AGENT_PROXY_PORT?Number(process.env.AGENT_PROXY_PORT):undefined,binary:process.env.CLIPROXY_BINARY?resolve(process.env.CLIPROXY_BINARY):join(base,'sidecars',`${process.platform}-${process.arch}`,process.platform==='win32'?'cliproxyapi.exe':'cliproxyapi'),uiRoot:join(here,'console')});
+  },claudeCredentialStore,desktopAccounts:{crypto:guardCredentialAccess(allowClientCredentials,qoderCrypto)},qoderIde:{crypto:guardCredentialAccess(allowClientCredentials,qoderIdeCrypto)},credentialWarnings:()=>[...secrets.warnings(),...(!allowClientCredentials?['本次启动已跳过客户端安全存储；如需读取 Claude Code、Qoder 等加密登录信息，请重启后选择“允许读取”。']:[])],openExternal:url=>shell.openExternal(url),proxyPort:process.env.AGENT_PROXY_PORT?Number(process.env.AGENT_PROXY_PORT):undefined,binary:process.env.CLIPROXY_BINARY?resolve(process.env.CLIPROXY_BINARY):join(base,'sidecars',`${process.platform}-${process.arch}`,process.platform==='win32'?'cliproxyapi.exe':'cliproxyapi'),uiRoot:join(here,'console')});
   const address=await service.app.listen({host:'127.0.0.1',port:Number(process.env.AGENT_PORT??9527)});
   ipcMain.handle('clipboard:write-text',(event,text:unknown)=>{
     if(!window || event.sender!==window.webContents || event.senderFrame!==window.webContents.mainFrame || new URL(event.senderFrame.url).origin!==address)throw new Error('Clipboard request denied');
@@ -116,6 +127,8 @@ async function start() {
   app.on('window-all-closed',()=>{});
   app.on('before-quit',event=>{if(closing)return;event.preventDefault();closing=true;void service.app.close().finally(()=>network.close()).finally(()=>app.quit());});
   // The workspace opens immediately; saved accounts, namespaced models and quotas load in the background.
+  await startup.update('正在打开工作台…');
   void service.discoverLocal().catch(() => undefined); // Failure is exposed in the model center with a retry action.
   await show();
+  startup.close();
 }

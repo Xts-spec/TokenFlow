@@ -70,10 +70,21 @@ describe('quota layer', () => {
     expect(claudeReport.plan).toBe('Max');
     expect(claudeReport.windows.map(w => [w.id, w.usedPercent, w.resetsAt])).toEqual([['five_hour', 33, '2026-09-09T08:00:00.000Z'], ['seven_day_opus', 61, undefined], ['limit-0', 9, undefined]]);
   });
+  it('preserves both Antigravity quota groups by preferring the production summary over the partial daily summary', async () => {
+    const thirdParty={displayName:'Claude and GPT models',buckets:[{bucketId:'3p-weekly',window:'weekly',remainingFraction:0.49},{bucketId:'3p-5h',window:'5h',remainingFraction:1}]};
+    const gemini={displayName:'Gemini Models',buckets:[{bucketId:'gemini-weekly',window:'weekly',remainingFraction:1},{bucketId:'gemini-5h',window:'5h',remainingFraction:1}]};
+    const {call,calls}=responder({
+      'https://daily-cloudcode-pa.googleapis.com':json({groups:[thirdParty]}),
+      'https://cloudcode-pa.googleapis.com':json({groups:[gemini,thirdParty]}),
+    });
+    const report=await quotaProviders.antigravity.fetch(call,{provider:'antigravity',projectId:'proj'});
+    expect(report.windows.map(w=>[w.id,w.usedPercent])).toEqual([['gemini-weekly',0],['gemini-5h',0],['3p-weekly',51],['3p-5h',0]]);
+    expect(calls).toHaveLength(1);expect(calls[0].url).toBe('https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary');
+  });
   it('walks Antigravity endpoints on 403/404, converts remaining fraction to used percent and requires project id', async () => {
     const {call, calls} = responder({
-      'https://daily-cloudcode-pa.googleapis.com': json({error: 'forbidden-secret'}, 403),
-      'https://daily-cloudcode-pa.sandbox.googleapis.com': json({groups: [{displayName: 'Gemini', buckets: [{bucketId: 'daily', displayName: '每日', window: 'DAILY', remainingFraction: 0.25, resetTime: '2026-09-10T00:00:00Z'}]}]}),
+      'https://cloudcode-pa.googleapis.com': json({error: 'forbidden-secret'}, 403),
+      'https://daily-cloudcode-pa.googleapis.com': json({groups: [{displayName: 'Gemini', buckets: [{bucketId: 'daily', displayName: '每日', window: 'DAILY', remainingFraction: 0.25, resetTime: '2026-09-10T00:00:00Z'}]}]}),
     });
     const report = await quotaProviders.antigravity.fetch(call, {provider: 'antigravity', projectId: 'proj'});
     expect(calls).toHaveLength(2); expect(calls[0].data).toBe('{"project":"proj"}');
