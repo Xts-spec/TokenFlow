@@ -46,7 +46,12 @@ export async function createStartupWindow(_icon,mode){state.modes.push(mode);ret
 };}
 export async function createNetworkProxy(){return {url:'http://127.0.0.1:1',installFetch(){},snapshot:()=>({}),close:async()=>{state.events.push('network-closed');}};}
 export function desktopCleanupFiles(){return {};}
-export function agentPaths(){return {claude:join(root,'claude/settings.json')};}
+export function agentPaths(){return {claude:join(root,'claude/settings.json'),codex:join(root,'codex/config.toml')};}
+export class CodexReconciliationMonitor{
+ constructor(options){assert.equal(options.root,root);assert.equal(options.allowOfficial,allowed);}
+ async start(){state.events.push('recorder-started');}
+ async close(){state.events.push('recorder-stopped');}
+}
 export async function qoderCrypto(){state.clientReads++;return null;}
 export const qoderIdeCrypto=qoderCrypto;
 export function runQoderCrypto(){throw Error('Unexpected crypto helper');}
@@ -108,7 +113,8 @@ if(phase==='remembered-reset'){
  reset.click();await wait(async()=>!await rememberedCredentialAccess(root));
  assert.equal(loaded.accounts.length,2,'resetting the next launch must not unload current accounts');
 }
-app.quit();await wait(()=>state.quit);assert.ok(state.events.indexOf('service-closed')<state.events.indexOf('network-closed'));assert.ok(state.events.indexOf('network-closed')<state.events.indexOf('quit'));
+assert.ok(state.events.includes('recorder-started'));
+app.quit();await wait(()=>state.quit);assert.ok(state.events.includes('recorder-stopped'));assert.ok(state.events.indexOf('recorder-stopped')<state.events.indexOf('service-closed'));assert.ok(state.events.indexOf('service-closed')<state.events.indexOf('network-closed'));assert.ok(state.events.indexOf('network-closed')<state.events.indexOf('quit'));
 assert.deepEqual(await encryptedFiles(),original,'startup/reset/shutdown must preserve every encrypted file');
 await writeFile(process.env.TF_CYCLE_REPORT,JSON.stringify({phase,pid:process.pid,confirmations:state.confirmations,accounts:loaded.accounts.length,sourceHasKey:loaded.sourceHasKey,storageCalls:state.storage.length,quit:state.quit}));
 }

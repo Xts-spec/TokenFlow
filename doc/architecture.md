@@ -11,6 +11,7 @@ flowchart TB
   desktop[Electron 桌面主进程] --> startup[启动动画与本机登录读取确认]
   desktop --> service[Node / Fastify 本机服务]
   desktop --> console[React 工作台]
+  desktop --> reconciliation[Codex 对账 Worker / 随应用启停]
   console -->|本机受保护 API| service
   clients[Codex / Claude Code / 其他客户端] -->|受限客户端 Key| service
   service --> routing[模型与来源绑定 / 协议 / 上下文]
@@ -68,6 +69,7 @@ flowchart TB
 
 - 网关：请求携带 `sourceId / model / keyId / target`，上游返回实际 usage 后写入 [usage-ledger.ts](../packages/core/src/usage-ledger.ts)；失败和未计量请求单独计数。
 - 本机：客户端日志经 [local-usage-index.ts](../packages/core/src/local-usage-index.ts) 和 [local-usage-worker.ts](../packages/core/src/local-usage-worker.ts) 索引，通过 [usage-attribution.ts](../packages/core/src/usage-attribution.ts)、[native-usage-logins.ts](../packages/core/src/native-usage-logins.ts) 关联请求证据或有效登录时间段；证据不足保留未知。
+- 对账：桌面服务就绪后 [codex-reconciliation-monitor.ts](../packages/core/src/codex-reconciliation-monitor.ts) 创建专用 Worker，复用 [codex-reconciliation.ts](../packages/core/src/codex-reconciliation.ts) 追加脱敏逐请求修订及按日／账号汇总，并通过 [codex-official-usage.ts](../packages/core/src/codex-official-usage.ts) 定时保留官方日桶。它独立于生产统计，不把两份总量相加。退出时中止官方子进程并落盘，重新打开按持久窗口恢复；源码 CLI 只是同模块的诊断入口。详见 [对账方案](testing/native-direct-usage.md#新账号完整日对账记录器2026-10-17)。
 - 展示：`/api/usage/overview` 合并网关与去重后的本机行；前端 [usage-data.ts](../apps/console/src/usage-data.ts)、[usage-model.ts](../apps/console/src/usage-model.ts) 统一筛选与汇总。
 
 反重力 SQLite 会话由 [antigravity-usage.ts](../packages/core/src/antigravity-usage.ts) 只读提取生成用量，Worker 监测数据库与 WAL，排除步骤中的重复副本。账号元数据通过 `nativeUsageAccounts()` 独立于切换资格读取，过期／停用授权仍能关联历史；连续登录观察只是注明的归属补充，不能回填无证据的旧记录。采集范围随 API 返回并在界面展示；未适配客户端不冒充零用量。各平台的格式、验证和未覆盖范围见 [客户端直连用量](testing/native-direct-usage.md)。
@@ -84,4 +86,4 @@ Cursor 的 SQLite 会话只有上下文或零 Token 字段，不能用来估算�
 
 [tsup.config.ts](../tsup.config.ts) 构建桌面主进程、preload、headless 和用量 Worker；Vite 构建界面。Go sidecar 按平台构建并放入包资源，SDK／原生依赖由打包脚本处理。`package*` 入口会清理临时产物；构建前先确认需要保留的验证结论已归档。
 
-`service.ts` 当前仍承担较多装配和路由工作。本轮整理的是职责与文档位置，没有移动运行模块或改变服务边界。后续拆分应按授权、客户端接入、用量等 API 组逐步进行，并保留对应集成测试，见 [TODO](TODO.md)。
+`service.ts` 当前仍承担较多装配和路由工作。后续拆分应按授权、客户端接入、用量等 API 组逐步进行，并保留对应集成测试，见 [TODO](TODO.md)。

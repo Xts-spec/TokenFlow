@@ -16,6 +16,7 @@ import {guardCredentialAccess,rememberedCredentialAccess,rememberCredentialAcces
 import {claudeKeychain} from '../../../packages/core/src/claude-accounts.js';
 import {agentPaths} from '../../../packages/core/src/agent-connections.js';
 import {workspaceWindowOptions,windowsTitleBar} from './window-options.js';
+import {CodexReconciliationMonitor} from '../../../packages/core/src/codex-reconciliation-monitor.js';
 
 const here=dirname(fileURLToPath(import.meta.url));
 if(process.argv.includes('--tokenflow-qoder-crypto')){void runQoderCrypto();}
@@ -90,6 +91,8 @@ async function start() {
     },
   },claudeCredentialStore,desktopAccounts:{crypto:guardCredentialAccess(allowCredentials,qoderCrypto)},qoderIde:{crypto:guardCredentialAccess(allowCredentials,qoderIdeCrypto)},credentialWarnings:()=>[...secrets.warnings(),...(!allowCredentials?['本次启动已跳过所有安全存储，已有凭据文件已保留；部分账号和 API 密钥暂不可用。请重启后选择“允许读取”以恢复访问。']:[])],openExternal:url=>shell.openExternal(url),proxyPort:process.env.AGENT_PROXY_PORT?Number(process.env.AGENT_PROXY_PORT):undefined,binary:process.env.CLIPROXY_BINARY?resolve(process.env.CLIPROXY_BINARY):join(base,'sidecars',`${process.platform}-${process.arch}`,process.platform==='win32'?'cliproxyapi.exe':'cliproxyapi'),uiRoot:join(here,'console')});
   const address=await service.app.listen({host:'127.0.0.1',port:Number(process.env.AGENT_PORT??9527)});
+  const reconciliation=new CodexReconciliationMonitor({root,codexHome:dirname(agentPaths().codex),allowOfficial:allowCredentials,proxyURL:network.url});
+  void reconciliation.start();
   ipcMain.handle('clipboard:write-text',(event,text:unknown)=>{
     if(!window || event.sender!==window.webContents || event.senderFrame!==window.webContents.mainFrame || new URL(event.senderFrame.url).origin!==address)throw new Error('Clipboard request denied');
     if(typeof text!=='string' || text.length>1_000_000)throw new Error('Invalid clipboard text');
@@ -139,7 +142,7 @@ async function start() {
   app.on('second-instance',()=>{void show();});app.on('activate',()=>{void show();});
   // Keep the gateway and menu bar alive even if the workspace is destroyed.
   app.on('window-all-closed',()=>{});
-  app.on('before-quit',event=>{if(closing)return;event.preventDefault();closing=true;void service.app.close().finally(()=>network.close()).finally(()=>app.quit());});
+  app.on('before-quit',event=>{if(closing)return;event.preventDefault();closing=true;void reconciliation.close().finally(()=>service.app.close()).finally(()=>network.close()).finally(()=>app.quit());});
   // The workspace opens immediately; saved accounts, namespaced models and quotas load in the background.
   await startup.update('正在打开工作台…');
   void service.discoverLocal().catch(() => undefined); // Failure is exposed in the model center with a retry action.

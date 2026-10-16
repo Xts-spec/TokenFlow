@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsup';
 export default defineConfig([
  {
-  entry:{main:'apps/desktop/src/main.ts','credential-store':'apps/desktop/src/secrets.ts',headless:'packages/core/src/headless.ts','local-usage-worker':'packages/core/src/local-usage-worker.ts'},
+  entry:{main:'apps/desktop/src/main.ts','credential-store':'apps/desktop/src/secrets.ts',headless:'packages/core/src/headless.ts','local-usage-worker':'packages/core/src/local-usage-worker.ts','codex-reconciliation-worker':'packages/core/src/codex-reconciliation-worker.ts'},
   format:['esm'],platform:'node',target:'node22',outDir:'dist',clean:false,removeNodeProtocol:false,
   // Keep SDK/native loaders and Fastify's filesystem-based plugins intact.
   // Everything else is bundled from the actual imports, not shipped as whole npm packages.

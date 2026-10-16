@@ -11,7 +11,7 @@ const {spawnSync}=require('node:child_process'),assert=require('node:assert/stri
   'startup-window.js':reexport('createStartupWindow'),'network-proxy.js':reexport('createNetworkProxy'),
   'service.js':reexport('createDesktopService'),'file-cleanup.js':reexport('desktopCleanupFiles'),
   'qoder-crypto.js':reexport('qoderCrypto,qoderIdeCrypto,runQoderCrypto'),'claude-accounts.js':reexport('claudeKeychain'),
-  'agent-connections.js':reexport('agentPaths'),
+  'agent-connections.js':reexport('agentPaths'),'codex-reconciliation-monitor.js':reexport('CodexReconciliationMonitor'),
   '@cursor/sdk':`import {recordModelLookup} from ${JSON.stringify(worker)};export const Cursor={models:{list:async({apiKey})=>{recordModelLookup(apiKey);return [{id:'fixture-model',displayName:'Fixture'}];}}};`,
   'cursor-usage.js':`export class CursorUsage {async quota(){return {windows:[]};}}`,
   'cursor-conversations.js':`export async function rememberCursorGatewayConversation(){throw Error('Unexpected conversation write in startup check');}`,

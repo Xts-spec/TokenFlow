@@ -3,7 +3,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {CodexReconciliationRecorder,dateInZone} from '../scripts/codex-reconciliation-record.js';
-import * as official from '../scripts/codex-official-usage-check.js';
+import * as official from '../packages/core/src/codex-official-usage.js';
 import {nativeIdentity} from '../packages/core/src/local-usage.js';
 const now=Date.parse('2026-10-16T00:00:00Z'),dirs:string[]=[];
 const meta=(id='thread-private')=>({type:'session_meta',payload:{id,model_provider:'openai',creator_account_id:'creator-not-payer',source:'vscode',thread_source:'user',originator:'codex_work_desktop',auth_mode:'chatgpt',email:'secret@example.test',access_token:'secret-token'}});

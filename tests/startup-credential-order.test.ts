@@ -50,10 +50,12 @@ vi.mock('../packages/core/src/service.js',()=>({createDesktopService:service}));
 vi.mock('../apps/desktop/src/file-cleanup.js',()=>({desktopCleanupFiles:()=>({})}));
 vi.mock('../apps/desktop/src/qoder-crypto.js',()=>({qoderCrypto:clientRead,qoderIdeCrypto:clientRead,runQoderCrypto:vi.fn()}));
 vi.mock('../packages/core/src/claude-accounts.js',()=>({claudeKeychain:()=>({read:clientRead,write:clientRead})}));
-vi.mock('../packages/core/src/agent-connections.js',()=>({agentPaths:()=>({claude:join(fixture.root,'claude/settings.json')})}));
+vi.mock('../packages/core/src/agent-connections.js',()=>({agentPaths:()=>({claude:join(fixture.root,'claude/settings.json'),codex:join(fixture.root,'codex/config.toml')})}));
+const recorder=vi.hoisted(()=>({options:[] as {allowOfficial:boolean}[]}));
+vi.mock('../packages/core/src/codex-reconciliation-monitor.js',()=>({CodexReconciliationMonitor:class {constructor(options:{allowOfficial:boolean}){recorder.options.push(options);}async start(){fixture.events.push('recorder-start');}async close(){fixture.events.push('recorder-stop');}}}));
 
 beforeEach(async()=>{
- vi.resetModules();vi.clearAllMocks();fixture.root=await mkdtemp(join(tmpdir(),'tokenflow-startup-order-'));fixture.events=[];
+ vi.resetModules();vi.clearAllMocks();recorder.options=[];fixture.root=await mkdtemp(join(tmpdir(),'tokenflow-startup-order-'));fixture.events=[];
  await mkdir(join(fixture.root,'secrets'));await writeFile(join(fixture.root,'secrets/cliproxy.bin'),'fixture-local-key');
  fixture.decision=new Promise(resolve=>{fixture.decide=resolve;});
  fixture.painting=new Promise(resolve=>{fixture.paint=resolve;});
@@ -83,7 +85,7 @@ for(const available of [true,false])it.each([true,false])(`completes startup aft
  before('choice-resolved',`painted:${credentialStatus}`);
  if(allowed){before('painted:正在读取已保存的凭据…','storage-available');before('storage-available','service-listen');}
  else expect(fixture.events.filter(event=>event.startsWith('storage-'))).toEqual([]);
- before('service-listen','session-cookie');
+ before('service-listen','session-cookie');before('service-listen','recorder-start');expect(recorder.options[0].allowOfficial).toBe(allowed);
  before('session-cookie','workspace-create');before('painted:正在打开工作台…','workspace-create');
  expect(fixture.events).not.toContain('startup-close');expect(fixture.events).not.toContain('workspace-show');
  const options=service.mock.calls[0][0];
