@@ -654,7 +654,7 @@ export async function createDesktopService(options:ServiceOptions) {
   });
   app.post('/api/a2a/connect',async req=>{
 
-    const input=z.object({replaceId:z.string().uuid().optional(),allowRunning:z.boolean().default(false),restartCodex:z.boolean().default(false),target:targetSchema,selections:modelSelectionsSchema.optional(),sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(1).max(300),revision:z.string().regex(/^[a-f0-9]{64}$/),tokenLimit:z.number().int().min(0).max(1e12).nullable().default(null)}).strict().parse(req.body);
+    const input=z.object({replaceId:z.string().uuid().optional(),rewrite:z.boolean().default(false),allowRunning:z.boolean().default(false),restartCodex:z.boolean().default(false),target:targetSchema,selections:modelSelectionsSchema.optional(),sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(1).max(300),revision:z.string().regex(/^[a-f0-9]{64}$/),tokenLimit:z.number().int().min(0).max(1e12).nullable().default(null)}).strict().refine(input=>!input.rewrite||!!input.replaceId,'重新应用需要当前接入记录').parse(req.body);
     if(input.replaceId)approval.clear();
     if(input.restartCodex&&input.target!=='codex')throw Object.assign(new Error('自动迁移重启仅支持 Codex。'),{statusCode:400});
     // Validate the revision and saved source bindings before interrupting the running application.

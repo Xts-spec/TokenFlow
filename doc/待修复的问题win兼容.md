@@ -92,6 +92,16 @@ npx electron scripts/windows-window-ui-check.cjs
 
 参考：Electron 官方窗口标题栏文档：<https://www.electronjs.org/docs/latest/tutorial/custom-title-bar>。
 
+### CC Switch 等工具改动接入配置后的重新应用（代码已调整，待 Windows 验收）
+
+截图中的“接入配置与上次记录不同”是接入字段差异检查，与已取消的密钥类型白名单无关。首次接入已有第三方配置可以写入；已有 TokenFlow 接入记录后，第三方修改地址、Key 或模型会导致普通切换无法安全逆向原改动。此前只能走维修方案，入口过于间接。
+
+- 本地 Agent 页面现在显示“重新应用”。启动开关、应用模型也会在存在差异时进入同一确认流程，无需先删除接入记录。
+- 确认后使用现有接入重写逻辑，先保存本次替换前的完整配置，再更新接入所需字段；其他 provider、MCP、权限与偏好设置保留。备份中 `previousConfig` 是替换前原文，仅存本机，不能上传或复制到运行日志。原有恢复入口仍按接入备份的规则恢复，不是 CC Switch 的配置历史管理器。
+- 只检测到变化、打开确认、取消均不写入。确认绑定看到的配置版本；确认后其他程序再次写入时返回冲突，关闭确认并重新操作。格式损坏、软链、权限错误不会被强行覆盖。
+- Codex 确认中说明自动退出、应用与重新打开，合并为一次确认；Windows 能否正确识别和重启进程仍按第 1 节实机验证。
+- 已在 macOS 宿主通过 `tests/a2a-service.test.ts`、`tests/agent-connections.test.ts`、`tests/agent-model-switching.test.ts` 共 67 项回归、类型检查与构建；新增 `scripts/agent-reapply-ui-check.cjs` 验证真实构建界面的确认、取消、版本冲突与启动开关。这些是隔离夹具结果，**尚未验证真实 Windows + CC Switch 共存**。
+
 ## 3. Windows 全功能测试的执行规则
 
 以下把 macOS 开发机上的测试资产、已确认结果与人工验收场景转成 Windows 接手清单。**每个 Windows 用例初始都为“未测”**；代码测试存在、macOS 上通过、页面模拟通过，都不能直接标记 Windows 实机通过。
@@ -227,8 +237,9 @@ node scripts/check-file-cleanup-native.mjs
 | C06 | 接入前文件不存在、格式损坏、只读、软链、中文路径 | 缺失文件可按规则建立并恢复为原缺失；损坏／冲突有明确提示；路径按 Windows 实际目录解析 |
 | C07 | Claude 选择 opus/sonnet/haiku 等官方别名，切换主／辅助模型 | 等价别名不误报配置变更；真实路由偏离能检测；辅助模型不会漏走官方来源 |
 | C08 | WorkBuddy/Qoder 官方 SDK 工具往返；Claude、Chat、Responses 协议客户端 | 文本和受支持的工具结果完整返回；不把 SDK 的内部消息直接当网关协议；不丢工具调用对应关系 |
-| C09 | 当前主界面提示配置与记录不同，进入维修检查 | 读取实际差异与所选客户端；不能仅清除提示而没有恢复正确配置 |
+| C09 | 接入 TokenFlow 后用 CC Switch 切换 Codex／Claude Code 的地址、Key 和模型，再返回 TokenFlow | 显示“重新应用”；先取消确认，文件和 Key 均不变；再次确认后备份完整旧配置并更新所选模型，保留其他 provider、MCP、权限与偏好设置；真实客户端发消息验证路由；Codex 只确认一次并退出、应用、重开 |
 | C10 | 客户端未安装、装多个版本、不同配置目录、客户端仍运行 | 明确支持范围；配置写入、退出和重启均有正确前置判断；安装失败不冒充接入成功 |
+| C11 | 打开重新应用确认后，再用第三方工具写入同一配置；另测第三方工具持续回写、文件损坏与无法写入 | 版本冲突不覆盖新改动；取消并重开确认可获取新版本；持续回写应提示冲突，不自动循环争抢；坏文件／权限错误保留原文与备份，不能仅清除提示 |
 
 ### 5.5 API 来源、导出 Key、协议与真实调用（P0/P1）
 
@@ -468,11 +479,12 @@ Windows 版本／架构／终端：
 </details>
 
 <details>
-<summary>脚本完整索引（需逐个确认平台和副作用）：74 个</summary>
+<summary>脚本完整索引（需逐个确认平台和副作用）：75 个</summary>
 
 - [scripts/a2a-desktop-live.ts](../scripts/a2a-desktop-live.ts)
 - [scripts/account-startup-ui-check.cjs](../scripts/account-startup-ui-check.cjs)
 - [scripts/after-pack.cjs](../scripts/after-pack.cjs)
+- [scripts/agent-reapply-ui-check.cjs](../scripts/agent-reapply-ui-check.cjs)
 - [scripts/agent-startup-ui-check.cjs](../scripts/agent-startup-ui-check.cjs)
 - [scripts/agent-task-live.ts](../scripts/agent-task-live.ts)
 - [scripts/antigravity-fault-proxy.ts](../scripts/antigravity-fault-proxy.ts)

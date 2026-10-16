@@ -48,8 +48,9 @@ function problemOf(target:AgentTarget,calls:GatewayCall[],available:ReturnType<t
  if(target.error)return target.error;
  if(!connection)return '';
  if(!(connection.selections??[connection]).every(item=>isSourceSelectionAvailable(available,item)))return unavailableSelectionMessage;
- if(target.configurationState==='missing')return '接入配置缺失，请打开维修检查。';
- if(target.configurationState!=='configured')return '接入配置与上次记录不同，请打开维修核对差异。';
+ if(target.configurationState==='missing')return '网关配置已移除，可重新应用所选模型。';
+ if(target.configurationState==='changed')return '配置已被其他应用或手动修改，可重新应用所选模型。';
+ if(target.configurationState!=='configured')return '暂时无法确认接入配置，请打开维修检查。';
  const evidence=connectionEvidence(target,calls,available);
  return evidence.tone==='attention'?evidence.label:'';
 }
@@ -116,6 +117,8 @@ function AgentPanel({clientTabs,target,update,login,local,usage,problem,notify,o
  const hide=(next:string[])=>{setHidden(next);try{localStorage.setItem(hiddenKey(target.id),JSON.stringify(next));}catch{/* Hiding is cosmetic. */}};
  const available=sourceOptions(local);const running=local.state==='running';
  const connection=target.connection;
+ const configurationChanged=!!connection&&!target.error&&['changed','missing'].includes(target.configurationState);
+ const [reapply,setReapply]=useState<{selections:Choice[];preferred?:Choice;target:AgentTarget}>();
  const [draftModels,setDraftModels]=useState<Choice[]>(()=>{try{const saved=JSON.parse(localStorage.getItem(`token-flow.agent.models.${target.id}`)??'[]');return Array.isArray(saved)?saved.filter(v=>typeof v?.model==='string'&&typeof v?.sourceId==='string'):[];}catch{return [];}});
  const [draftDirty,setDraftDirty]=useState(()=>{try{return localStorage.getItem(`token-flow.agent.models.pending.${target.id}`)==='true';}catch{return false;}});
  const saveDraft=(choices:Choice[],dirty=true)=>{setDraftModels(choices);setDraftDirty(dirty);try{localStorage.setItem(`token-flow.agent.models.${target.id}`,JSON.stringify(choices));localStorage.setItem(`token-flow.agent.models.pending.${target.id}`,String(dirty));}catch{}};
@@ -156,15 +159,18 @@ function AgentPanel({clientTabs,target,update,login,local,usage,problem,notify,o
   setMigrationProgress(undefined);
   return run(()=>work(automatic&&approved));
  };
- const connectSelected=(selections:Choice[],preferred?:Choice)=>{
+ const connectSelected=(selections:Choice[],preferred?:Choice,confirmedTarget?:AgentTarget)=>{
+  if(configurationChanged&&!confirmedTarget){setReapply({selections,preferred,target});return;}
   saveDraft(selections,true);
   return changeCodex(async restartCodex=>{
   const choice=preferred??selections.find(item=>isCurrent(item))??selections[0];
   if(!choice)throw new Error('请至少选择一个模型。');
   saveDraft(selections,true);
-  const next=await latest();
-  await requestJSON('/api/a2a/connect',post({allowRunning:true,restartCodex,target:target.id,selections,sourceId:choice.sourceId,model:choice.model,revision:next.revision,...(next.connection?{replaceId:next.connection.id}:{}),tokenLimit:null}),600000);
-  saveDraft(selections,false);configurationSaved(restartCodex);
+  // A confirmed replacement uses the displayed snapshot, never a newer silently accepted revision.
+  const next=confirmedTarget??await latest();
+  if(!confirmedTarget&&next.connection&&['changed','missing'].includes(next.configurationState))throw new Error('配置刚被其他应用修改，请刷新后选择重新应用。');
+  await requestJSON('/api/a2a/connect',post({allowRunning:true,restartCodex,target:target.id,selections,sourceId:choice.sourceId,model:choice.model,revision:next.revision,...(next.connection?{replaceId:next.connection.id}:{}),...(confirmedTarget?{rewrite:true}:{}),tokenLimit:null}),600000);
+  saveDraft(selections,false);setReapply(undefined);configurationSaved(restartCodex);
   if(hidden.includes(choiceId(choice)))hide(hidden.filter(id=>id!==choiceId(choice)));
   const label=modelLabel(local,choice.model);
   const menu=target.id==='qoder'||target.id==='workbuddy'?`，在它的模型菜单里选 ${label}`:'';
@@ -172,7 +178,7 @@ function AgentPanel({clientTabs,target,update,login,local,usage,problem,notify,o
   if(target.id==='deepseek')return `DeepSeek Harness 桌面版已导入 ${selections.length} 个模型，默认 ${label}；重新打开应用后生效。`;
   if(restartCodex)return `Codex 已配置 ${selections.length} 个模型，默认 ${label}，旧对话已迁移并自动重新打开。`;
   return `${target.name} 已配置 ${selections.length} 个模型，默认 ${label}。重启后可在 Agent 内切换${menu}。`;
- });};
+ },!!confirmedTarget);};
  const restore=(promptRestart=true,history=false,approved=false)=>changeCodex(async restartCodex=>{
   const next=await latest();
   await requestJSON('/api/a2a/restore',post({id:next.connection!.id,revision:next.revision,allowRunning:true,restartCodex,restoreHistory:history}),600000);
@@ -243,7 +249,12 @@ function AgentPanel({clientTabs,target,update,login,local,usage,problem,notify,o
    {programError&&<p className="tfError" role="alert">{programError}</p>}
    <footer><button disabled={busy} onClick={()=>{setProgramOpen(false);pendingSelection.current=undefined;}}>稍后再说</button><button className="primary" disabled={busy} onClick={()=>void manageProgram()}>{busy?'正在处理…':target.installation.automatic?programAction==='install'?'下载安装':'更新到最新版本':'打开官方下载页面'}</button></footer>
   </FlowDialog>
-  {visibleProblem&&<p className="tfProblem" role="status">{visibleProblem}{problem===unavailableSelectionMessage&&<button type="button" className="textButton" disabled={busy} onClick={()=>{saveDraft(models.filter(choice=>isSourceSelectionAvailable(available,choice)));setOpen('');}}>移除不可用模型（{unavailableModels.length}）</button>}</p>}
+  {visibleProblem&&<p className="tfProblem" role="status">{visibleProblem}{configurationChanged&&<button type="button" className="textButton" disabled={busy||!running||!models.length} onClick={()=>void applySelected(shownModels)}>重新应用</button>}{problem===unavailableSelectionMessage&&<button type="button" className="textButton" disabled={busy} onClick={()=>{saveDraft(models.filter(choice=>isSourceSelectionAvailable(available,choice)));setOpen('');}}>移除不可用模型（{unavailableModels.length}）</button>}</p>}
+  <FlowDialog className="tfRestartDialog" open={!!reapply} title="重新应用网关模型？" busy={busy} onClose={()=>setReapply(undefined)}>
+   <p className="tfDialogLead">先备份当前配置，再将接入地址、Key 和模型设置更新为 TokenFlow 的所选模型。其他设置保留。</p>
+   <p className="tfHint">{target.id==='codex'&&desktopRestart?'请先保存工作。确认后会退出 Codex，应用配置并重新打开。':'重新打开客户端后生效。'}如果 CC Switch 等工具再次切换配置，可在这里重新应用。</p>
+   <footer><button disabled={busy} onClick={()=>setReapply(undefined)}>取消</button><button className="primary" disabled={busy} onClick={()=>{if(reapply)void connectSelected(reapply.selections,reapply.preferred,reapply.target);}}>{busy?'正在应用…':target.id==='codex'&&desktopRestart?'备份、应用并重启':'备份并应用'}</button></footer>
+  </FlowDialog>
   <FlowDialog className="tfRestartDialog" open={desktopRestart&&restartOpen} title={restartPending?'配置已保存，现在生效？':`重启 ${target.name}`} onClose={()=>setRestartOpen(false)} busy={busy}>
    <p className="tfDialogLead">{restartPending?`重新打开 ${target.name} 后，会加载新的模型与账号配置。`:`重新打开 ${target.name}，加载已保存的配置。`}</p>
    <p className="tfHint">{target.id==='codex'?'请先保存工作。确认后会尝试退出 Codex，再重新打开。若仍有运行中的任务或退出提示，请按提示手动处理。':'请先保存工作并结束生成。你也可以稍后从 Agent 标题旁重启。'}</p>
