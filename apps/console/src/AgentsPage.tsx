@@ -1,3 +1,4 @@
+import {hasNativeLogin} from './native-login-visibility';
 import {ColumnDivider} from './ColumnDivider';
 import {ScrollRail} from './ScrollRail';
 import {localDay} from './usage-model';
@@ -222,8 +223,8 @@ function AgentPanel({target,update,login,local,usage,problem,notify,onRepair,onC
   {!running&&<p className="tfHint">网关未运行，暂时不能切换模型。</p>}
   {login?.error&&<p className="tfError">{login.error}</p>}
 
-  <div className={`tfAgentColumns${login&&accounts.length&&models.length?' hasLogin':''}`}>
-  {login&&accounts.length>0&&<section className="tfAgentSection" aria-label="官方登录账号">
+  <div className={`tfAgentColumns${login&&hasNativeLogin(login)&&models.length?' hasLogin':''}`}>
+  {login&&hasNativeLogin(login)&&<section className="tfAgentSection" aria-label="官方登录账号">
    <header className="tfAgentSectionHead"><h3>官方登录账号</h3></header>
   <ul className="tfLines" aria-label={`${target.name} 官方登录账号`}>
    {accounts.map(account=>{
@@ -248,7 +249,7 @@ function AgentPanel({target,update,login,local,usage,problem,notify,onRepair,onC
   </ul>
   {hiddenCount>0&&<button className="textButton" onClick={()=>hide([])}>恢复已删除的 {hiddenCount} 项</button>}
   </section>}
-  {login&&accounts.length>0&&models.length>0&&<ColumnDivider storageKey="token-flow.layout.agent-split" label="调整账号与网关模型宽度"/>}
+  {login&&hasNativeLogin(login)&&models.length>0&&<ColumnDivider storageKey="token-flow.layout.agent-split" label="调整账号与网关模型宽度"/>}
   {models.length>0&&<section className="tfAgentSection tfGatewaySection" aria-label="网关模型">
    <header className="tfAgentSectionHead"><div className="tfGatewayTitle"><h3>网关模型</h3><button className="tfAddButton" disabled={busy||!running||!!target.error||!available.length} onClick={()=>setPicking(true)}><Icon name="plus" size={15}/>{available.length?(models.length?'管理所选模型':'选择模型'):'先添加账号或 API 接口'}</button>{draftDirty&&<small className="tfPendingModels">待应用</small>}</div><label className="toggle"><input type="checkbox" role="switch" aria-label="启用网关模型" checked={gatewayPending??(!!connection&&target.configurationState==='configured'&&!draftDirty)} disabled={busy||!running||(!connection&&!models.length)} onChange={event=>{const enabled=event.target.checked;if(!enabled)saveDraft(models);setGatewayPending(enabled);void Promise.resolve(enabled?applySelected(shownModels):restore(false)).finally(()=>setGatewayPending(undefined));}}/><span>启动</span></label></header>
    {target.id==='claude'&&<p className="tfHint">自定义模型菜单需要 Claude Code 2.1.242 或更新版本；旧版可用 /model 模型ID 切换。</p>}
