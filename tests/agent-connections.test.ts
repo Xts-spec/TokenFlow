@@ -426,12 +426,14 @@ it.each([false,true])('connects DeepSeek in its editable desktop profile and pre
  await mkdir(join(profile,'..'),{recursive:true});await writeFile(profile,yaml.stringify(original));
  const state=(await connections.status()).find(t=>t.id==='deepseek')!;
  const record=await connections.apply({target:'deepseek',revision:state.revision,origin:'http://127.0.0.1:9527',model:'qoder/test',sourceId:'source',keyId:randomUUID(),key:'fixture-key'});
+ expect(await readFile(join(home,'.env'),'utf8')).toContain('DEEPSEEK_API_KEY=fixture-key');
  const entries=yaml.parse(await readFile(profile,'utf8'));
  entries.find((entry:{id:string})=>entry.id==='llm-pi-ai').config.providers.manual={apiKeyEnv:'MANUAL_KEY'};
  await writeFile(profile,yaml.stringify(entries));
  expect((await connections.status()).find(t=>t.id==='deepseek')?.configurationState).toBe('configured');
  await connections.restore(record.id);
  expect(yaml.parse(await readFile(profile,'utf8'))).toEqual([{id:'llm-pi-ai',config:{providers:{...personal,manual:{apiKeyEnv:'MANUAL_KEY'}}}}]);
+ await expect(readFile(join(home,'.env'))).rejects.toMatchObject({code:'ENOENT'});
  await expect(readFile(join(home,'cordis.patch.yml'))).rejects.toMatchObject({code:'ENOENT'});
 });
 

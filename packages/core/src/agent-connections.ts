@@ -385,6 +385,26 @@ export class AgentConnections {
     if(entries.some(entry=>isObject(entry)&&['llm-pi-ai','agent-default-model'].includes(String(entry.id))&&entry.insert===undefined&&Object.hasOwn(entry,'config')))throw conflict('DeepSeek 全局补丁仍覆盖模型配置，Harness 无法保存 API Key。请先检查全局 cordis.patch.yml 中的模型覆盖；未修改原文件。');
   }
   private async idle(target:Target){const pids=await this.processes(target);if(pids.length)throw conflict(`请先退出 ${targetNames[target]} 再重试；检测到进程 ${pids.join(', ')}。不会强制终止运行中的任务。`);}
+  /**
+   * Harness resolves credential references from the inherited environment over the
+   * managed `$DSH_HOME/.credentials.yaml`, with the home `.env` as a documented
+   * fallback source. Keeping `DEEPSEEK_API_KEY` current there makes the desktop
+   * welcome (`needsWelcome = !loggedIn && !hasApiKey`) resolve hasApiKey on every
+   * launch, including ones the user starts by hand.
+   */
+  private async updateDeepseekEnv(key:string|null){
+    const home=deepseekHome(this.paths.deepseek),path=join(home,'.env');
+    let lines:string[]=[];
+    try{lines=(await readFile(path,'utf8')).split(/\r?\n/);}catch{}
+    const kept=lines.filter(line=>!/^\s*DEEPSEEK_API_KEY\s*=/.test(line));
+    if(key!==null)kept.push(`DEEPSEEK_API_KEY=${key}`);
+    const content=kept.join('\n').replace(/^\n+/,'').trimEnd();
+    try{
+      if(!content){await rm(path,{force:true});return;}
+      const temp=`${path}.token-flow-${randomUUID()}.tmp`;
+      try{await writeFile(temp,content+'\n',{mode:0o600,flag:'wx'});await rename(temp,path);}finally{await rm(temp,{force:true});}
+    }catch{}
+  }
   private async replace(target:Target,expected:string,next:string|null,allowRunning=false){
     if(!allowRunning)await this.idle(target);const path=this.paths[target];if(hash(await readConfig(path))!==expected)throw conflict('配置已被其他应用修改，请重新检查后再操作。');
     if(next===null){await unlink(path);return;}
@@ -462,7 +482,9 @@ export class AgentConnections {
       const routes=selectedModels??[input.model];
       const modelAliases=input.target==='workbuddy'?Object.fromEntries((JSON.parse(after) as {id:string}[]).slice(-routes.length).flatMap((entry,i)=>entry.id!==routes[i]?[[entry.id,routes[i]]]:[])):undefined;
       const record:Record={id:randomUUID(),target:input.target,createdAt:new Date().toISOString(),before:original,after,beforeHash:hash(original),afterHash:hash(after),state:'prepared',keyId:input.keyId,sourceId:input.sourceId,model:input.model,...(modelAliases&&Object.keys(modelAliases).length?{modelAliases}:{}),...(input.target==='deepseek'?{deepseekScope:this.deepseekProfilePath?'profile' as const:'home' as const}:{}),...(input.selections?{selections:input.selections}:{}),...(active?{supersedes:active.id,previousConfig:before,previousHash:hash(before)}:{})};
-      await this.save(record);await this.replace(input.target,input.revision,after,input.allowRunning);record.state='applied';await this.save(record);await this.retirePrevious(record);return publicRecord(record);
+      await this.save(record);await this.replace(input.target,input.revision,after,input.allowRunning);
+      if(input.target==='deepseek')await this.updateDeepseekEnv(input.key);
+      record.state='applied';await this.save(record);await this.retirePrevious(record);return publicRecord(record);
     });
   }
   private async retirePrevious(record:Record){
@@ -489,7 +511,9 @@ export class AgentConnections {
       if(appliedConfig(record,currentText)){record.state='applied';await this.save(record);await this.retirePrevious(record);return publicRecord(record);}
       await this.requireEditableProfile(record.target);
       if(current!==record.beforeHash&&!(record.previousConfig!==undefined&&current===hash(record.previousConfig)))throw conflict('配置存在外部修改，无法安全自动修复，请先检查并保留备份。');
-      await this.replace(record.target,current,record.after);record.state='applied';await this.save(record);await this.retirePrevious(record);return publicRecord(record);
+      await this.replace(record.target,current,record.after);
+      if(record.target==='deepseek')await this.updateDeepseekEnv(record.after.match(/tfl_[a-f0-9]{20,}/)?.[0]??null);
+      record.state='applied';await this.save(record);await this.retirePrevious(record);return publicRecord(record);
     });
   }
   async remove(id:string,revision:string){
@@ -522,14 +546,16 @@ export class AgentConnections {
       if(record.state==='restored')return publicRecord(record);
       const currentText=await readConfig(this.paths[record.target]);const current=hash(currentText);
       if(approval?.revision&&current!==approval.revision)throw conflict('审批后配置已变更，请重新生成方案。');
-      if(equivalentConfig(record.target,currentText,record.before)){record.state='restored';await this.save(record);await this.retirePrevious(record);return publicRecord(record);}
+      if(equivalentConfig(record.target,currentText,record.before)){record.state='restored';await this.save(record);if(record.target==='deepseek')await this.updateDeepseekEnv(null);await this.retirePrevious(record);return publicRecord(record);}
       let restored:string|null;
       if(approval?.overwrite){
         try{restored=restoredConfig(record,currentText);}catch{restored=record.before;}
       }else{
         restored=restoredConfig(record,currentText);
       }
-      await this.replace(record.target,current,restored,approval?.allowRunning);record.state='restored';await this.save(record);await this.retirePrevious(record);return publicRecord(record);
+      await this.replace(record.target,current,restored,approval?.allowRunning);
+      if(record.target==='deepseek')await this.updateDeepseekEnv(null);
+      record.state='restored';await this.save(record);await this.retirePrevious(record);return publicRecord(record);
     });
   }
 }
