@@ -1,12 +1,27 @@
 import { rm } from 'node:fs/promises';
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Fixed project-local generated directories only; never remove source or profiles.
 export async function cleanPackage() {
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..');
   for (const name of ['release', 'artifacts', '.tmp', 'output']) {
-    await rm(new URL(`../${name}`, import.meta.url), { recursive: true, force: true });
-    console.log(`Cleaned ${name}/`);
+    const dir = join(root, name);
+    if (!existsSync(dir)) continue;
+    if (process.platform === 'win32') {
+      // Agent-host sandboxes can hook fs.rm into a trash operation that fails while
+      // antivirus still holds builder handles. cmd rmdir bypasses such shims entirely.
+      try {
+        execFileSync('cmd.exe', ['/d', '/s', '/c', 'rmdir', '/s', '/q', dir], { stdio: 'ignore' });
+      } catch {/* Fall through to rm for a last attempt. */}
+      if (existsSync(dir)) await rm(dir, { recursive: true, force: true }).catch(() => {});
+    } else {
+      await rm(dir, { recursive: true, force: true });
+    }
+    if (!existsSync(dir)) console.log(`Cleaned ${name}/`);
+    else console.warn(`Skipped ${name}/ (still in use); continuing build.`);
   }
 }
 
