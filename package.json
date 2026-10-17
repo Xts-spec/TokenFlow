@@ -85,6 +85,7 @@
       }
     ],
     "asarUnpack": [
+      "dist/console/**",
       "node_modules/@token-flow/codebuddy-runtime/**",
       "node_modules/@tencent-ai/agent-sdk/**",
       "packages/codebuddy-runtime/**",
@@ -105,7 +106,7 @@
     ],
     "mac": {
       "category": "public.app-category.productivity",
-      "icon": "apps/console/public/app-icon.png",
+    "icon": "apps/console/public/app-icon.ico",
       "extraResources": [
         {
           "from": "sidecars/darwin-${arch}",
