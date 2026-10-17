@@ -2,14 +2,14 @@ import {readFile,writeFile,rename} from 'node:fs/promises';
 import {join} from 'node:path';
 import {z} from 'zod';
 
-export const maintenanceContext=z.object({page:z.enum(['agents','accounts','apis','proxy','usage','activity','cleanup','settings']),target:z.enum(['codex','claude','workbuddy','qoder','deepseek','pi']).optional(),provider:z.string().max(80).optional(),sourceId:z.string().max(100).optional(),
+export const maintenanceContext=z.object({page:z.enum(['agents','accounts','apis','proxy','usage','activity','cleanup','settings']),target:z.enum(['codex','claude','workbuddy','qoder','deepseek','pi','workbuddy-ai']).optional(),provider:z.string().max(80).optional(),sourceId:z.string().max(100).optional(),
  range:z.enum(['today','7d','30d','all']).optional(),mode:z.enum(['day','week','cumulative']).optional(),day:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
  model:z.string().max(300).optional(),keyId:z.string().max(80).optional(),origin:z.enum(['all','native','gateway']).optional(),traceId:z.string().max(100).optional(),
  breakdown:z.enum(['method','agent','model','source']).optional(),intent:z.enum(['codex-history','file-cleanup']).optional(),
 }).strict();
 export type MaintenanceContext=z.infer<typeof maintenanceContext>;
 const message=z.object({role:z.string().max(20),text:z.string().max(32000)});
-const conversation=z.object({id:z.string().uuid(),title:z.string().max(100),updatedAt:z.string(),context:maintenanceContext.optional(),chain:z.object({target:z.enum(['codex','claude','workbuddy','qoder','deepseek','pi']),sourceId:z.string().optional(),model:z.string().optional(),connectionId:z.string().optional()}).optional(),model:z.string().optional(),status:z.enum(['idle','running','completed','failed']),messages:z.array(message).max(100)});
+const conversation=z.object({id:z.string().uuid(),title:z.string().max(100),updatedAt:z.string(),context:maintenanceContext.optional(),chain:z.object({target:z.enum(['codex','claude','workbuddy','qoder','deepseek','pi','workbuddy-ai']),sourceId:z.string().optional(),model:z.string().optional(),connectionId:z.string().optional()}).optional(),model:z.string().optional(),status:z.enum(['idle','running','completed','failed']),messages:z.array(message).max(100)});
 export type MaintenanceConversation=z.infer<typeof conversation>;
 
 /** Local transcripts only; old proposals and execution permissions are never restored. */

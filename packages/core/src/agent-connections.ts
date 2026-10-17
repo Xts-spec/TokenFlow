@@ -32,7 +32,7 @@ export async function officialCodexModel(configPath:string,text:string|null,orig
  }finally{await rm(home,{recursive:true,force:true});}
 }
 
-export const targetSchema=z.enum(['codex','claude','workbuddy','qoder','deepseek','pi']);
+export const targetSchema=z.enum(['codex','claude','workbuddy','qoder','deepseek','pi','workbuddy-ai']);
 export type Target=z.infer<typeof targetSchema>;
 const exec=promisify(execFile);
 const hash=(text:string|null)=>createHash('sha256').update(text===null?'missing':`file:${text}`).digest('hex');
@@ -40,15 +40,16 @@ const conflict=(message:string)=>Object.assign(new Error(message),{statusCode:40
 export const modelSelectionSchema=z.object({sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(3).max(300)}).strict();
 export type ModelSelection=z.infer<typeof modelSelectionSchema>;
 export const modelSelectionsSchema=z.array(modelSelectionSchema).min(1).max(100).refine(items=>new Set(items.map(i=>i.model)).size===items.length,'每个模型只能选择一个来源账号');
-const recordSchema=z.object({id:z.string().uuid(),target:targetSchema,createdAt:z.string(),before:z.string().nullable(),after:z.string(),beforeHash:z.string(),afterHash:z.string(),state:z.enum(['prepared','applied','restored']),keyId:z.string().uuid(),sourceId:z.string(),model:z.string(),selections:modelSelectionsSchema.optional(),modelAliases:z.record(z.string().min(1).max(300)).optional(),supersedes:z.string().uuid().optional(),previousConfig:z.string().nullable().optional(),previousHash:z.string().optional(),deepseekScope:z.enum(['home','profile']).optional()});
+const recordSchema=z.object({id:z.string().uuid(),target:targetSchema,createdAt:z.string(),before:z.string().nullable(),after:z.string(),beforeHash:z.string(),afterHash:z.string(),state:z.enum(['prepared','applied','restored']),keyId:z.string().uuid(),sourceId:z.string(),model:z.string(),fastModel:z.string().min(1).max(300).optional(),selections:modelSelectionsSchema.optional(),modelAliases:z.record(z.string().min(1).max(300)).optional(),supersedes:z.string().uuid().optional(),previousConfig:z.string().nullable().optional(),previousHash:z.string().optional(),deepseekScope:z.enum(['home','profile']).optional()});
 type Record=z.infer<typeof recordSchema>;
 export type ConnectionRecord=Omit<Record,'before'|'after'|'previousConfig'>;
 const publicRecord=({before,after,previousConfig,...record}:Record):ConnectionRecord=>record;
 const clientModelID=(record:Record,model:string)=>Object.entries(record.modelAliases??{}).find(([,route])=>route===model)?.[0]??model;
 export type AgentPaths={[K in Target]:string};
-const targetNames={codex:'Codex',claude:'Claude Code',workbuddy:'WorkBuddy',qoder:'Qoder',deepseek:'DeepSeek Harness',pi:'Pi Agent'};
+const targetNames={codex:'Codex',claude:'Claude Code',workbuddy:'WorkBuddy',qoder:'Qoder',deepseek:'DeepSeek Harness',pi:'Pi Agent','workbuddy-ai':'WorkBuddyAI'};
+const workbuddyModels=(target:Target)=>target==='workbuddy'||target==='workbuddy-ai';
 export function agentPaths(home=homedir()):AgentPaths {
-  return {pi:join(process.env.PI_CODING_AGENT_DIR||join(home,'.pi','agent'),'models.json'),deepseek:deepseekConfigPath(home,process.env.DSH_HOME),qoder:join(process.env.QODER_CONFIG_DIR||join(home,'.qoder'),'settings.json'),codex:join(process.env.CODEX_HOME||join(home,'.codex'),'config.toml'),claude:join(process.env.CLAUDE_CONFIG_DIR||join(home,'.claude'),'settings.json'),workbuddy:join(process.env.WORKBUDDY_CONFIG_DIR||process.env.CODEBUDDY_CONFIG_DIR||join(home,'.workbuddy'),'models.json')};
+  return {pi:join(process.env.PI_CODING_AGENT_DIR||join(home,'.pi','agent'),'models.json'),deepseek:deepseekConfigPath(home,process.env.DSH_HOME),qoder:join(process.env.QODER_CONFIG_DIR||join(home,'.qoder'),'settings.json'),codex:join(process.env.CODEX_HOME||join(home,'.codex'),'config.toml'),claude:join(process.env.CLAUDE_CONFIG_DIR||join(home,'.claude'),'settings.json'),workbuddy:join(process.env.WORKBUDDY_CONFIG_DIR||process.env.CODEBUDDY_CONFIG_DIR||join(home,'.workbuddy'),'models.json'),'workbuddy-ai':join(process.env.WORKBUDDY_AI_CONFIG_DIR||join(home,'.workbuddy-ai'),'models.json')};
 }
 // Only return program identities. Node entrypoint inspection never returns or persists arguments.
 export async function agentProcesses(target:Target|'antigravity'|'workbuddy-ai'|'qoder-ide'):Promise<number[]> {
@@ -237,7 +238,7 @@ function repairConfigBase(record:Record,current:string|null):string|null {
   try{return restoredConfig(record,current);}catch{/* Explicit preview may replace the drifted routing fields below. */}
   if(current===null)return record.before;
   const actual=decodeConfig(record.target,current),before=record.before===null?undefined:decodeConfig(record.target,record.before),after=decodeConfig(record.target,record.after);
-  if(record.target==='workbuddy'){
+  if(workbuddyModels(record.target)){
     const models=Array.isArray(actual)?actual:object(actual).models;
     if(!Array.isArray(models))throw conflict('WorkBuddy 模型配置格式无效，未覆盖。');
     const owned=new Set([...(record.selections??[record]).map(m=>m.model),...Object.keys(record.modelAliases??{})]);
@@ -269,7 +270,7 @@ function codexProfile(doc:{[key:string]:any}):{[key:string]:any}|undefined {
   if(typeof doc.profile!=='string'||!Object.hasOwn(object(doc.profiles),doc.profile))throw conflict('Codex 当前配置档案无效，未修改原设置。');
   return object(doc.profiles[doc.profile]);
 }
-export function connectedConfig(target:Target,original:string|null,origin:string,model:string,key:string,catalogPath?:string,selectedModels?:string[],modelLabels:{[id:string]:string}={}) {
+export function connectedConfig(target:Target,original:string|null,origin:string,model:string,key:string,catalogPath?:string,selectedModels?:string[],modelLabels:{[id:string]:string}={},fastModel?:string) {
   const chosen=selectedModels??[model];
   const label=(id:string)=>apiModelDisplayName(modelLabels[id]?.trim()||id);
   const url=new URL(origin);if(url.protocol!=='http:'||!['127.0.0.1','localhost'].includes(url.hostname)||url.pathname!=='/'||url.search||url.hash||url.username||url.password)throw new Error('接入地址必须是本机网关');
@@ -292,7 +293,7 @@ export function connectedConfig(target:Target,original:string|null,origin:string
     // and orphaned entries copied from another installation. The journal keeps the preimage.
     return JSON.stringify({...doc,providers:{...providers,'token-flow':{type:'openai-compatible',protocol:'openai-responses',authType:'bearer',baseUrl:`${url.origin}/v1`,apiKey:key,displayName:'token-flow',model,models:chosen.map(model=>({model,displayName:label(model)}))}}},null,2)+'\n';
   }
-  if(target==='workbuddy'){
+  if(workbuddyModels(target)){
     const value=original===null?[]:JSON.parse(original);
     const doc=Array.isArray(value)?{models:value}:object(value);
     if(Object.keys(doc).some(k=>k!=='models'))throw conflict('WorkBuddy models.json 包含额外设置，自动转换为原生数组会丢失字段，已保留原文件；请先整理这些设置再接入。');
@@ -314,7 +315,8 @@ export function connectedConfig(target:Target,original:string|null,origin:string
     const env=doc.env===undefined?{}:object(doc.env);
     // Clear conflicting routes, but journal them so restoring recovers the exact prior setup.
     delete doc.apiKeyHelper;delete doc.forceLoginMethod;delete doc.forceLoginOrgUUID;delete doc.forceLoginGatewayUrl;
-    return JSON.stringify({...doc,model,...(selectedModels?{availableModels:chosen,modelPicker:{replaceBuiltInOptions:true,options:chosen.map(model=>({model,label:label(model)}))}}:{}),env:{...env,...(selectedModels?{CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY:'1'}:{}),ANTHROPIC_BASE_URL:url.origin,ANTHROPIC_AUTH_TOKEN:key,ANTHROPIC_API_KEY:'',CLAUDE_CODE_USE_BEDROCK:'0',CLAUDE_CODE_USE_VERTEX:'0',CLAUDE_CODE_USE_FOUNDRY:'0',CLAUDE_CODE_OAUTH_TOKEN:'',ANTHROPIC_PROFILE:'',ANTHROPIC_MODEL:'',ANTHROPIC_DEFAULT_OPUS_MODEL:model,ANTHROPIC_DEFAULT_SONNET_MODEL:model,ANTHROPIC_DEFAULT_HAIKU_MODEL:model,ANTHROPIC_SMALL_FAST_MODEL:model,CLAUDE_CODE_SUBAGENT_MODEL:''}},null,2)+'\n';
+    const fast=fastModel&&chosen.includes(fastModel)?fastModel:model;
+    return JSON.stringify({...doc,model,...(selectedModels?{availableModels:chosen,modelPicker:{replaceBuiltInOptions:true,options:chosen.map(model=>({model,label:label(model)}))}}:{}),env:{...env,...(selectedModels?{CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY:'1'}:{}),ANTHROPIC_BASE_URL:url.origin,ANTHROPIC_AUTH_TOKEN:key,ANTHROPIC_API_KEY:'',CLAUDE_CODE_USE_BEDROCK:'0',CLAUDE_CODE_USE_VERTEX:'0',CLAUDE_CODE_USE_FOUNDRY:'0',CLAUDE_CODE_OAUTH_TOKEN:'',ANTHROPIC_PROFILE:'',ANTHROPIC_MODEL:'',ANTHROPIC_DEFAULT_OPUS_MODEL:model,ANTHROPIC_DEFAULT_SONNET_MODEL:model,ANTHROPIC_DEFAULT_FABLE_MODEL:model,ANTHROPIC_DEFAULT_HAIKU_MODEL:fast,ANTHROPIC_SMALL_FAST_MODEL:fast,CLAUDE_CODE_BG_CLASSIFIER_MODEL:fast,CLAUDE_CODE_AUTO_MODE_MODEL:fast,CLAUDE_CODE_SUBAGENT_MODEL:''}},null,2)+'\n';
   }
   const doc=original===null?{}:parse(original);
   // Full original bytes remain in the backup; TOML serialization preserves semantic settings.
@@ -417,7 +419,7 @@ export class AgentConnections {
       let current:string|null=null,error='';try{current=await readConfig(this.paths[target]);}catch(e){error=e instanceof Error?e.message:'读取失败';}
       let pids:number[]=[];try{pids=await this.processes(target);}catch(e){error=e instanceof Error?e.message:'进程检查失败';}
       const latest=records.find(r=>r.target===target&&r.state!=='restored');const applied=!!latest&&appliedConfig(latest,current);
-      return {id:target,name:targetNames[target],installation:await detectAgent(target),...((process.platform==='darwin'||process.platform==='win32'&&['pi','codex','qoder','workbuddy','deepseek'].includes(target))?{restartSupported:true}:{}),path:this.paths[target],exists:current!==null,revision:hash(current),pids,error,connection:latest?publicRecord(latest):null,drift:!!latest&&!applied,configurationState:error?'unreadable':!latest?'unmanaged':applied?'configured':equivalentConfig(target,current,latest.before)?'missing':'changed',backups:records.filter(r=>r.target===target).map(publicRecord)};
+      return {id:target,name:targetNames[target],installation:await detectAgent(target),...((process.platform==='darwin'||process.platform==='win32'&&['pi','codex','qoder','workbuddy','workbuddy-ai','deepseek'].includes(target))?{restartSupported:true}:{}),path:this.paths[target],exists:current!==null,revision:hash(current),pids,error,connection:latest?publicRecord(latest):null,drift:!!latest&&!applied,configurationState:error?'unreadable':!latest?'unmanaged':applied?'configured':equivalentConfig(target,current,latest.before)?'missing':'changed',backups:records.filter(r=>r.target===target).map(publicRecord)};
     }));
   }
   async review(id:string){
@@ -426,17 +428,18 @@ export class AgentConnections {
     const checks:{name:string;ok:boolean}[]=[{name:'配置与接入备份一致',ok:appliedConfig(record,current)},{name:'接入写入已完成',ok:record.state==='applied'}];
     try{
       const parsed=decodeConfig(record.target,current??(record.target==='deepseek'?'[]':record.target==='codex'?'':'{}'));
-      const actual=record.target==='workbuddy'&&Array.isArray(parsed)?{models:parsed}:object(parsed);
+      const actual=workbuddyModels(record.target)&&Array.isArray(parsed)?{models:parsed}:object(parsed);
       const expectedValue=decodeConfig(record.target,record.after) as {[key:string]:any};
-      const expected=record.target==='workbuddy'&&Array.isArray(expectedValue)?{models:expectedValue}:expectedValue;
+      const expected=workbuddyModels(record.target)&&Array.isArray(expectedValue)?{models:expectedValue}:expectedValue;
       if(record.target==='claude'){
-        checks.push({name:'主模型可切换，子代理继承会话',ok:(record.selections??[record]).some(item=>claudeModelMatches(actual as {[key:string]:unknown},item.model))&&!actual.env?.ANTHROPIC_MODEL&&!actual.env?.CLAUDE_CODE_SUBAGENT_MODEL&&['ANTHROPIC_SMALL_FAST_MODEL','ANTHROPIC_DEFAULT_OPUS_MODEL','ANTHROPIC_DEFAULT_SONNET_MODEL','ANTHROPIC_DEFAULT_HAIKU_MODEL'].every(k=>actual.env?.[k]===record.model)},
+        const fast=record.fastModel??record.model;
+        checks.push({name:'主模型可切换，子代理继承会话',ok:(record.selections??[record]).some(item=>claudeModelMatches(actual as {[key:string]:unknown},item.model))&&!actual.env?.ANTHROPIC_MODEL&&!actual.env?.CLAUDE_CODE_SUBAGENT_MODEL&&actual.env?.ANTHROPIC_DEFAULT_OPUS_MODEL===record.model&&actual.env?.ANTHROPIC_DEFAULT_SONNET_MODEL===record.model&&(actual.env?.ANTHROPIC_DEFAULT_FABLE_MODEL===undefined||actual.env.ANTHROPIC_DEFAULT_FABLE_MODEL===record.model)&&actual.env?.ANTHROPIC_DEFAULT_HAIKU_MODEL===fast&&actual.env?.ANTHROPIC_SMALL_FAST_MODEL===fast&&[actual.env?.CLAUDE_CODE_BG_CLASSIFIER_MODEL,actual.env?.CLAUDE_CODE_AUTO_MODE_MODEL].every(value=>value===undefined||value===fast)},
           {name:'接口地址与服务路由正确',ok:actual.env?.ANTHROPIC_BASE_URL===expected.env.ANTHROPIC_BASE_URL&&['CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY'].every(k=>!actual.env?.[k]||actual.env[k]==='0')&&!actual.apiKeyHelper&&!actual.forceLoginGatewayUrl},
           {name:'客户端 Key 未被覆盖',ok:actual.env?.ANTHROPIC_AUTH_TOKEN===expected.env.ANTHROPIC_AUTH_TOKEN&&actual.env?.ANTHROPIC_API_KEY===''});
       }else if(record.target==='qoder'){
         const provider=actual.providers?.['token-flow'],original=expected.providers['token-flow'];
         checks.push({name:'自定义模型已写入',ok:(record.selections??[record]).some(item=>item.model===provider?.model)&&(record.selections??[record]).every(item=>provider.models?.some((m:{model:string})=>m.model===item.model))},{name:'Responses 接口正确',ok:provider?.baseUrl===original.baseUrl&&provider?.protocol==='openai-responses'},{name:'客户端 Key 未被覆盖',ok:provider?.apiKey===original.apiKey});
-      }else if(record.target==='workbuddy'){
+      }else if(workbuddyModels(record.target)){
         const id=clientModelID(record,record.model),model=actual.models?.find((m:{id:string})=>m.id===id);const original=expected.models.find((m:{id:string})=>m.id===id);
         checks.push({name:'自定义模型已写入配置',ok:!!model&&(!actual.availableModels?.length||actual.availableModels.includes(id))},{name:'接口地址与工具能力正确',ok:model?.url===original.url&&model?.supportsToolCall===true},{name:'客户端 Key 未被覆盖',ok:model?.apiKey===original.apiKey});
       }else if(record.target==='pi'||record.target==='deepseek'){
@@ -455,12 +458,12 @@ export class AgentConnections {
         const ids=record.selections.map(item=>item.model);
         if(record.target==='codex'){const catalog=JSON.parse(await readFile(String(actual.model_catalog_json),'utf8'));checks.push({name:'所选模型目录完整',ok:isDeepStrictEqual(catalog.models.map((m:{slug:string})=>m.slug),ids)});}
         if(record.target==='claude')checks.push({name:'所选模型菜单与授权一致',ok:isDeepStrictEqual(actual.availableModels,ids)&&isDeepStrictEqual(actual.modelPicker,expected.modelPicker)&&actual.env?.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY==='1'});
-        if(record.target==='workbuddy')checks.push({name:'所选模型配置完整',ok:ids.every(route=>{const id=clientModelID(record,route),model=actual.models?.find((m:{id:string})=>m.id===id),original=expected.models.find((m:{id:string})=>m.id===id);return model?.apiKey===original?.apiKey&&model?.url===original?.url&&model?.supportsToolCall===true;})});
+        if(workbuddyModels(record.target))checks.push({name:'所选模型配置完整',ok:ids.every(route=>{const id=clientModelID(record,route),model=actual.models?.find((m:{id:string})=>m.id===id),original=expected.models.find((m:{id:string})=>m.id===id);return model?.apiKey===original?.apiKey&&model?.url===original?.url&&model?.supportsToolCall===true;})});
       }
     }catch{checks.push({name:'配置格式可解析',ok:false});}
-    return {id,target:record.target,model:record.model,checks,liveCallVerified:false,...(record.target==='claude'?{compatibility:{autoMode:'unverified' as const,note:'主模型、辅助模型配置一致不代表 Auto Mode 审批可用。审批分类器与 App 的维修审批模型相互独立；Messages 文本和工具检测也不能验证分类器。'}}:{}),note:record.target==='pi'?'在官方 Pi 的 /model 菜单选择 token-flow 模型。':record.target==='deepseek'?'重新打开 DeepSeek Harness 官方桌面应用，在模型菜单选择 token-flow 模型；已有对话从历史继续。':record.target==='qoder'?`重启 Qoder 独立应用，在模型菜单选择 ${record.model}。原登录与内置模型保留；不适用于 Qoder IDE。`:record.target==='workbuddy'?`在 WorkBuddy 新建任务的输入框下方打开模型菜单，选择 ${record.model}。若没有显示，重启 WorkBuddy 后再查看。配置检查不代表已在客户端选用。`:'重启 Agent 后加载配置；项目级设置或已有终端环境变量仍可能覆盖用户配置。'};
+    return {id,target:record.target,model:record.model,checks,liveCallVerified:false,...(record.target==='claude'?{compatibility:{autoMode:'unverified' as const,note:'主模型、辅助模型配置一致不代表 Auto Mode 审批可用。审批分类器与 App 的维修审批模型相互独立；Messages 文本和工具检测也不能验证分类器。'}}:{}),note:record.target==='pi'?'在官方 Pi 的 /model 菜单选择 token-flow 模型。':record.target==='deepseek'?'重新打开 DeepSeek Harness 官方桌面应用，在模型菜单选择 token-flow 模型；已有对话从历史继续。':record.target==='qoder'?`重启 Qoder 独立应用，在模型菜单选择 ${record.model}。原登录与内置模型保留；不适用于 Qoder IDE。`:record.target==='workbuddy'?`在 WorkBuddy 新建任务的输入框下方打开模型菜单，选择 ${record.model}。若没有显示，重启 WorkBuddy 后再查看。配置检查不代表已在客户端选用。`:record.target==='workbuddy-ai'?`在 WorkBuddyAI 新建任务的输入框下方打开模型菜单，选择 ${record.model}。若没有显示，重启 WorkBuddyAI 后再查看。配置检查不代表已在客户端选用。官方登录保持不变。`:'重启 Agent 后加载配置；项目级设置或已有终端环境变量仍可能覆盖用户配置。'};
   }
-  async apply(input:{target:Target;revision:string;origin:string;model:string;sourceId:string;keyId:string;key:string;allowRunning?:boolean;replaceId?:string;rewrite?:boolean;selections?:ModelSelection[];modelLabels?:{[id:string]:string};modelImages?:{[id:string]:boolean}}){
+  async apply(input:{target:Target;revision:string;origin:string;model:string;sourceId:string;keyId:string;key:string;allowRunning?:boolean;replaceId?:string;rewrite?:boolean;selections?:ModelSelection[];fastModel?:string;modelLabels?:{[id:string]:string};modelImages?:{[id:string]:boolean}}){
     return this.run(input.target,async()=>{
       await this.requireEditableProfile(input.target);
       if(!input.allowRunning)await this.idle(input.target);
@@ -471,17 +474,18 @@ export class AgentConnections {
       const original=active?(input.rewrite||input.target==='qoder'?repairConfigBase(active,before):restoredConfig(active,before)):before;
       const selectedModels=input.selections?.map(item=>item.model);
       if(input.selections){modelSelectionsSchema.parse(input.selections);if(!input.selections.some(item=>item.model===input.model&&item.sourceId===input.sourceId))throw conflict('默认模型必须在已选模型中');}
+      if(input.fastModel&&!(input.selections??[{model:input.model,sourceId:input.sourceId}]).some(item=>item.model===input.fastModel))throw conflict('快速模型必须在已选模型中');
       // Include display metadata so a renamed menu does not reuse the legacy cached path.
       const catalog=input.target==='codex'?codexModelCatalog(selectedModels??input.model,input.modelLabels,input.modelImages):undefined;
       const catalogPath=catalog?this.catalogPath(JSON.stringify(catalog)):undefined;
-      let after:string;try{after=connectedConfig(input.target,original,input.origin,input.model,input.key,catalogPath,selectedModels,input.modelLabels);}catch{throw conflict('配置格式无法安全解析，未修改原文件。');}
+      let after:string;try{after=connectedConfig(input.target,original,input.origin,input.model,input.key,catalogPath,selectedModels,input.modelLabels,input.fastModel);}catch{throw conflict('配置格式无法安全解析，未修改原文件。');}
       if(catalogPath){
         await safePath(catalogPath);const temp=`${catalogPath}.${randomUUID()}.tmp`;
         try{await writeFile(temp,JSON.stringify(catalog),{mode:0o600,flag:'wx'});await rename(temp,catalogPath);}finally{await rm(temp,{force:true});}
       }
       const routes=selectedModels??[input.model];
-      const modelAliases=input.target==='workbuddy'?Object.fromEntries((JSON.parse(after) as {id:string}[]).slice(-routes.length).flatMap((entry,i)=>entry.id!==routes[i]?[[entry.id,routes[i]]]:[])):undefined;
-      const record:Record={id:randomUUID(),target:input.target,createdAt:new Date().toISOString(),before:original,after,beforeHash:hash(original),afterHash:hash(after),state:'prepared',keyId:input.keyId,sourceId:input.sourceId,model:input.model,...(modelAliases&&Object.keys(modelAliases).length?{modelAliases}:{}),...(input.target==='deepseek'?{deepseekScope:this.deepseekProfilePath?'profile' as const:'home' as const}:{}),...(input.selections?{selections:input.selections}:{}),...(active?{supersedes:active.id,previousConfig:before,previousHash:hash(before)}:{})};
+      const modelAliases=workbuddyModels(input.target)?Object.fromEntries((JSON.parse(after) as {id:string}[]).slice(-routes.length).flatMap((entry,i)=>entry.id!==routes[i]?[[entry.id,routes[i]]]:[])):undefined;
+      const record:Record={id:randomUUID(),target:input.target,createdAt:new Date().toISOString(),before:original,after,beforeHash:hash(original),afterHash:hash(after),state:'prepared',keyId:input.keyId,sourceId:input.sourceId,model:input.model,...(input.fastModel?{fastModel:input.fastModel}:{}),...(modelAliases&&Object.keys(modelAliases).length?{modelAliases}:{}),...(input.target==='deepseek'?{deepseekScope:this.deepseekProfilePath?'profile' as const:'home' as const}:{}),...(input.selections?{selections:input.selections}:{}),...(active?{supersedes:active.id,previousConfig:before,previousHash:hash(before)}:{})};
       await this.save(record);await this.replace(input.target,input.revision,after,input.allowRunning);
       if(input.target==='deepseek')await this.updateDeepseekEnv(input.key);
       record.state='applied';await this.save(record);await this.retirePrevious(record);return publicRecord(record);
@@ -491,16 +495,16 @@ export class AgentConnections {
     if(!record.supersedes)return;const previous=(await this.records()).find(r=>r.id===record.supersedes);
     if(previous&&previous.state!=='restored'){previous.state='restored';await this.save(previous);}
   }
-  async preview(target:Target,origin:string,model:string,rewrite=false,selections?:ModelSelection[]){
+  async preview(target:Target,origin:string,model:string,rewrite=false,selections?:ModelSelection[],fastModel?:string){
     const records=await this.records();const active=records.find(r=>r.target===target&&r.state!=='restored');
     await this.requireEditableProfile(target);
     const current=await readConfig(this.paths[target]);
     const original=active?(rewrite||target==='qoder'?repairConfigBase(active,current):restoredConfig(active,current)):current;
-    const after=connectedConfig(target,original,origin,model,'<审批后由网关注入客户端 Key>',target==='codex'?this.catalogPath(selections?JSON.stringify(selections.map(item=>item.model)):model):undefined,selections?.map(item=>item.model));
+    const after=connectedConfig(target,original,origin,model,'<审批后由网关注入客户端 Key>',target==='codex'?this.catalogPath(selections?JSON.stringify(selections.map(item=>item.model)):model):undefined,selections?.map(item=>item.model),{},fastModel);
     // Only expose gateway-owned routing fields, never the full user configuration.
     const parsed=decodeConfig(target,after) as {[key:string]:any};
     const effective=target==='codex'?{...parsed,...codexProfile(parsed)}:parsed;
-    const routing=target==='pi'?parsed.providers['token-flow']:target==='deepseek'?parsed['llm-pi-ai'].config.providers['token-flow']:target==='qoder'?parsed.providers['token-flow']:target==='workbuddy'?(Array.isArray(parsed)?parsed:parsed.models).find((m:{id:string})=>m.id===model):target==='codex'?{model:effective.model,model_provider:effective.model_provider,model_catalog_json:effective.model_catalog_json,...(parsed.profile!==undefined?{profile:parsed.profile}:{}),...(effective.web_search!==undefined?{web_search:effective.web_search}:{}),token_flow:parsed.model_providers.token_flow}:Object.fromEntries(Object.entries(parsed.env).filter(([k])=>['ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_API_KEY','ANTHROPIC_MODEL','ANTHROPIC_DEFAULT_OPUS_MODEL','ANTHROPIC_DEFAULT_SONNET_MODEL','ANTHROPIC_DEFAULT_HAIKU_MODEL','ANTHROPIC_SMALL_FAST_MODEL','CLAUDE_CODE_SUBAGENT_MODEL'].includes(k)));
+    const routing=target==='pi'?parsed.providers['token-flow']:target==='deepseek'?parsed['llm-pi-ai'].config.providers['token-flow']:target==='qoder'?parsed.providers['token-flow']:workbuddyModels(target)?(Array.isArray(parsed)?parsed:parsed.models).find((m:{id:string})=>m.id===model):target==='codex'?{model:effective.model,model_provider:effective.model_provider,model_catalog_json:effective.model_catalog_json,...(parsed.profile!==undefined?{profile:parsed.profile}:{}),...(effective.web_search!==undefined?{web_search:effective.web_search}:{}),token_flow:parsed.model_providers.token_flow}:Object.fromEntries(Object.entries(parsed.env).filter(([k])=>['ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_API_KEY','ANTHROPIC_MODEL','ANTHROPIC_DEFAULT_OPUS_MODEL','ANTHROPIC_DEFAULT_SONNET_MODEL','ANTHROPIC_DEFAULT_FABLE_MODEL','ANTHROPIC_DEFAULT_HAIKU_MODEL','ANTHROPIC_SMALL_FAST_MODEL','CLAUDE_CODE_BG_CLASSIFIER_MODEL','CLAUDE_CODE_AUTO_MODE_MODEL','CLAUDE_CODE_SUBAGENT_MODEL'].includes(k)));
     return {target,path:this.paths[target],revision:hash(current),replaceId:active?.id,previousModel:active?.model,...(selections?{selections}:{}),pids:await this.processes(target),routing};
   }
   async repair(id:string){

@@ -16,7 +16,10 @@
     "pi.svg": "https://pi.dev/logo.svg",
     "workbuddy.png": "Official WorkBuddy 5.8.3 and WorkBuddyAI 5.5.2 macOS application bundles: Contents/Resources/icon.icns, converted losslessly to PNG",
     "xai-mark.svg": "https://docs.x.ai/_next/static/media/favicon-light.1u6watcuoe8mg.svg (official foreground paths extracted for theme-aware monochrome display)",
-    "zai.svg": "https://z-cdn.chatglm.cn/z-ai/static/logo.svg"
+    "zai.svg": "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+    "gemini.png": "Cropped from the Gemini sparkle screenshot supplied for this interface; the earlier gstatic sparkle stayed muddy at list size",
+    "minimax.png": "https://filecdn.minimax.chat/public/58eca777-e31f-448a-9823-e2220e49b426.png (official MiniMax logo, wordmark cropped away)",
+    "qwen.svg": "https://assets.alicdn.com/g/qwenweb/qwen-chat-fe/0.3.19/static/images/qwen-logo.svg (official Qwen mark, wordmark removed)"
   },
   "verification": {
     "date": "2026-10-17",
@@ -37,7 +40,10 @@
       "pi.svg": "abd66e7868b2d24f0f0895f9237ee8a6dcb22337583b0dc54aeb595acecb4d6b",
       "workbuddy.png": "1ed2dbd10b96120191a8a18b4be0e44b518eef398940cec0e7fe8ad56844c06a",
       "xai-mark.svg": "308d10a2930646e0406377208f50f68f7fe1b468aade96182f627ff34e80ead8",
-      "zai.svg": "07a45e8e35b0b631ed2c68cd1cb041f9721b1ceeb0bd0e34f1459b0304a741c7"
+      "zai.svg": "07a45e8e35b0b631ed2c68cd1cb041f9721b1ceeb0bd0e34f1459b0304a741c7",
+      "gemini.png": "095492c1127a517c1a85bd2efad84e925367831a9911af1107fd0f438d469b2d",
+      "minimax.png": "b6bdf85f4fd2542deed4138f8bff67dedf14a472605a88698f31daef837ffa73",
+      "qwen.svg": "64a5004acfe364514dfd425f12577449410adc3d3a5145580a9cacf05ce78ff7"
     }
   }
 }

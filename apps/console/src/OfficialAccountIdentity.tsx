@@ -1,6 +1,6 @@
 import {Icon} from './Icons';
 import {ProviderIcon} from './ProviderIcon';
-import {officialLoginCoexists,officialLoginSelected} from '../../shared/native-login-identity';
+import {officialLoginCoexists,officialLoginHeld,officialLoginSelected} from '../../shared/native-login-identity';
 import type {LoginAccount,useNativeLogin} from './native-login';
 
 /** Codex's existing account row, shared by every official client. */
@@ -8,7 +8,7 @@ export function OfficialAccountIdentity({provider,account}:{provider:string;acco
  return <><span className={`tfLoginRadio ${account.current?'on':''}`} aria-hidden="true"/>
   <ProviderIcon provider={provider==='workbuddy-ai'?'workbuddy':provider} size={22}/><span className="tfKind">账号</span>
   <span className="tfRowText"><strong title={account.label}>{account.label}</strong><small>官方登录{account.remaining===null?'':` · 剩余 ${Math.round(account.remaining)}%`}{!account.switchable&&account.reason?` · ${account.reason}`:''}</small></span>
-  {account.local?<b className="tfUsing">{account.current?officialLoginCoexists(provider)?'已登录':'使用中':'本机'}</b>:<span className="tfSwitch">切换</span>}
+  {officialLoginHeld(provider,account.local,account.current)?<b className="tfUsing">{account.current&&officialLoginCoexists(provider)?'已登录':account.current?'使用中':'本机'}</b>:<>{account.local&&<b className="tfUsing">本机</b>}<span className="tfSwitch">切换</span></>}
  </>;
 }
 export function UnpooledNativeAccount({provider,login,compact=false}:{provider:string;login:ReturnType<typeof useNativeLogin>;compact?:boolean}){

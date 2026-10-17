@@ -99,7 +99,7 @@ export function RepairChat({local,session,selectedAgent,page='agents',selectionC
  useEffect(()=>{
   const chain=pending.current;
   if(!chain||!canSend||state.readiness?.status==='failed')return;
-  pending.current=null;void send(session?.intent==='codex-history'?'请检查 Codex 旧对话的当前来源和模型、官方登录状态、成功与失败的切换记录及迁移备份。先明确当前配置和用户最近请求的切换目标是否一致，再说明哪些旧对话不匹配、推荐怎样修复。证据不足请说明，不要自动切回官方或改成另一个模型；需要修改时生成可审批方案。':`帮我检查 ${targetNames[chain.target]??chain.target} 的接入。请结合预检里最近的切换失败和当前界面选中的 Agent 定位原因并修好。`,chain);
+  pending.current=null;void send(session?.intent==='codex-history'?'请检查 Codex 旧对话的当前来源和模型、官方登录状态、成功与失败的切换记录及迁移备份。先明确当前配置和用户最近请求的切换目标是否一致，再说明哪些旧对话不匹配、推荐怎样修复。证据不足请说明，不要自动切回官方或改成另一个模型；需要修改时生成可审批方案。':chain.target==='codex'?`帮我检查 Codex 的接入。请结合预检里最近的切换失败和当前配置定位原因并修好。先只读判断旧对话来源是否和当前配置一致；只有证据表明对不上时才建议恢复旧对话，不要默认改对话文件。`:`帮我检查 ${targetNames[chain.target]??chain.target} 的接入。请结合预检里最近的切换失败和当前界面选中的 Agent 定位原因并修好。`,chain);
  },[canSend,state.readiness?.status]);
 
  const gatewayDown=local.state!=='running';

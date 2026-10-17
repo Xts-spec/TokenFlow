@@ -145,6 +145,16 @@ it('generates Qoder IDE parameters and pins Claude auxiliary models in both conn
  const original=JSON.stringify({env:{ANTHROPIC_SMALL_FAST_MODEL:'old',CLAUDE_CODE_SUBAGENT_MODEL:'old-sub',KEEP:'yes'}});const config=JSON.parse(connectedConfig('claude',original,'http://127.0.0.1:9527','antigravity/gemini','key'));
  for(const name of ['ANTHROPIC_SMALL_FAST_MODEL']){expect(config.env[name]).toBe('antigravity/gemini');expect(agentConfig('claude','http://127.0.0.1:9527','antigravity/gemini')).toContain(`${name}='antigravity/gemini'`);}
  expect(config.env.KEEP).toBe('yes');expect(config.env.ANTHROPIC_MODEL).toBe('');expect(config.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('');
+ const split=JSON.parse(connectedConfig('claude','{}','http://127.0.0.1:9527','qoder/main','key',undefined,['qoder/main','qoder/fast'],{},'qoder/fast'));
+ expect(split.model).toBe('qoder/main');expect(split.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('qoder/main');expect(split.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('qoder/main');expect(split.env.ANTHROPIC_DEFAULT_FABLE_MODEL).toBe('qoder/main');
+ expect(split.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('qoder/fast');expect(split.env.ANTHROPIC_SMALL_FAST_MODEL).toBe('qoder/fast');expect(split.env.CLAUDE_CODE_BG_CLASSIFIER_MODEL).toBe('qoder/fast');expect(split.env.CLAUDE_CODE_AUTO_MODE_MODEL).toBe('qoder/fast');expect(split.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('');
+});
+
+it('reviews a Claude connection whose fast model differs from the session default',async()=>{
+ const {connections}=await setup();const source='a'.repeat(24),other='b'.repeat(24);
+ const record=await connections.apply({target:'claude',revision:(await connections.status())[1].revision,origin:'http://127.0.0.1:9527',model:'qoder/main',sourceId:source,fastModel:'qoder/fast',selections:[{sourceId:source,model:'qoder/main'},{sourceId:other,model:'qoder/fast'}],keyId:randomUUID(),key:'fixture-key'});
+ expect(record.fastModel).toBe('qoder/fast');expect((await connections.review(record.id)).checks.every(check=>check.ok)).toBe(true);
+ await expect(connections.apply({target:'claude',revision:(await connections.status())[1].revision,origin:'http://127.0.0.1:9527',model:'qoder/main',sourceId:source,fastModel:'qoder/other',selections:[{sourceId:source,model:'qoder/main'}],keyId:randomUUID(),key:'fixture-key',replaceId:record.id})).rejects.toThrow('快速模型必须在已选模型中');
 });
 
 it('reviews actual Claude routing without exposing keys and detects stale auxiliary settings',async()=>{
@@ -216,6 +226,18 @@ it('switches a missing WorkBuddy connection to the selected source while preserv
  const next=await connections.apply({target:'workbuddy',revision:preview.revision,replaceId:old.id,origin:'http://127.0.0.1:9527',model:'qoder/k3',sourceId:'qoder',keyId:randomUUID(),key:'new-key'});
  expect(JSON.parse(await readFile(paths.workbuddy,'utf8'))[0].id).toBe('qoder/k3');expect((await connections.status())[2].configurationState).toBe('configured');expect((await connections.review(next.id)).checks.every(c=>c.ok)).toBe(true);
  await connections.restore(next.id);expect(await readFile(paths.workbuddy,'utf8')).toBe('[]');expect((await connections.status())[2].backups.every(r=>r.state==='restored')).toBe(true);
+});
+it('writes WorkBuddyAI gateway models without changing the domestic file',async()=>{
+ const {paths,connections}=await setup();await mkdir(join(paths.workbuddy,'..'),{recursive:true});await writeFile(paths.workbuddy,'[{"id":"kept"}]');
+ const ai=(await connections.status()).find(item=>item.id==='workbuddy-ai')!;
+ expect(ai.path).not.toBe(paths.workbuddy);
+ const record=await connections.apply({target:'workbuddy-ai',revision:ai.revision,origin:'http://127.0.0.1:9527',model:'qoder/k3',sourceId:'s',keyId:randomUUID(),key:'ai-key'});
+ expect(JSON.parse(await readFile(ai.path,'utf8'))[0]).toMatchObject({id:'qoder/k3',url:'http://127.0.0.1:9527/v1/chat/completions',supportsToolCall:true});
+ expect(await readFile(paths.workbuddy,'utf8')).toBe('[{"id":"kept"}]');
+ expect((await connections.review(record.id)).checks.every(check=>check.ok)).toBe(true);
+ await connections.restore(record.id);
+ expect(await readFile(paths.workbuddy,'utf8')).toBe('[{"id":"kept"}]');
+ await expect(readFile(ai.path)).rejects.toMatchObject({code:'ENOENT'});
 });
 it('redacts unrelated provider secrets from approval previews and refuses changed revisions',async()=>{
  const {paths,connections}=await setup();await writeFile(paths.claude,JSON.stringify({env:{ANTHROPIC_CUSTOM_SECRET:'private-secret'}}));const p=await connections.preview('claude','http://127.0.0.1:9527','qoder/k3');expect(JSON.stringify(p)).not.toContain('private-secret');await writeFile(paths.claude,'{"new":true}');

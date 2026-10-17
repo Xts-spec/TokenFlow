@@ -31,11 +31,15 @@ try{
  await click('nav button','本地 Agent');await wait('[...document.querySelectorAll(".tfTile")].some(e=>e.querySelector("strong")?.textContent==="Claude Code")');await evaluate('[...document.querySelectorAll(".tfTile")].find(e=>e.querySelector("strong")?.textContent==="Claude Code").click()');
  await wait('!!document.querySelector("section[aria-label=官方登录账号] .tfUsing")');await screenshot('claude-terminal.png');
  await click('button','恢复原登录');await click('dialog[open] button','恢复并重新打开');await wait('!document.body.innerText.includes("恢复原登录")');
- await click('button','独立桌面版');await wait(`document.querySelector('select[aria-label="Claude 桌面默认模型"]')?.options.length>1`);
- await evaluate(`(()=>{const e=document.querySelector('select[aria-label="Claude 桌面默认模型"]');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(e,e.options[1].value);e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
- await click('button','接入桌面版');await click('dialog[open] button','继续');await wait('document.body.innerText.includes("已接入 TokenFlow")');await screenshot('claude-desktop-connected.png');
+ await click('button','Claude Desktop');await click('button','选择模型');await wait('document.querySelectorAll("dialog[open] .tfPickModel").length>=2');
+ await evaluate('document.querySelectorAll("dialog[open] .tfPickModel")[0].click()');await wait('document.querySelectorAll("dialog[open] .tfAgentPickedTag").length>=1');
+ await evaluate('document.querySelectorAll("dialog[open] .tfPickModel")[1].click()');await wait('document.querySelectorAll("dialog[open] .tfAgentPickedTag").length>=2');
+ await click('dialog[open] button','应用所选模型');
+ await click('button','接入');await wait('!!document.querySelector(\'dialog[open] select[aria-label="快速模型"]\')');
+ await evaluate('(()=>{const select=document.querySelector(\'dialog[open] select[aria-label="快速模型"]\');const value=select.options[1].value;Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,"value").set.call(select,value);select.dispatchEvent(new Event("change",{bubbles:true}));return select.value===value;})()');
+ await click('dialog[open] button','应用并重启');await wait('[...document.querySelectorAll(".tfUsing")].some(e=>e.textContent.trim()==="快速模型")');await screenshot('claude-desktop-connected.png');
  if(await evaluate('document.body.innerText.includes("打开官方登录")'))throw Error('Unsupported desktop switch visible');
- await click('button','恢复接入前配置');await click('dialog[open] button','继续');await wait('!document.body.innerText.includes("恢复接入前配置")');
+ await click('button','恢复原配置');await click('dialog[open] button','恢复配置');await wait('!document.body.innerText.includes("恢复原配置")');
  if(changes!==4)throw Error(`Expected 4 fixture actions, got ${changes}`);console.log('PASS: Claude CLI switch/restore and desktop gateway connect/restore, hidden unsupported desktop account switching, including cancel.');
 }catch(error){console.error(error instanceof Error?error.message:'UI check failed');console.error('fixture changes',changes);console.error(await win?.webContents.executeJavaScript('document.querySelector("dialog[open]")?.textContent??"no open dialog"')); process.exitCode=1;}
 finally{win?.destroy();await service.app.close();await rm(root,{recursive:true,force:true});app.exit(process.exitCode??0);}
