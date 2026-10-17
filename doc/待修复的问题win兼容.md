@@ -414,6 +414,35 @@ v10.15.26.15 源码已接入桌面自动启停；Windows 包仍待构建与实�
 
 打包运行检查需由 Windows 接手者使用打包的 Electron 可执行文件及 `ELECTRON_RUN_AS_NODE=1` 运行；环境变量写法用 PowerShell，测试结束后清除。该脚本的夹具／本机路径假设需先核对，失败记为包内测试失败或夹具移植阻塞，不能改用开发 Node 后宣称包内检查通过。
 
+## 5.9 WorkBuddy SDK 通道（workbuddy/ 前缀模型）Windows 实测超时（2026-10-17 新增，待定位）
+
+### 现象（release11，`D:\agents\apps\TokenFlow`，实机）
+
+- 网关 9527 上以 tfl_ Key 请求 `workbuddy/step-5-preview`：连接建立后无响应；约 120 秒后返回 `504 upstream_idle_timeout（上游连续 120 秒未返回数据）`。客户端等待 240s+ 亦无完成路径。
+- 疑似触发点：`WorkBuddySDKProvider.buffered()`（packages/core/src/codebuddy.ts）→ `runOfficialSDK`（@token-flow/codebuddy-runtime → @tencent-ai/agent-sdk 0.3.276，进程内调用 copilot.tencent.com）。SDK 运行目录 `workbuddy-sdk-runs/request-*/config/plugins/...` 已完成 marketplace 插件暂存，说明卡在 SDK 启动后、首个增量前。
+- 同机旁路验证全部通过：cliproxy 边车（8317）用同一 WorkBuddy 账号直接服务 `workbuddy/step-5-preview`（以及 `step-5-preview` 别名）毫秒级返回；说明账号凭据与上游连通性都正常（copilot.tencent.com 直连/代理均 200）。问题收敛在 agent-sdk 调用路径本身。
+- 已排除：宿主继承的死代理环境变量（HTTP_PROXY=127.0.0.1:14844）——清除后从"永久挂死"变为规范 504，但 120s 无进展依旧。另发现 agent-sdk 似乎不响应 AbortSignal：内部 240s deadline 触发后 run() 不返回，外层只能靠 upstreamIdle 兜底。
+- 环境注记：测试实例由自动化会话派生（带 --no-sandbox 等 GPU 兼容参数）；不排除 SDK 对宿主环境（窗口站/作业对象/插件目录）有额外假设，需要用户正常双击启动的实例复测一次再定论。
+
+### 旁路验证结果（同一 Step-5-Preview 能力，走 API 来源路由）
+
+| 用例 | 结果 |
+| --- | --- |
+| T1 基础对话 | 通过，4.2s，回复确认是 StepFun Step 模型 |
+| T2 工具调用（function call + 结果回填两轮） | 通过，正确发起 `get_weather({"city":"北京"})` 并消费工具结果作答 |
+| T3 长对话多轮 + 大文本（约 6.6k token） | 通过，6.8s，准确回答细节问题 |
+| T4 压缩上下文（摘要 + 继续任务） | 通过，42s，严格按摘要中的项目约定继续产出代码 |
+| T5 超长上下文（约 12k token） | 通过，3.1s，两个细节问题全对 |
+| T6 流式 SSE | 通过，37 个事件、首增量 2.8s |
+| 用量计费 | 通过，tfl_ Key 的 usedTokens 与请求一致累计 |
+
+### 建议定位步骤
+
+1. 用用户正常双击启动的实例复测 `workbuddy/step-5-preview`（排除自动化会话环境影响）。
+2. 在 `workbuddy-sdk-packaged-live.mjs` / `workbuddy-sdk-gateway-live.ts` 基础上加最小复现：直接 `runOfficialSDK` 一次并打印 SDK 内部事件（onText / 错误 / 超时时刻）。
+3. 核对 agent-sdk 是否需要 IDE 在线心跳或特定 user-agent/设备指纹；确认 access_token 之外是否还需要 jwt 刷新路径。
+4. 若 SDK 短期无法在 Windows 工作，考虑给 `workbuddy/` 前缀模型增加 cliproxy 适配器回退（当前 8317 已具备该能力，仅缺网关路由选择逻辑）。
+
 ## 6. 测试结果回传模板
 
 在本仓库增加测试报告或逐项回填以下格式；无需转发真实凭据或账号截图。
