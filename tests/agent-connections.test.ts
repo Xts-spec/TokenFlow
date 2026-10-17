@@ -313,6 +313,14 @@ it('deletes stale records after reinstall without touching the new config, and k
  const reopened=new AgentConnections(root,paths,async()=>[]);const status=(await reopened.status())[0];expect(status.connection).toBeNull();expect(status.backups.map(r=>r.id)).toEqual([first.id]);expect(await readFile(paths.codex,'utf8')).toBe('model = "reinstalled"\n');
  await reopened.remove(first.id,status.revision);expect((await reopened.status())[0].backups).toEqual([]);expect(original).toContain('first-key');
 });
+it('returns an in-place edited Codex gateway to the official model',async()=>{
+ const {paths,connections}=await setup();await writeFile(paths.codex,'model = "original"\n');
+ const record=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:'antigravity/old',sourceId:'s',keyId:randomUUID(),key:'first-key'});
+ await writeFile(paths.codex,(await readFile(paths.codex,'utf8')).replace('model = "antigravity/old"','model = "hand-edited"'));
+ await connections.restore(record.id);
+ const doc=parse(await readFile(paths.codex,'utf8'));
+ expect(doc.model).toBe('original');expect(doc.model_provider).toBeUndefined();expect(doc.model_providers?.token_flow).toBeUndefined();
+});
 it('restores a missing file without requiring a maintenance model',async()=>{
  const {paths,connections}=await setup();
  const record=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:'antigravity/m',sourceId:'s',keyId:randomUUID(),key:'key'});

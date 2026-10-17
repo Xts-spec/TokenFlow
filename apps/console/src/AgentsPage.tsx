@@ -146,7 +146,7 @@ function AgentPanel({onRefreshAccounts,clientSwitch,target,update,login,local,us
  const run=async(work:()=>Promise<string>)=>{
   if(lock.current){switching.current=false;return;}lock.current=true;setBusy(true);
   try{const text=await work();setExitMessage('');notify({kind:'ok',text});}
-  catch(error){if((error as {code?:string}).code==='codex_exit_required')setExitMessage(error instanceof Error?error.message:'请先退出 Codex。');else {setExitMessage('');const text=error instanceof Error?error.message:'操作失败';notify({kind:'error',text});if(target.id==='codex'&&switching.current)setHistoryOffer(text);}}
+  catch(error){if((error as {code?:string}).code==='codex_exit_required')setExitMessage(error instanceof Error?error.message:'请先退出 Codex。');else {setExitMessage('');const text=error instanceof Error?error.message:'操作失败';notify({kind:'error',text});if(target.id==='codex'&&switching.current&&!text.includes('无法安全还原')&&!text.includes('外部修改'))setHistoryOffer(text);}}
   finally{switching.current=false;try{await onChanged().catch(()=>{});await login?.refresh();}finally{lock.current=false;setBusy(false);}}
  };
  // The revision guard rejects the write if the config changed since it was read.
