@@ -106,6 +106,8 @@ Windows 自动重启会核对可执行文件路径、Electron 应用标识和进
 
 桌面资料保存在系统应用数据目录，可用 `AGENT_DATA_ROOT` 指定独立目录。授权文件、密钥、会话、配置备份、日志与安装包不提交 Git；API 来源和可持久保存的客户端 Key 使用桌面加密存储，headless 不接受新增 API 密钥的持久保存。模型请求仍发送到所选来源服务。配置备份不等同于软件回滚。
 
+本地 Agent 桌面客户端（Qoder、DeepSeek 等）的安装位置不限于系统默认目录：Windows 上会读取注册表卸载信息（HKLM/HKCU Uninstall 项）发现任意盘符、任意目录下的安装；便携版或免安装版可用 `AGENT_INSTALL_DIRS` 追加搜索根目录（PATH 风格分隔，如 `D:\agents\apps;E:\tools`，支持 `根目录\应用名\应用.exe` 和 `根目录\应用.exe` 两种布局，macOS 下支持 `根目录/应用.app`）。
+
 源码结构：`apps/console` 界面，`apps/desktop` 桌面应用，`packages/core` 网关 / 授权 / 接入，`patches/cliproxy` 来源补丁，`tests` 验证。
 
 [MIT 许可](LICENSE) · [第三方复用](THIRD_PARTY.md) · [问题反馈](https://github.com/haruinia/token-flow/issues)

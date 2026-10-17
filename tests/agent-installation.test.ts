@@ -6,7 +6,7 @@ vi.mock('node:fs/promises',()=>({
  readFile:async(path:string)=>{if(!fixture.files.has(path))throw Error('missing');return fixture.files.get(path);},
 }));
 vi.mock('node:child_process',()=>({execFile:(file:string,args:string[],options:{env?:{[key:string]:string}},callback:(error:Error|null,value:unknown)=>void)=>{fixture.commands.push({file,args,env:options?.env});if(fixture.fail){callback(Error('private install output must not escape'),undefined);return;}if(args.includes('install')&&args.includes('@anthropic-ai/claude-code')){fixture.links.set('/fixture/bin/claude','/fixture/lib/node_modules/@anthropic-ai/claude-code/cli.js');fixture.files.set('/fixture/lib/node_modules/@anthropic-ai/claude-code/package.json',JSON.stringify({name:'@anthropic-ai/claude-code',version:'2.1.0'}));}if(args.includes('install'))fixture.links.set('/fixture/bin/codex','/fixture/lib/node_modules/@openai/codex/bin/codex.js');callback(null,{stdout:args.includes('--version')?'2.1.0 (Claude Code)':''});}}));
-import {detectAgent,AgentInstallationManager,desktopCandidates,agentCompatibility} from '../packages/core/src/agent-installation';
+import {detectAgent,AgentInstallationManager,desktopCandidates,agentCompatibility,windowsRegistryApp} from '../packages/core/src/agent-installation';
 afterEach(()=>vi.unstubAllEnvs());
 beforeEach(()=>{fixture.files.clear();fixture.links.clear();fixture.commands=[];fixture.fail=false;vi.stubEnv('PATH','/fixture/bin');fixture.links.set('/fixture/bin/npm','/fixture/node_modules/npm/bin/npm-cli.js');fixture.files.set('/fixture/lib/node_modules/@openai/codex/package.json',JSON.stringify({name:'@openai/codex',version:'1.1.0'}));});
 it('does not confuse config files with installation, and verifies installation after its fixed npm recipe',async()=>{
@@ -50,6 +50,31 @@ it('uses Windows application roots and clearly marks Intel Mac compatibility',()
  expect(agentCompatibility('deepseek','darwin','arm64')).toEqual({supported:true});
  expect(agentCompatibility('pi','darwin','x64')).toEqual({supported:true});
  expect(agentCompatibility('pi','win32','x64')).toEqual({supported:true});
+});
+it('searches user-configured install roots before the fixed application roots',()=>{
+ vi.stubEnv('AGENT_INSTALL_DIRS','D:\\agents\\apps;relative\\dir');
+ const candidates=desktopCandidates('qoder','win32','C:\\Users\\test',{AGENT_INSTALL_DIRS:'D:\\agents\\apps;relative\\dir',LOCALAPPDATA:'C:\\Users\\test\\AppData\\Local'});
+ expect(candidates.slice(0,2)).toEqual(['D:\\agents\\apps\\Qoder\\Qoder.exe','D:\\agents\\apps\\Qoder.exe']);
+ expect(candidates).toContain('C:\\Users\\test\\AppData\\Local\\Programs\\Qoder\\Qoder.exe');
+ expect(candidates.some(path=>path.startsWith('relative'))).toBe(false);
+ // Fixed roots keep the folder-based layout only; no extra flat variant is probed there.
+ expect(candidates).not.toContain('C:\\Users\\test\\AppData\\Local\\Programs\\Qoder.exe');
+});
+it.skipIf(process.platform!=='darwin')('searches user-configured install roots for mac bundles too',()=>{
+ expect(desktopCandidates('deepseek','darwin','/home/test',{AGENT_INSTALL_DIRS:'/portable'})).toContain('/portable/DeepSeek Harness.app');
+});
+it('finds desktop apps through the Windows uninstall registration regardless of install drive',async()=>{
+ const scripts:string[]=[];
+ const found=await windowsRegistryApp(['DeepSeek Harness'],{run:async script=>{scripts.push(script);return JSON.stringify({path:'D:\\agents\\apps\\DeepSeek Harness\\DeepSeek Harness.exe',display:'DeepSeek Harness 0.2.0-rc.2',version:'0.2.0-rc.2'})+'\r\n';}});
+ expect(found).toEqual({path:'D:\\agents\\apps\\DeepSeek Harness\\DeepSeek Harness.exe',version:'0.2.0-rc.2'});
+ expect(scripts[0]).toContain("'DeepSeek Harness'");
+ expect(scripts[0]).toContain('Uninstall\\*');
+ // The version can also come from the display name when DisplayVersion is absent.
+ expect(await windowsRegistryApp(['Qoder'],{run:async()=>JSON.stringify({path:'D:\\apps\\Qoder\\Qoder.exe',display:'Qoder 0.4.8'})})).toMatchObject({version:'0.4.8'});
+ expect(await windowsRegistryApp(['Qoder'],{run:async()=>''})).toBeUndefined();
+ expect(await windowsRegistryApp(['Qoder'],{run:async()=>'{broken'})).toBeUndefined();
+ expect(await windowsRegistryApp(['Qoder'],{run:async()=>{throw Error('no powershell');}})).toBeUndefined();
+ expect(await windowsRegistryApp([],{run:async()=>{throw Error('must not run');}})).toBeUndefined();
 });
 it('finds the Microsoft Store Codex by its fixed package identity and tolerates absent or malformed output',async()=>{
  const {windowsStoreApp}=await import('../packages/core/src/agent-installation');

@@ -32,10 +32,18 @@ async function packageOf(path:string,name:string){
  }catch{/* Executables need not be npm packages. */}
 }
 const desktopNames:Partial<Record<Target|'claude-desktop'|'workbuddy-ai'|'qoder-ide',string[]>>={'claude-desktop':['Claude'],codex:['Codex','ChatGPT'],qoder:['Qoder'],'qoder-ide':['Qoder IDE','Qoder'],workbuddy:['WorkBuddy'],'workbuddy-ai':['WorkBuddy AI','WorkBuddyAI'],deepseek:['DeepSeek Harness']};
+// AGENT_INSTALL_DIRS lists extra roots (PATH-style separators); portable or non-standard installs live there.
+const envRoots=(env:NodeJS.ProcessEnv)=>(env.AGENT_INSTALL_DIRS??'').split(delimiter).map(root=>root.trim()).filter(root=>root&&isAbsolute(root));
 export function desktopCandidates(target:Target|'claude-desktop'|'workbuddy-ai'|'qoder-ide',platform=process.platform,home=homedir(),env:NodeJS.ProcessEnv=process.env){
- if(platform==='darwin')return (desktopNames[target]??[]).flatMap(name=>['/Applications',join(home,'Applications')].map(base=>join(base,`${name}.app`)));
+ const names=desktopNames[target]??[];
+ if(platform==='darwin')return [...envRoots(env).flatMap(root=>names.map(name=>join(root,`${name}.app`))),...names.flatMap(name=>['/Applications',join(home,'Applications')].map(base=>join(base,`${name}.app`)))];
  if(platform==='win32'&&target==='claude-desktop'&&env.LOCALAPPDATA)return [win32.join(env.LOCALAPPDATA,'AnthropicClaude','Claude.exe'),win32.join(env.LOCALAPPDATA,'Programs','Claude','Claude.exe'),win32.join(env.LOCALAPPDATA,'Claude','Claude.exe')];
- if(platform==='win32')return (desktopNames[target]??[]).flatMap(name=>[env.LOCALAPPDATA&&win32.join(env.LOCALAPPDATA,'Programs'),env.LOCALAPPDATA,env.ProgramFiles,env['ProgramFiles(x86)']].filter((base):base is string=>!!base&&win32.isAbsolute(base)).map(base=>win32.join(base,name,`${target==='workbuddy-ai'?'WorkBuddyAI':target==='qoder-ide'?'Qoder':name}.exe`)));
+ if(platform==='win32')return names.flatMap(name=>{
+  const exe=target==='workbuddy-ai'?'WorkBuddyAI':target==='qoder-ide'?'Qoder':name;
+  const standard=[env.LOCALAPPDATA&&win32.join(env.LOCALAPPDATA,'Programs'),env.LOCALAPPDATA,env.ProgramFiles,env['ProgramFiles(x86)']].filter((base):base is string=>!!base&&win32.isAbsolute(base));
+  // User-configured roots are searched first and accept either a per-app folder or the executable directly.
+  return [...envRoots(env).flatMap(root=>[win32.join(root,name,`${exe}.exe`),win32.join(root,`${exe}.exe`)]),...standard.map(base=>win32.join(base,name,`${exe}.exe`))];
+ });
  return [];
 }
 export function agentCompatibility(target:Target|'claude-desktop',platform=process.platform,arch=process.arch){
@@ -69,6 +77,60 @@ const cachedStoreApp=(target:Target)=>{
  const cached=storeCache.get(target);if(cached&&cached.expires>Date.now())return cached.value;
  const value=windowsStoreApp(target);storeCache.set(target,{expires:Date.now()+15000,value});return value;
 };
+export type RegistryApp={path?:string;version?:string};
+/**
+ * Finds a desktop app through its Windows uninstall registration, so any install
+ * directory (custom drive, per-user layout) is discovered without fixed paths.
+ * Only known display names are matched and the script only reads registry values.
+ */
+export async function windowsRegistryApp(names:string[],options:{run?:PowerShell}={}):Promise<RegistryApp|undefined>{
+ if(!names.length)return;
+ const list=names.map(name=>`'${name.replaceAll("'","''")}'`).join(',');
+ const script=`$names=@(${list})
+$hits=@()
+foreach($root in 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'){
+ foreach($entry in @(Get-ItemProperty -Path $root -ErrorAction SilentlyContinue)){
+  if(-not $entry.DisplayName){continue}
+  $name=$null
+  foreach($candidate in ($names|Sort-Object -Property Length -Descending)){
+   if($entry.DisplayName.StartsWith($candidate,[System.StringComparison]::OrdinalIgnoreCase)){
+    $rest=$entry.DisplayName.Substring($candidate.Length)
+    if($rest -match '^(|\\s+v?\\d)'){$name=$candidate;break}
+   }
+  }
+  if(-not $name){continue}
+  $dirs=@()
+  if($entry.InstallLocation){$dirs+=$entry.InstallLocation.Trim('"')}
+  if($entry.DisplayIcon){
+   $icon=$entry.DisplayIcon.Split(',')[0].Trim('"')
+   if($icon -and (Test-Path -LiteralPath $icon -PathType Leaf)){$dirs+=(Split-Path -Parent $icon)}
+   elseif($icon -and (Test-Path -LiteralPath $icon -PathType Container)){$dirs+=$icon}
+  }
+  foreach($dir in $dirs){
+   $exe=$null
+   if($dir.EndsWith('.exe',[System.StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $dir -PathType Leaf)){$exe=$dir}
+   elseif(Test-Path -LiteralPath $dir -PathType Container){
+    $guess=Join-Path $dir ($name+'.exe')
+    if(Test-Path -LiteralPath $guess -PathType Leaf){$exe=$guess}
+   }
+   if($exe){$hits+=[pscustomobject]@{path=$exe;display=[string]$entry.DisplayName;version=[string]$entry.DisplayVersion};break}
+  }
+ }
+}
+if($hits.Count){$hits[0]|ConvertTo-Json -Compress}else{''}
+`;
+ try{
+  const value=JSON.parse((await (options.run??runPowerShell)(script)).trim()||'null');
+  if(!value||typeof value!=='object')return;
+  const text=(item:unknown)=>typeof item==='string'&&item?item:undefined;
+  return {path:text(value.path),version:versionOf(text(value.version)??'')??versionOf(text(value.display)??'')};
+ }catch{return;}
+}
+const registryCache=new Map<string,{expires:number;value:Promise<RegistryApp|undefined>}>();
+const cachedRegistryApp=(names:string[])=>{
+ const key=names.join('|');const cached=registryCache.get(key);if(cached&&cached.expires>Date.now())return cached.value;
+ const value=windowsRegistryApp(names);registryCache.set(key,{expires:Date.now()+60000,value});return value;
+};
 async function desktopInstallation(target:Target|'claude-desktop'):Promise<AgentInstallation|undefined>{
  for(const path of desktopCandidates(target))try{
   let version:string|undefined;
@@ -84,6 +146,12 @@ async function desktopInstallation(target:Target|'claude-desktop'):Promise<Agent
   }
   return {installed:true,channel:'application',path,version,download:recipes[target].download,automatic:false,...agentCompatibility(target)};
  }catch{/* Next installation location. */}
+ if(process.platform==='win32'){
+  const names=desktopNames[target]??[];
+  // Uninstall registration covers custom install directories that fixed roots miss.
+  const registered=names.length?await cachedRegistryApp(names):undefined;
+  if(registered?.path)return {installed:true,channel:'application',path:registered.path,version:registered.version,download:recipes[target].download,automatic:false,...agentCompatibility(target)};
+ }
  if(process.platform==='win32'&&storePackages[target as Target]){
   const store=await cachedStoreApp(target as Target);
   if(store?.location)return {installed:true,channel:'application',path:store.location,version:store.version,download:recipes[target].download,automatic:false,...agentCompatibility(target)};
