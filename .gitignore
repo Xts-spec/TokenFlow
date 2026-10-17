@@ -82,6 +82,8 @@ doc/media/*
 
 # Raw local validation exports; curated Markdown and existing tracked evidence are versioned.
 doc/archive/evidence/
+# Local-only audit notes (terms-of-service review and raw audit reports).
+doc/private/
 
 # Browser extensions (internal)
 extensions/
