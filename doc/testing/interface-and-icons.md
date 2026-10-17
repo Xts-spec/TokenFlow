@@ -40,7 +40,7 @@ xAI 曾被怀疑存在裁切问题；逐条比对官方原始 SVG 后确认是�
 | Claude Code / Claude | `claude.ico` | 与 [Claude 官网](https://claude.ai/favicon.ico) 字节相同；与安装版的星芒图形一致，桌面图标有橙色底属于官方不同载体版本。 |
 | Antigravity | `antigravity.png` | 与 [Google 官方资源](https://antigravity.google/assets/image/antigravity-logo.png) 字节相同；安装版增加 macOS 图标底板。 |
 | Kimi | `kimi.ico` | 与 [Kimi 官网](https://www.kimi.com/favicon-light.ico) 字节相同。 |
-| xAI / Grok | `xai-mark.svg` | 图形路径取自 [xAI 官方 favicon](https://docs.x.ai/_next/static/media/favicon-light.1u6watcuoe8mg.svg)，移除白色底板并用蒙版适配主题；路径和裁切范围没有发现错误。保留原始 `xai.svg` 供溯源。 |
+| xAI / Grok | `xai.svg` | 与 [xAI 官方 favicon](https://docs.x.ai/_next/static/media/favicon-light.1u6watcuoe8mg.svg) 相同。抽出的 `xai-mark.svg` 路径超出 512 画布，列表里只剩一段残缺的 X，界面改回完整官方图标。深色主题反色显示。 |
 | Qoder / Qoder IDE | `qoder.png` | 与 [Qoder 官方 CDN](https://img.alicdn.com/imgextra/i4/O1CN01QkSxiCocd3D0prc8_!!6000000008124-2-tps-412-412.png) 字节相同；已查看本机两个客户端的官方图标。 |
 | WorkBuddy / WorkBuddyAI | `workbuddy.png` | 由官方安装版 `Contents/Resources/icon.icns` 转为 PNG；与本机 WorkBuddy 5.8.3、WorkBuddyAI 5.5.2 转出文件 SHA-256 完全相同。旧的紫色 `workbuddy.svg` 不再用于界面。 |
 | ZCode | `zcode.png` | 与 [ZCode 官网](https://zcode.z.ai/favicon-192x192.png?v=20260707-transparent) 字节相同。 |
@@ -50,6 +50,9 @@ xAI 曾被怀疑存在裁切问题；逐条比对官方原始 SVG 后确认是�
 | Cursor | `cursor.png` | 与 [Cursor 官网](https://cursor.com/marketing-static/icon-192x192-light.png) 字节相同；安装版使用不同底板／明暗层次的官方立方体，不视为串用品牌。 |
 | DeepSeek Harness / DeepSeek | `deepseek.svg` | 与本机官方安装包内 `@deepseek-ai/dsh-web-frontend/dist/favicon.svg` 的所有图形路径相同；界面保留蓝色填充，桌面应用是深色图形与浅色底板。 |
 | Pi Agent | `pi.svg` | 与 [Pi 官网](https://pi.dev/logo.svg) 字节相同，当前官网 `logo-auto.svg` 也是同一资源。 |
+| Gemini | `gemini.png` | 从界面核对时提供的四色星标截图抠出，去掉底板；此前的 gstatic 细线星标在列表里发糊。只用于模型行，Antigravity 产品入口仍用自己的图标。 |
+| MiniMax | `minimax.png` | 取自 [MiniMax 官网声明的品牌图](https://filecdn.minimax.chat/public/58eca777-e31f-448a-9823-e2220e49b426.png)，裁掉底部文字，只留波形标记。 |
+| Qwen | `qwen.svg` | 图形取自 [通义千问对话页官方标识](https://assets.alicdn.com/g/qwenweb/qwen-chat-fe/0.3.19/static/images/qwen-logo.svg) 左侧标记，去掉文字。 |
 
 资源来源与本次文件校验值保存在 [sources.json](../../apps/console/public/provider-icons/sources.json)。未知来源保留现有文字缩写／来源平台回退，不凭空生成“官方图标”。
 

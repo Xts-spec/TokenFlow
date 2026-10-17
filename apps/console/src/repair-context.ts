@@ -2,7 +2,7 @@ import {cleanupPresets} from '../../shared/file-cleanup';
 import type {MaintenanceContext} from '../../../packages/core/src/maintenance-conversations';
 export type RepairPage=MaintenanceContext['page'];
 export const repairPages:Record<RepairPage,string>={agents:'本地 Agent',accounts:'账号授权',apis:'API 接口',proxy:'API 代理',usage:'用量总览',activity:'活动',cleanup:'文件清理',settings:'设置'};
-export const repairAgents:Record<string,string>={codex:'Codex',claude:'Claude Code',workbuddy:'WorkBuddy',qoder:'Qoder',deepseek:'DeepSeek Harness',pi:'Pi Agent'};
+export const repairAgents:Record<string,string>={codex:'Codex',claude:'Claude Code',workbuddy:'WorkBuddy','workbuddy-ai':'WorkBuddyAI',qoder:'Qoder',deepseek:'DeepSeek Harness',pi:'Pi Agent'};
 export function repairContextForAgent(id:string|undefined,range:MaintenanceContext['range']):MaintenanceContext{
  if(id==='qoder-ide'||id==='workbuddy-ai')return {page:'accounts',provider:id==='qoder-ide'?'qoder':'workbuddy',range};
  return {page:'agents',range,target:id&&Object.hasOwn(repairAgents,id)?id as MaintenanceContext['target']:'codex'};

@@ -21,7 +21,7 @@
 ## 技术参考
 
 - [WorkBuddy SDK 实现与验证记录](reference/workbuddy-sdk.md)：特定版本的适配依据和历史验证，不代替当前兼容性验收。
-- [Claude Desktop 接入研究](reference/claude-desktop-integration.md)：研究资料；独立桌面入口已暂缓，不能当作当前可用功能。
+- [Claude Desktop 接入研究](reference/claude-desktop-integration.md)：接入格式依据。控制台已把 Claude CLI 与 Claude Desktop 分开；Windows 未在本轮实机验收。
 - 依赖来源和授权保留在根目录 [THIRD_PARTY.md](../THIRD_PARTY.md)、[LICENSES](../LICENSES)；不与产品文档合并。
 - 构建命令见根目录 [README](../README.md#从源码运行)；Windows 原生环境和打包验收见专门的 [测试说明](待修复的问题win兼容.md#3-windows-全功能测试的执行规则)。
 
@@ -36,6 +36,7 @@
 | TRAE | [修复记录](archive/reports/trae-repair-2026-10-16.md)、[搜索](archive/reports/trae-web-search-repair-2026-10-16.md)、[整页与查找](archive/reports/trae-web-pages-repair-2026-10-16.md)、[跨平台复核](archive/reports/trae-cross-platform-review-2026-10-16.md) |
 | 旧模型发现说明 | [旧版说明](archive/reports/model-discovery-legacy.md)：包含已变化的目录策略，只供追溯 |
 | 从 README 移出的修复流水 | [历史 README 记录](archive/reports/readme-progress-2026-10-16.md) |
+| Codex 切换时主进程退出 | [内存溢出](archive/reports/codex-switch-oom-2026-10-17.md)：扫描会话时子字符串留住全文，不是切换逻辑错误 |
 
 `archive/evidence/` 保存历史报告使用的证据。原已入库的资料随目录迁移；未审核的本地原始导出保持忽略，不批量提交账号、消息、配置或凭据。部分历史报告引用的原始文件只存在于本地，复现步骤和结论应以 Markdown 报告为准。
 
