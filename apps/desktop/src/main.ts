@@ -19,6 +19,9 @@ import {workspaceWindowOptions,windowsTitleBar} from './window-options.js';
 import {CodexReconciliationMonitor} from '../../../packages/core/src/codex-reconciliation-monitor.js';
 
 const here=dirname(fileURLToPath(import.meta.url));
+// Sandboxed preload and @fastify/static both fail to read from app.asar on Windows; prefer the unpacked copy when present.
+const packagedFile=(path:string)=>{const unpacked=path.replaceAll('app.asar','app.asar.unpacked');return existsSync(unpacked)?unpacked:path;};
+const preloadPath=packagedFile(join(here,'preload.cjs'));
 if(process.argv.includes('--tokenflow-qoder-crypto')){void runQoderCrypto();}
 else {
 // Retain the existing profile across the product rename, without copying credentials.
@@ -108,7 +111,7 @@ const unpacked=bundled.replaceAll('app.asar','app.asar.unpacked');return existsS
   const show=async()=>{
     if(process.platform==='darwin')await app.dock?.show();
     if(window){if(window.isMinimized())window.restore();window.show();window.focus();return;}
-    window=new BrowserWindow({...workspaceWindowOptions(icon),...startup.bounds(),webPreferences:{preload:join(here,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+    window=new BrowserWindow({...workspaceWindowOptions(icon),...startup.bounds(),webPreferences:{preload:preloadPath,contextIsolation:true,nodeIntegration:false,sandbox:true}});
     if(startup.isMaximized())window.maximize();
     window.webContents.setWindowOpenHandler(projectWindowOpenHandler(url=>shell.openExternal(url),url=>{
         dialog.showErrorBox('无法打开项目页面',`请在浏览器中打开 ${url}`);

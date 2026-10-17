@@ -86,6 +86,7 @@
     ],
     "asarUnpack": [
       "dist/console/**",
+      "dist/preload.cjs",
       "node_modules/@token-flow/codebuddy-runtime/**",
       "node_modules/@tencent-ai/agent-sdk/**",
       "packages/codebuddy-runtime/**",
