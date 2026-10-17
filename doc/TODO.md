@@ -34,8 +34,7 @@
 - [x] 定位并复现原生名称拼接；使用本机 WorkBuddy 5.8.2 的实际格式化函数验证不附内部 ID。
 - [x] 可读标识冲突保留原模型，并生成唯一名称；原来源、请求模型、Key 权限和用量归属回归通过。
 - [x] 重命名、服务重启、旧 Key 撤销和配置恢复回归；本机内置 CLI 使用新名称完成隔离调用。
-- [x] 2026-10-18 macOS：DeepSeek Harness 与 Claude Desktop 的模型菜单显示「来源/可读名」，没有内部 ID 后缀。见 [验证记录](testing/workbuddy-model-labels.md)。
-- [ ] macOS WorkBuddy 窗口，以及 Windows 全窗口人工检查实际菜单，尤其反馈截图中的 Windows 4.22.16；验证重新应用后旧显示项更新，不重复导入。
+- [ ] macOS／Windows 全窗口人工检查实际菜单，尤其反馈截图中的 Windows 4.22.16；验证重新应用后旧显示项更新，不重复导入。
 
 ## USAGE-001：Claude 用量渠道与账号来源
 

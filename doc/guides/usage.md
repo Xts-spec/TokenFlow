@@ -48,7 +48,7 @@ Qoder 独立应用重新接入时，会先备份完整当前配置，再覆盖 `
 
 已有 TokenFlow 接入记录后，CC Switch 等工具更改了配置，可在本地 Agent 页面点击 **重新应用**，确认后先备份当前配置再应用所选模型。它不会仅因检测到变化就自动写入；确认后配置又被修改时，取消并重新操作。Codex 的重新应用与自动重启合并为一次确认，Windows 实机兼容仍按专门清单验收。
 
-Pi Agent 接入官方 Pi Coding Agent，使用官方像素图标及 `@earendil-works/pi-coding-agent`；导入后在 Pi 的 `/model` 菜单选择 TokenFlow。DeepSeek Harness 接入官方桌面客户端，导入后在应用内选择模型。各 Agent 导出的模型显示名称使用网关里的同一名称；DeepSeek Harness 与 Pi 使用模型的 `name` 字段。2026-10-18 本机菜单里，DeepSeek Harness 与 Claude Desktop 都显示「来源/可读名」，例如 `qoder/DeepSeek-Flash`、`antigravity/Gemini-3.8-Flash-(High)`，没有再附内部 ID；API 来源显示为「来源名 · 模型路径」。详见 [模型名称验证](../testing/workbuddy-model-labels.md)。`/v1/models` 也返回一致的 `name` 和 `display_name`，实际请求 `id` 保持稳定，例如 `qoder/kmodel_latest` 显示为 `qoder/Kimi-K3`。已导入的旧配置需在新版中重新应用所选模型并重启客户端；只显示 ID 的第三方客户端仍可能展示请求 ID。
+Pi Agent 接入官方 Pi Coding Agent，使用官方像素图标及 `@earendil-works/pi-coding-agent`；导入后在 Pi 的 `/model` 菜单选择 TokenFlow。DeepSeek Harness 接入官方桌面客户端，导入后在应用内选择模型。各 Agent 导出的模型显示名称使用网关里的同一名称；DeepSeek Harness 与 Pi 使用模型的 `name` 字段。`/v1/models` 也返回一致的 `name` 和 `display_name`，实际请求 `id` 保持稳定，例如 `qoder/kmodel_latest` 显示为 `qoder/Kimi-K3`。已导入的旧配置需在新版中重新应用所选模型并重启客户端；只显示 ID 的第三方客户端仍可能展示请求 ID。
 
 每个 Agent 名称旁的下载图标用于安装或更新，确认有可用新版时显示红点。未安装时提示安装，完成后自动识别，无需手动检测。DeepSeek Harness 配置保存后可立即重启桌面应用；Pi 和 Claude Code 保存配置后仅显示结果提示，不自动弹出重启页面；需要重新加载时，可从名称旁手动打开终端或重启。Pi 已有交互会话可选择对应目录重启并进入续聊列表。重启前请保存工作并结束生成。联网检查失败或版本未知时不显示更新红点。
 

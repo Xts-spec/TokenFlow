@@ -8,6 +8,20 @@ TokenFlow 是本地桌面模型网关：集中管理 GPT/Codex 等平台的多�
 
 既可以切换 Agent 自己的官方登录，也可以通过本地网关反代所选来源。你继续在熟悉的客户端工作，TokenFlow 管理模型选择、配置备份、独立 Key、协议转换和用量记录。
 
+授权过的账号和单独接入的 API，会一起出现在目标客户端的模型菜单里。名字前面是来源，后面是模型。选中之后，这次调用走那个来源自己的额度或密钥，对话、文件和工具仍留在原来的客户端。
+
+<p align="center">
+  <img src="doc/media/deepseek-harness-models.png" width="720" alt="DeepSeek Harness 的模型菜单里同时列出 WorkBuddy、Qoder、Codex、Antigravity 和 API 来源" />
+</p>
+
+DeepSeek Harness 接入后，新会话的模型菜单里可以直接选这些来源。例如选 `qoder/DeepSeek-Flash`，请求由 Qoder 账号完成，人还是在 DeepSeek Harness 里写。
+
+<p align="center">
+  <img src="doc/media/claude-desktop-models.png" width="720" alt="Claude Desktop 的 Code 模式从 TokenFlow 网关选择 Antigravity、Codex、Qoder 和 WorkBuddy 的模型" />
+</p>
+
+Claude Desktop 也一样。Code 模式连上本机网关后，模型菜单换成已授权的来源；选 `antigravity/Gemini-3.8-Flash-(High)` 时，用的是 Antigravity 账号，编辑和任务仍在 Claude Desktop 里。
+
 **[访问官网](https://token-flow.haruinia.chatgpt.site/)** · **[观看中文使用演示](doc/media/quickstart.mp4)** · **[查看使用指南](doc/guides/usage.md)**
 
 视频演示多账号授权与切换、重启后加载配置、WorkBuddy / Qoder 额度查看与反代接入、独立 Key 请求和用量核对。账号、额度及上游响应使用隔离模拟数据；模拟客户端加载配置并调用真实本机网关，不代表真实厂商或客户端的完整验证。
