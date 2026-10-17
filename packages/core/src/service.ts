@@ -14,7 +14,7 @@ import {CodexThreadMigration} from './codex-thread-migration.js';
 import {PiTerminalLifecycle} from './pi-terminal-lifecycle.js';
 import {ClaudeTerminalLifecycle} from './claude-terminal-lifecycle.js';
 import {ClaudeDesktopConnections,type ClaudeDesktopOptions} from './claude-desktop.js';
-import {claudeDesktopModel} from '../../../apps/shared/claude-desktop-models.js';
+import {claudeDesktopModelLimit} from '../../../apps/shared/claude-desktop-models.js';
 import { LocalMaintenance } from './local-maintenance.js';
 import { ApiSources, parseApiSourceInput, apiModelID } from './api-sources.js';
 import { detectProtocol, validateQuickSource, sourceNameFromURL } from './api-protocol.js';
@@ -32,7 +32,7 @@ import {mergeLocalUsageRows,recentLocalUsageRows} from './local-usage.js';
 import {UsageAttribution,mapNativeAccounts} from './usage-attribution.js';
 import {NativeUsageLogins} from './native-usage-logins.js';
 import {AgentUpdates} from './agent-updates.js';
-import { AgentConnections, modelSelectionsSchema, type ModelSelection, agentProcesses, targetSchema, type AgentPaths, type Target } from './agent-connections.js';
+import { AgentConnections, modelSelectionSchema, modelSelectionsSchema, type ModelSelection, agentProcesses, targetSchema, type AgentPaths, type Target } from './agent-connections.js';
 import { modelLabel } from './model-label.js';
 import { QoderLifecycle } from './agent-lifecycle.js';
 import { localCredential } from './local-credentials.js';
@@ -222,7 +222,7 @@ export async function createDesktopService(options:ServiceOptions) {
   // A managed Agent uses the model selected here even if an existing conversation retains an older model ID.
   // Bind by saved connection key, never by its editable display name or by an arbitrary single-model key.
   const fixedRoutes=new Map<string,{target:Target;sourceId:string;model:string;selections?:ModelSelection[];modelAliases?:Record<string,string>}>((await connections.status()).flatMap(t=>t.connection?.state==='applied'?[[t.connection.keyId,{target:t.id,sourceId:t.connection.sourceId,model:t.connection.model,selections:t.connection.selections,modelAliases:t.connection.modelAliases}] as const]:[]));
-  const desktopRoute=await claudeDesktop.route().catch(()=>null);if(desktopRoute?.keyId&&desktopRoute.selections[0])fixedRoutes.set(desktopRoute.keyId,{target:'claude',...desktopRoute.selections[0],selections:desktopRoute.selections});
+  const desktopRoute=await claudeDesktop.route().catch(()=>null);if(desktopRoute?.keyId&&desktopRoute.selections[0])fixedRoutes.set(desktopRoute.keyId,{target:'claude',...desktopRoute.selections[0],selections:desktopRoute.selections,modelAliases:desktopRoute.modelAliases});
   const codexContext=new CodexContext(root,connections.paths.codex,gatewayContext);
   const codexContextScopes=async()=>((await connections.status()).find(t=>t.id==='codex')?.backups??[]).flatMap(record=>(record.selections??[record]).map(item=>({owner:record.keyId,source:item.sourceId,model:item.model})));
   const codexLifecycle=new CodexSwitchLifecycle(()=>options.agentProcesses?options.agentProcesses('codex'):agentProcesses('codex'));
@@ -395,9 +395,10 @@ export async function createDesktopService(options:ServiceOptions) {
     const retained=(target?.backups??[]).flatMap(record=>record.selections??[{sourceId:record.sourceId,model:record.model}]);
     await validateSavedSelections(input.selections??[{sourceId:input.sourceId,model:input.model}],retained);
   };
-  const applyConnection=async(input:{target:Target;sourceId:string;model:string;revision:string;tokenLimit:number|null;allowRunning:boolean;replaceId?:string;rewrite?:boolean;selections?:ModelSelection[]},origin:string)=>{
+  const applyConnection=async(input:{target:Target;sourceId:string;model:string;revision:string;tokenLimit:number|null;allowRunning:boolean;replaceId?:string;rewrite?:boolean;selections?:ModelSelection[];fastModel?:string;fastSourceId?:string},origin:string)=>{
     const selections=input.selections??[{sourceId:input.sourceId,model:input.model}];
     if(!selections.some(item=>item.sourceId===input.sourceId&&item.model===input.model))throw Object.assign(new Error('默认模型必须在已选模型中'),{statusCode:400});
+    if(input.fastModel&&!selections.some(item=>item.sourceId===input.fastSourceId&&item.model===input.fastModel))throw Object.assign(new Error('快速模型必须在已选模型中'),{statusCode:400});
     await validateConnectionSelections(input);
     if(input.target==='codex'){await codexContext.repairLineage(async()=>options.agentProcesses?options.agentProcesses('codex'):agentProcesses('codex'));await codexThreads.prepare(input.model,selections.map(item=>item.model));}
     const created=await gatewayKeys.create(gatewayKeyInput.parse({name:`A2A · ${input.target}`,models:selections.map(item=>item.model),agents:[['workbuddy','qoder','pi','deepseek'].includes(input.target)?'openai':input.target],...(input.selections?{modelSources:Object.fromEntries(selections.map(item=>[item.model,item.sourceId]))}:{sourceId:input.sourceId}),tokenLimit:input.tokenLimit}));
@@ -419,10 +420,12 @@ export async function createDesktopService(options:ServiceOptions) {
       return {needed:false,reason:call&&call.status>=400?(call.error?.code??'call_failed'):'configuration_matches',message:call&&call.status>=400?`接口、Key 和模型配置一致，但最近调用失败。${call.error?.message??`HTTP ${call.status}，请继续检查调用链路。`} 如需更换配置，请在维修对话中说明希望更换的来源和模型。`:'接口、Key 和模型配置一致。如需更换来源、模型或重新生成 Key，请在维修对话中说明希望更换的来源和模型。'};
     }
     const selections=current.connection?.selections?.some(item=>item.sourceId===chain.sourceId&&item.model===chain.model)?current.connection.selections:undefined;
-    const preview=await connections.preview(target,origin,chain.model,true,selections);
+    const fastModel=selections&&current.connection?.fastModel&&selections.some(item=>item.model===current.connection?.fastModel)?current.connection.fastModel:undefined;
+    const preview=await connections.preview(target,origin,chain.model,true,selections,fastModel);
     const oldKey=current.connection?gatewayKeys.list().find(k=>k.id===current.connection!.keyId):undefined;
     const tokenLimit=oldKey?.tokenLimit!=null?(oldKey.unmeteredRequests?0:Math.max(0,oldKey.tokenLimit-oldKey.usedTokens)):null;
-    const input={target,...(selections?{selections}:{}),sourceId:chain.sourceId,model:chain.model,revision:preview.revision,replaceId:preview.replaceId,allowRunning:true,tokenLimit,rewrite:true};
+    const fastSourceId=fastModel?selections?.find(item=>item.model===fastModel)?.sourceId:undefined;
+    const input={target,...(selections?{selections}:{}),...(fastModel&&fastSourceId?{fastModel,fastSourceId}:{}),sourceId:chain.sourceId,model:chain.model,revision:preview.revision,replaceId:preview.replaceId,allowRunning:true,tokenLimit,rewrite:true};
     const code=JSON.stringify({operation:'replace_gateway_connection',...input,path:preview.path,previousModel:preview.previousModel,configuration:preview.routing,key:'生成仅授权此来源和模型的新 Key，写入成功后撤销旧 Key',scope:'更新此 Agent 的接口地址、Key、主模型与辅助模型；保留无关设置',backup:'写入前保存完整原配置和本次替换前配置，审批后文件变化则停止',runningProcesses:preview.pids,after:'重新读取配置并复查；请重启目标 Agent 后选用模型',originalProviderLogin:'保留，不修改'},null,2);
     return approval.propose(`将 ${current.name} 修复为 ${chain.model}`,code,()=>applyConnection(input,origin));
   };
@@ -630,26 +633,26 @@ export async function createDesktopService(options:ServiceOptions) {
   const claudeDesktopStatus=async()=>({...await claudeDesktop.status(),installation:await detectAgent('claude-desktop'),automaticRestart:process.platform==='darwin'||process.platform==='win32'});
   app.get('/api/claude-desktop',claudeDesktopStatus);
   app.post('/api/claude-desktop/connect',async req=>{
-    const input=z.object({revision:z.string().regex(/^[a-f0-9]{64}$/),selections:modelSelectionsSchema}).strict().parse(req.body);
-    if(input.selections.some(s=>!claudeDesktopModel(s.model)))throw Object.assign(new Error('所选模型不受 Claude 桌面版支持，请选择 Claude 模型或使用终端。'),{statusCode:400});
+    const input=z.object({revision:z.string().regex(/^[a-f0-9]{64}$/),selections:z.array(modelSelectionSchema).min(1).max(claudeDesktopModelLimit),fast:modelSelectionSchema.optional()}).strict().refine(value=>!value.fast||value.selections.some(item=>item.model===value.fast?.model&&item.sourceId===value.fast.sourceId),'快速模型必须在已选模型中').parse(req.body);
     const prior=await claudeDesktop.check(input.revision);await validateSavedSelections(input.selections,prior.selections);
     const created=await gatewayKeys.create(gatewayKeyInput.parse({name:'A2A · Claude Desktop',agents:['claude'],models:input.selections.map(s=>s.model),modelSources:Object.fromEntries(input.selections.map(s=>[s.model,s.sourceId])),tokenLimit:null}));
     let saved=false;
     try{await claudeDesktopChange(async()=>{
       const local=await localSnapshot();
-      await claudeDesktop.connect({...input,origin:`http://${req.headers.host}`,keyId:created.key.id,key:created.apiKey,labels:Object.fromEntries(input.selections.map(s=>[s.model,modelLabel(local.models,s.model,local.apiSources)]))});saved=true;
-      fixedRoutes.set(created.key.id,{target:'claude',...input.selections[0],selections:input.selections});
+      await claudeDesktop.connect({revision:input.revision,selections:input.selections,fastModel:input.fast?.model,origin:`http://${req.headers.host}`,keyId:created.key.id,key:created.apiKey,labels:Object.fromEntries(input.selections.map(s=>[s.model,modelLabel(local.models,s.model,local.apiSources)]))});saved=true;
+      const applied=await claudeDesktop.route();
+      fixedRoutes.set(created.key.id,{target:'claude',...input.selections[0],selections:input.selections,modelAliases:applied?.modelAliases});
       if(prior.keyId){fixedRoutes.delete(prior.keyId);if(gatewayKeys.list().some(k=>k.id===prior.keyId))await gatewayKeys.remove(prior.keyId);}
-    });}catch(error){const current=await claudeDesktop.status().catch(()=>null);if(!saved&&current?.keyId!==created.key.id)await gatewayKeys.remove(created.key.id);if(saved)throw Object.assign(new Error('Claude 桌面模型配置已保存，重新打开未确认。请手动打开 Claude；原登录和恢复备份保留。'),{statusCode:409});throw error;}
-    return {...await claudeDesktopStatus(),message:process.platform==='linux'?'配置已保存，请重新打开 Claude 桌面版。':'Claude 桌面版已重新打开，请在新会话确认模型。'};
+    });}catch(error){const current=await claudeDesktop.status().catch(()=>null);if(!saved&&current?.keyId!==created.key.id)await gatewayKeys.remove(created.key.id);if(saved)throw Object.assign(new Error('Claude Desktop 模型配置已保存，重新打开未确认。请手动打开 Claude Desktop；原登录和恢复备份保留。'),{statusCode:409});throw error;}
+    return {...await claudeDesktopStatus(),message:process.platform==='linux'?'配置已保存，请重新打开 Claude Desktop。':'Claude Desktop 已重新打开，请在新会话确认模型。'};
   });
   for(const action of ['restore','official'] as const)app.post(`/api/claude-desktop/${action}`,async req=>{
     const {revision}=z.object({revision:z.string().regex(/^[a-f0-9]{64}$/)}).strict().parse(req.body);
     const prior=await claudeDesktop.check(revision);let saved=false;
-    if(action==='restore'&&!prior.backup)throw Object.assign(new Error('没有可恢复的 Claude 桌面接入备份。'),{statusCode:409});
+    if(action==='restore'&&!prior.backup)throw Object.assign(new Error('没有可恢复的 Claude Desktop 接入备份。'),{statusCode:409});
     try{await claudeDesktopChange(async()=>{if(prior.backup){await claudeDesktop.restore(revision);saved=true;if(prior.keyId){fixedRoutes.delete(prior.keyId);if(gatewayKeys.list().some(k=>k.id===prior.keyId))await gatewayKeys.remove(prior.keyId);}}});}
-    catch(error){if(saved)throw Object.assign(new Error('Claude 桌面原配置已恢复，重新打开未确认。请手动打开 Claude。'),{statusCode:409});throw error;}
-    return {...await claudeDesktopStatus(),message:action==='official'?`${process.platform==='linux'?'请手动打开':'已打开'} Claude。请在客户端账号菜单完成官方登录或切换；终端授权不会替换桌面登录。`:'已恢复接入前的桌面配置与部署模式，原官方登录数据保留。'};
+    catch(error){if(saved)throw Object.assign(new Error('Claude Desktop 原配置已恢复，重新打开未确认。请手动打开 Claude Desktop。'),{statusCode:409});throw error;}
+    return {...await claudeDesktopStatus(),message:action==='official'?`${process.platform==='linux'?'请手动打开':'已打开'} Claude Desktop。请在客户端账号菜单完成官方登录或切换；Claude CLI 授权不会替换 Claude Desktop 登录。`:'已恢复接入前的配置，原官方登录数据保留。'};
   });
   app.post('/api/claude-desktop/restart',async req=>{z.object({}).strict().parse(req.body??{});return qoderLifecycle.restart('claude-desktop');});
   app.post('/api/a2a/import',async req=>{
@@ -659,7 +662,7 @@ export async function createDesktopService(options:ServiceOptions) {
   });
   app.post('/api/a2a/connect',async req=>{
 
-    const input=z.object({replaceId:z.string().uuid().optional(),rewrite:z.boolean().default(false),allowRunning:z.boolean().default(false),restartCodex:z.boolean().default(false),target:targetSchema,selections:modelSelectionsSchema.optional(),sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(1).max(300),revision:z.string().regex(/^[a-f0-9]{64}$/),tokenLimit:z.number().int().min(0).max(1e12).nullable().default(null)}).strict().refine(input=>!input.rewrite||!!input.replaceId,'重新应用需要当前接入记录').parse(req.body);
+    const input=z.object({replaceId:z.string().uuid().optional(),rewrite:z.boolean().default(false),allowRunning:z.boolean().default(false),restartCodex:z.boolean().default(false),target:targetSchema,selections:modelSelectionsSchema.optional(),sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(1).max(300),fastSourceId:z.string().regex(/^[a-f0-9]{24}$/).optional(),fastModel:z.string().min(1).max(300).optional(),revision:z.string().regex(/^[a-f0-9]{64}$/),tokenLimit:z.number().int().min(0).max(1e12).nullable().default(null)}).strict().refine(input=>!input.rewrite||!!input.replaceId,'重新应用需要当前接入记录').refine(input=>(input.fastSourceId===undefined)===(input.fastModel===undefined),'快速模型需要同时提供来源和模型').parse(req.body);
     if(input.replaceId)approval.clear();
     if(input.restartCodex&&input.target!=='codex')throw Object.assign(new Error('自动迁移重启仅支持 Codex。'),{statusCode:400});
     // Validate the revision and saved source bindings before interrupting the running application.
@@ -962,9 +965,9 @@ export async function createDesktopService(options:ServiceOptions) {
     const client=gatewayKeys.authenticate(bearer);
     if(bearer && !same(bearer,options.token) && !client) return reply.code(401).send({error:{message:'Invalid or disabled API key',type:'authentication_error'}});
     const fixed=client&&fixedRoutes.get(client.id);
-    if(path!=='models'&&fixed?.target==='workbuddy'&&fixed.modelAliases){
+    if(path!=='models'&&fixed?.modelAliases){
       const requested=z.object({model:z.string().min(1).max(300)}).parse(req.body).model;
-      const alias=requested.replace(/^custom-local:/,'');
+      const alias=fixed.target==='workbuddy'?requested.replace(/^custom-local:/,''):requested;
       if(Object.hasOwn(fixed.modelAliases,alias))req.body={...(req.body as Record<string,unknown>),model:fixed.modelAliases[alias]};
     }
     if(path!=='models'&&fixed&&!fixed.selections&&client.sourceId===fixed.sourceId&&client.models.length===1&&client.models[0]===fixed.model){
