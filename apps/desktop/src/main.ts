@@ -1,6 +1,6 @@
 import {qoderCrypto,qoderIdeCrypto,runQoderCrypto} from './qoder-crypto.js';
 import { app, BrowserWindow, safeStorage, session, dialog, shell, nativeImage, ipcMain, clipboard, Tray, Menu } from 'electron';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, existsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join, dirname, resolve } from 'node:path';
@@ -89,7 +89,8 @@ async function start() {
       const result=window?await dialog.showOpenDialog(window,picker):await dialog.showOpenDialog(picker);
       return result.canceled?undefined:result.filePaths[0];
     },
-  },claudeCredentialStore,desktopAccounts:{crypto:guardCredentialAccess(allowCredentials,qoderCrypto)},qoderIde:{crypto:guardCredentialAccess(allowCredentials,qoderIdeCrypto)},credentialWarnings:()=>[...secrets.warnings(),...(!allowCredentials?['本次启动已跳过所有安全存储，已有凭据文件已保留；部分账号和 API 密钥暂不可用。请重启后选择“允许读取”以恢复访问。']:[])],openExternal:url=>shell.openExternal(url),proxyPort:process.env.AGENT_PROXY_PORT?Number(process.env.AGENT_PROXY_PORT):undefined,binary:process.env.CLIPROXY_BINARY?resolve(process.env.CLIPROXY_BINARY):join(base,'sidecars',`${process.platform}-${process.arch}`,process.platform==='win32'?'cliproxyapi.exe':'cliproxyapi'),uiRoot:join(here,'console')});
+  },claudeCredentialStore,desktopAccounts:{crypto:guardCredentialAccess(allowCredentials,qoderCrypto)},qoderIde:{crypto:guardCredentialAccess(allowCredentials,qoderIdeCrypto)},credentialWarnings:()=>[...secrets.warnings(),...(!allowCredentials?['本次启动已跳过所有安全存储，已有凭据文件已保留；部分账号和 API 密钥暂不可用。请重启后选择“允许读取”以恢复访问。']:[])],openExternal:url=>shell.openExternal(url),proxyPort:process.env.AGENT_PROXY_PORT?Number(process.env.AGENT_PROXY_PORT):undefined,binary:process.env.CLIPROXY_BINARY?resolve(process.env.CLIPROXY_BINARY):join(base,'sidecars',`${process.platform}-${process.arch}`,process.platform==='win32'?'cliproxyapi.exe':'cliproxyapi'),uiRoot:(()=>{const bundled=join(here,'console'); // @fastify/static cannot serve from inside app.asar on Windows; unpacked files take precedence.
+const unpacked=bundled.replaceAll('app.asar','app.asar.unpacked');return existsSync(unpacked)?unpacked:bundled;})()});
   const address=await service.app.listen({host:'127.0.0.1',port:Number(process.env.AGENT_PORT??9527)});
   const reconciliation=new CodexReconciliationMonitor({root,codexHome:dirname(agentPaths().codex),allowOfficial:allowCredentials,proxyURL:network.url});
   void reconciliation.start();

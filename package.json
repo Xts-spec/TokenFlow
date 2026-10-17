@@ -121,7 +121,7 @@
       "target": [
         "zip"
       ],
-      "icon": "apps/console/public/app-icon.png",
+      "icon": "apps/console/public/app-icon.ico",
       "extraResources": [
         {
           "from": "sidecars/win32-${arch}",
