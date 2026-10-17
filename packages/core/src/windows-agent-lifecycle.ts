@@ -3,7 +3,7 @@ import {promisify} from 'node:util';
 import {open,readFile,lstat,access} from 'node:fs/promises';
 import {win32,join} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
-import {desktopCandidates} from './agent-installation.js';
+import {desktopCandidates,desktopNames,windowsRegistryApp} from './agent-installation.js';
 
 export type WindowsTarget='claude-desktop'|'qoder'|'qoder-ide'|'codex'|'workbuddy'|'workbuddy-ai'|'deepseek';
 export type WindowsRun=(file:string,args:string[])=>Promise<{stdout:string}>;
@@ -97,6 +97,9 @@ if($p){try{[pscustomobject]@{pid=$p.Id;parent=$_.ParentProcessId;path=$p.Path;st
  }
  private async candidates(target:WindowsTarget){
   const choices:{path:string;appId?:string}[]=desktopCandidates(target,'win32').map(path=>({path}));
+  // Uninstall registration covers custom install directories that the fixed roots miss.
+  const registered=await windowsRegistryApp(desktopNames[target]??[]).catch(()=>undefined);
+  if(registered?.path&&win32.isAbsolute(registered.path))choices.push({path:registered.path});
   if(target==='codex'){
    // Resolve the Store package's manifest, never a display-name match in the Start menu.
    const text=await powershell(this.run,`# tokenflow:store\n$rows=@(Get-AppxPackage -Name 'OpenAI.Codex' | ForEach-Object {

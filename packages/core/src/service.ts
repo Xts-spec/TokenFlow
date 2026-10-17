@@ -901,10 +901,16 @@ export async function createDesktopService(options:ServiceOptions) {
     const id=sourceID(req);const {model}=z.object({model:z.string().min(1).max(300)}).strict().parse(req.body);resolveSource(id,model);
     const created=await gatewayKeys.create(gatewayKeyInput.parse({name:'来源最小验证',models:[model],sourceId:id,tokenLimit:4096}));
     try{
-      const response=await app.inject({method:'POST',url:'/v1/responses',headers:{host:'127.0.0.1:9527',authorization:`Bearer ${created.apiKey}`},payload:{model,input:'Reply OK only.',max_output_tokens:128,store:false,stream:false}});
-      let data:{status?:string;output?:{type?:string;content?:{type?:string;text?:string}[]}[]}={};try{data=response.json();}catch{/* Invalid output is a failed check, not permission to retry. */}
-      const passed=response.statusCode===200&&data.status==='completed'&&Array.isArray(data.output)&&data.output.some(v=>v.type==='message'&&v.content?.some(c=>c.type==='output_text'&&typeof c.text==='string'&&!!c.text.trim()));
-      const message=passed?'最小文本调用通过；未验证工具、图片或客户端。':response.statusCode===200?'接口有响应，但未返回完整文本；可能达到输出上限，不能据此判断权限失效。':`最小调用未通过（HTTP ${response.statusCode}）；请检查地址、协议、密钥和模型权限。`;
+      // A real loopback request, not app.inject, whenever the server is listening: packaged
+      // builds must not depend on fastify's inject engine (light-my-request) at runtime, and
+      // this also exercises the exact client route. Tests without a bound socket keep inject.
+      const address=app.server?.address();const port=typeof address==='object'&&address?address.port:0;
+      const payload={model,input:'Reply OK only.',max_output_tokens:128,store:false,stream:false};
+      const raw=port?await fetch(`http://127.0.0.1:${port}/v1/responses`,{method:'POST',headers:{authorization:`Bearer ${created.apiKey}`,'content-type':'application/json'},body:JSON.stringify(payload),signal:AbortSignal.timeout(45000)}):await app.inject({method:'POST',url:'/v1/responses',headers:{host:'127.0.0.1',authorization:`Bearer ${created.apiKey}`},payload:payload});
+      const statusCode='status' in raw?raw.status:raw.statusCode;
+      let data:{status?:string;output?:{type?:string;content?:{type?:string;text?:string}[]}[]}={};try{data=await raw.json() as typeof data;}catch{/* Invalid output is a failed check, not permission to retry. */}
+      const passed=statusCode===200&&data.status==='completed'&&Array.isArray(data.output)&&data.output.some(v=>v.type==='message'&&v.content?.some(c=>c.type==='output_text'&&typeof c.text==='string'&&!!c.text.trim()));
+      const message=passed?'最小文本调用通过；未验证工具、图片或客户端。':statusCode===200?'接口有响应，但未返回完整文本；可能达到输出上限，不能据此判断权限失效。':`最小调用未通过（HTTP ${statusCode}）；请检查地址、协议、密钥和模型权限。`;
       await apiSources.record(id,model,passed,message);return {passed,message};
     }finally{await gatewayKeys.remove(created.key.id);}
   });

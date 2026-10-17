@@ -31,7 +31,7 @@ async function packageOf(path:string,name:string){
   if(data.name===name&&typeof data.version==='string')return data.version;
  }catch{/* Executables need not be npm packages. */}
 }
-const desktopNames:Partial<Record<Target|'claude-desktop'|'workbuddy-ai'|'qoder-ide',string[]>>={'claude-desktop':['Claude'],codex:['Codex','ChatGPT'],qoder:['Qoder'],'qoder-ide':['Qoder IDE','Qoder'],workbuddy:['WorkBuddy'],'workbuddy-ai':['WorkBuddy AI','WorkBuddyAI'],deepseek:['DeepSeek Harness']};
+export const desktopNames:Partial<Record<Target|'claude-desktop'|'workbuddy-ai'|'qoder-ide',string[]>>={'claude-desktop':['Claude'],codex:['Codex','ChatGPT'],qoder:['Qoder'],'qoder-ide':['Qoder IDE','Qoder'],workbuddy:['WorkBuddy'],'workbuddy-ai':['WorkBuddy AI','WorkBuddyAI'],deepseek:['DeepSeek Harness']};
 // AGENT_INSTALL_DIRS lists extra roots (PATH-style separators); portable or non-standard installs live there.
 const envRoots=(env:NodeJS.ProcessEnv)=>(env.AGENT_INSTALL_DIRS??'').split(delimiter).map(root=>root.trim()).filter(root=>root&&isAbsolute(root));
 export function desktopCandidates(target:Target|'claude-desktop'|'workbuddy-ai'|'qoder-ide',platform=process.platform,home=homedir(),env:NodeJS.ProcessEnv=process.env){
