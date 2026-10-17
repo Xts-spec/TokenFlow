@@ -414,7 +414,7 @@ v10.15.26.15 源码已接入桌面自动启停；Windows 包仍待构建与实�
 
 打包运行检查需由 Windows 接手者使用打包的 Electron 可执行文件及 `ELECTRON_RUN_AS_NODE=1` 运行；环境变量写法用 PowerShell，测试结束后清除。该脚本的夹具／本机路径假设需先核对，失败记为包内测试失败或夹具移植阻塞，不能改用开发 Node 后宣称包内检查通过。
 
-## 5.9 WorkBuddy SDK 通道（workbuddy/ 前缀模型）Windows 实测超时（2026-10-17 新增，待定位）
+## 5.9 WorkBuddy SDK 通道（workbuddy/ 前缀模型）Windows 实测超时（2026-10-17 新增；同日已定位修复，见文末"5.9 修复结论"）
 
 ### 现象（release11，`D:\agents\apps\TokenFlow`，实机）
 
@@ -442,6 +442,18 @@ v10.15.26.15 源码已接入桌面自动启停；Windows 包仍待构建与实�
 2. 在 `workbuddy-sdk-packaged-live.mjs` / `workbuddy-sdk-gateway-live.ts` 基础上加最小复现：直接 `runOfficialSDK` 一次并打印 SDK 内部事件（onText / 错误 / 超时时刻）。
 3. 核对 agent-sdk 是否需要 IDE 在线心跳或特定 user-agent/设备指纹；确认 access_token 之外是否还需要 jwt 刷新路径。
 4. 若 SDK 短期无法在 Windows 工作，考虑给 `workbuddy/` 前缀模型增加 cliproxy 适配器回退（当前 8317 已具备该能力，仅缺网关路由选择逻辑）。
+
+### 5.9 修复结论（2026-10-17 晚，已验证）
+
+根因：agent-sdk 0.3.276 的 CLI（headless bundle）启动时会起一个内置 "cell" HTTP server，端口取 `SERVER__PORT` env，缺省 **127.0.0.1:6201**。同机 WorkBuddy 桌面宿主自己的 codebuddy daemon（`--serve`）已占用 6201 → CLI `listen EADDRINUSE` → SDK 只发出顶层 error 消息（runtime 原实现不处理该消息、无 result）→ 消息循环静默结束 → 60s idle watchdog + retry → 网关 504。定位手段：`--require` 注入 `net.Server.prototype.listen` hook 抓到 listen(6201,'127.0.0.1') 调用栈（codebuddy-headless.js 应用启动路径 `parseInt(process.env.SERVER__PORT)||cell.server.port`）。
+
+修复（packages/codebuddy-runtime/index.js）：
+1. CLI 子进程 env 注入 `SERVER__PORT:'0',SERVER__HOST:'127.0.0.1'`——内置 server 改绑随机空闲端口，与宿主 daemon 共存。
+2. 消息循环对顶层 `error` 消息 fail-fast 抛出真实原因，不再等 60s idle watchdog 报假超时。
+
+验证（release14，`D:\agents\apps\TokenFlow` 实机 + 独立探针）：探针 step-5-preview 9.8s / hy3 7.8s `result success`；经网关 9527 用 tfl_ Key 走 SDK 通道 `workbuddy/hy3` HTTP 200 回复"成功"、`workbuddy/step-5-preview` HTTP 200 回复"2"。SDK 通道每次请求约 45-48s（CLI 冷启动 + marketplace 暂存的固有开销，非阻塞）。相关测试 61/61 通过。
+
+区域规则备忘（与额度接口一致）：WorkBuddy 国内账号（www.codebuddy.cn）→ SDK region=china、环境 internal、推理默认 copilot.tencent.com；WorkBuddyAI（www.workbuddy.ai）→ region=international、环境 public/external、推理固定 www.workbuddy.ai。额度不经 SDK，`POST {base}/billing/meter/get-user-resource-summary` 按账号登录域名分流（quota/workbuddy.ts）；国际 token 查国内计费地址返回 401。quota 分流集合已与 SDK 国际区域名（www.workbuddy.ai / www.codebuddy.ai）对齐。
 
 ## 6. 测试结果回传模板
 

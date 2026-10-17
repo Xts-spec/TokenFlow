@@ -72,7 +72,11 @@ async function runSDKAttempt(input){
  const env=Object.fromEntries(Object.keys(process.env).filter(k=>/^(CODEBUDDY|ANTHROPIC|OPENAI|WORKBUDDY|ACC_PRODUCT)_/.test(k)).map(k=>[k,undefined]));
  // CLI cloud discovery precedes the late --endpoint option. Set its early
  // authoritative endpoint too, so an overseas token never discovers another region.
- Object.assign(env,{ACC_PRODUCT_CONFIG_V3:JSON.stringify({endpoint:input.endpoint??(input.region==='china'?'https://copilot.tencent.com':'https://www.codebuddy.ai')}),CODEBUDDY_AUTH_TOKEN:input.token,CODEBUDDY_INTERNET_ENVIRONMENT:input.region==='china'?'internal':'public',CODEBUDDY_CONFIG_DIR:input.configDir,...(process.versions.electron?{ELECTRON_RUN_AS_NODE:'1'}:{})});
+ // SERVER__PORT=0: the CLI's embedded cell HTTP server otherwise binds 127.0.0.1:6201,
+ // colliding with the WorkBuddy host daemon on the same machine; every SDK request
+ // then dies with EADDRINUSE before any model event and the gateway reports a
+ // misleading idle timeout. Port 0 picks a free ephemeral port instead.
+ Object.assign(env,{ACC_PRODUCT_CONFIG_V3:JSON.stringify({endpoint:input.endpoint??(input.region==='china'?'https://copilot.tencent.com':'https://www.codebuddy.ai')}),CODEBUDDY_AUTH_TOKEN:input.token,CODEBUDDY_INTERNET_ENVIRONMENT:input.region==='china'?'internal':'public',CODEBUDDY_CONFIG_DIR:input.configDir,SERVER__PORT:'0',SERVER__HOST:'127.0.0.1',...(process.versions.electron?{ELECTRON_RUN_AS_NODE:'1'}:{})});
  let q,child;
  const abortController=new AbortController();const cancel=()=>{abortController.abort();child??=q?.transport?.process;q?.transport?.close();};input.signal.addEventListener('abort',cancel,{once:true});if(input.signal.aborted)cancel();
  // Model events, not CLI status/keepalive traffic, reset this watchdog.
@@ -108,6 +112,10 @@ async function runSDKAttempt(input){
    // SDK 0.3.276 closes asynchronously. Retain only its owned child handle so
    // temporary session files are removed after the CLI has finished flushing.
    child??=q.transport?.process;
+   // Top-level CLI errors (e.g. listen EADDRINUSE on its embedded server) end the
+   // stream without a result message. Fail fast with the real cause instead of
+   // silently draining until the 60-second idle watchdog reports a fake timeout.
+   if(message.type==='error')throw new Error(`SDK CLI error: ${typeof message.error==='string'?message.error:JSON.stringify(message.error??message)}`);
    if(message.type==='stream_event'){
     const event=message.event;
     if(event.type==='message_start'&&!idleTimer)progress();

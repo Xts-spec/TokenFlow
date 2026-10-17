@@ -7,7 +7,10 @@ import type { QuotaProvider, QuotaWindow } from './types.js';
 export const workbuddyQuota: QuotaProvider = {
   id: 'workbuddy',
   async fetch(call, account) {
-    const base=account.domain==='www.workbuddy.ai'||account.domain==='https://www.workbuddy.ai'?'https://www.workbuddy.ai':'https://copilot.tencent.com';
+    // 额度不经 SDK，按账号登录域名分流：国际区（.ai）账号打国际站，
+    // 国内域名打 copilot.tencent.com。国际 token 查国内计费地址返回 401。
+    const international = /^(https:\/\/)?(www\.workbuddy\.ai|www\.codebuddy\.ai)\/?$/.test(String(account.domain ?? ''));
+    const base=international?'https://www.workbuddy.ai':'https://copilot.tencent.com';
     const response = await call({
       method: 'POST',
       url: base+'/billing/meter/get-user-resource-summary',
