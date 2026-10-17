@@ -314,7 +314,7 @@ export async function createDesktopService(options:ServiceOptions) {
     const reviews=await Promise.all(snapshot.targets.filter(t=>t.connection).map(async t=>{
       const record=t.connection!;let review;try{review=await connections.review(record.id);}catch{return {id:record.id,target:t.id,checks:[{name:'读取接入配置失败，其他链路信息仍可检查',ok:false}],liveCallVerified:false};}const key=gatewayKeys.list().find(k=>k.id===record.keyId);
       let sourceAvailable=true;try{for(const item of record.selections??[record])resolveSource(item.sourceId,item.model);}catch{sourceAvailable=false;}
-      review.checks.push({name:'Key 已启用且授权模型与目标协议',ok:!!key?.enabled&&(record.selections??[record]).every(item=>key.models.includes(item.model))&&allowsProtocol(key.agents,t.id==='claude'?'messages':t.id==='workbuddy'?'chat/completions':'responses')&&(record.selections?record.selections.every(item=>key.modelSources?.[item.model]===item.sourceId):key.sourceId===record.sourceId)},{name:'源账号与模型可用',ok:sourceAvailable});
+      review.checks.push({name:'Key 已启用且授权模型与目标协议',ok:!!key?.enabled&&(record.selections??[record]).every(item=>key.models.includes(item.model))&&allowsProtocol(key.agents,t.id==='claude'?'messages':t.id==='workbuddy'||t.id==='workbuddy-ai'?'chat/completions':'responses')&&(record.selections?record.selections.every(item=>key.modelSources?.[item.model]===item.sourceId):key.sourceId===record.sourceId)},{name:'源账号与模型可用',ok:sourceAvailable});
       review.checks.push({name:'Key 额度可用',ok:!!key&&(key.tokenLimit===null||(!key.unmeteredRequests&&key.usedTokens<key.tokenLimit))});
       return review;
     }));
@@ -334,7 +334,7 @@ export async function createDesktopService(options:ServiceOptions) {
     return {...snapshot,reviews,nativeLogin,selectedAgent,latestSwitchFailure:switchFailures[0]??null,selectedAgentSwitchFailure:selectedAgent?switchFailures.find(item=>item.target===selectedAgent)??null:null,switchFailures:switchFailures.slice(0,8),targets:snapshot.targets.map(t=>({...t,backups:t.backups.filter((b,i)=>i<5||b.id===chain?.connectionId)})),gateway:{state:local.state,selectedModel:local.models.find(m=>m.id===model),modelCount:local.models.length},
       chain:chain?{requested:chain,source:source?{...source,models:undefined}:null,sourceAvailable,quota:sourceId?local.quotas[sourceId]:undefined,
         selectedModel:model,record:record??null,matchesInstalled:!!target?.connection&&target.connection.sourceId===sourceId&&target.connection.model===model,
-        targetProtocol:chain.target==='claude'?'messages':['workbuddy','pi','deepseek'].includes(chain.target)?'chat/completions':'responses',
+        targetProtocol:chain.target==='claude'?'messages':['workbuddy','workbuddy-ai','pi','deepseek'].includes(chain.target)?'chat/completions':'responses',
         manualSetupRequired:false,keys:keys.map(k=>({id:k.id,enabled:k.enabled,agents:k.agents,models:k.models,tokenLimit:k.tokenLimit,usedTokens:k.usedTokens}))}:null,
       recentCalls:activity.snapshot().recent.filter(c=>!chain||keys.some(k=>k.id===c.keyId)&&c.model===model).slice(0,12)};
 
@@ -401,7 +401,7 @@ export async function createDesktopService(options:ServiceOptions) {
     if(input.fastModel&&!selections.some(item=>item.sourceId===input.fastSourceId&&item.model===input.fastModel))throw Object.assign(new Error('快速模型必须在已选模型中'),{statusCode:400});
     await validateConnectionSelections(input);
     if(input.target==='codex'){await codexContext.repairLineage(async()=>options.agentProcesses?options.agentProcesses('codex'):agentProcesses('codex'));await codexThreads.prepare(input.model,selections.map(item=>item.model));}
-    const created=await gatewayKeys.create(gatewayKeyInput.parse({name:`A2A · ${input.target}`,models:selections.map(item=>item.model),agents:[['workbuddy','qoder','pi','deepseek'].includes(input.target)?'openai':input.target],...(input.selections?{modelSources:Object.fromEntries(selections.map(item=>[item.model,item.sourceId]))}:{sourceId:input.sourceId}),tokenLimit:input.tokenLimit}));
+    const created=await gatewayKeys.create(gatewayKeyInput.parse({name:`A2A · ${input.target}`,models:selections.map(item=>item.model),agents:[['workbuddy','workbuddy-ai','qoder','pi','deepseek'].includes(input.target)?'openai':input.target],...(input.selections?{modelSources:Object.fromEntries(selections.map(item=>[item.model,item.sourceId]))}:{sourceId:input.sourceId}),tokenLimit:input.tokenLimit}));
     try{
       const local=await localSnapshot(),catalog=local.models;
       const record=await connections.apply({...input,modelLabels:Object.fromEntries(selections.map(item=>[item.model,modelLabel(catalog,item.model,local.apiSources)])),modelImages:Object.fromEntries(selections.map(item=>[item.model,catalog.find(model=>model.id===item.model)?.capabilities?.images===true])),keyId:created.key.id,key:created.apiKey,origin});
@@ -501,7 +501,7 @@ export async function createDesktopService(options:ServiceOptions) {
     await validateSavedSelections([{sourceId,model}]);
     const key=context.keyId?gatewayKeys.list().find(k=>k.id===context.keyId):undefined;
     if(context.keyId&&(!key?.enabled||!key.models.includes(model)||(key.modelSources?.[model]??key.sourceId)!==sourceId))throw new Error('所选 Key 未启用或未授权该来源和模型，请先检查 Key 配置。');
-    const protocol=input.protocol??(target==='claude'?'messages':target&&['workbuddy','pi','deepseek'].includes(target)?'chat/completions':'responses');
+    const protocol=input.protocol??(target==='claude'?'messages':target&&['workbuddy','workbuddy-ai','pi','deepseek'].includes(target)?'chat/completions':'responses');
     if(key&&!allowsProtocol(key.agents,protocol))throw new Error('所选 Key 未授权该协议，请先检查协议权限。');
     const address=app.server.address();if(!address||typeof address==='string')return {passed:false,category:'gateway_not_listening',sourceId,model,protocol,message:'本机 HTTP 服务尚未监听，未发送模型请求。'};
     if(probeActive)throw new Error('已有模型诊断请求正在执行，请等待完成。');
@@ -967,7 +967,7 @@ export async function createDesktopService(options:ServiceOptions) {
     const fixed=client&&fixedRoutes.get(client.id);
     if(path!=='models'&&fixed?.modelAliases){
       const requested=z.object({model:z.string().min(1).max(300)}).parse(req.body).model;
-      const alias=fixed.target==='workbuddy'?requested.replace(/^custom-local:/,''):requested;
+      const alias=fixed.target==='workbuddy'||fixed.target==='workbuddy-ai'?requested.replace(/^custom-local:/,''):requested;
       if(Object.hasOwn(fixed.modelAliases,alias))req.body={...(req.body as Record<string,unknown>),model:fixed.modelAliases[alias]};
     }
     if(path!=='models'&&fixed&&!fixed.selections&&client.sourceId===fixed.sourceId&&client.models.length===1&&client.models[0]===fixed.model){
@@ -1023,7 +1023,7 @@ export async function createDesktopService(options:ServiceOptions) {
       if(path==='models'){
         const sources=await apiSources.list();
         return {object:'list',data:available.map(model=>{
-          const id=fixed?.target==='workbuddy'?Object.entries(fixed.modelAliases??{}).find(([,route])=>route===model.id)?.[0]??model.id:model.id;
+          const id=fixed?.target==='workbuddy'||fixed?.target==='workbuddy-ai'?Object.entries(fixed.modelAliases??{}).find(([,route])=>route===model.id)?.[0]??model.id:model.id;
           const name=id!==model.id?id:modelLabel(available,model.id,sources);
           return {id,object:'model',owned_by:model.provider,name,display_name:name,...(model.capabilities?{capabilities:model.capabilities}:model.textOnly?{capabilities:{text:true,tools:false,images:false}}:{})};
         })};

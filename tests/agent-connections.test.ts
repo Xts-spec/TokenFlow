@@ -227,6 +227,18 @@ it('switches a missing WorkBuddy connection to the selected source while preserv
  expect(JSON.parse(await readFile(paths.workbuddy,'utf8'))[0].id).toBe('qoder/k3');expect((await connections.status())[2].configurationState).toBe('configured');expect((await connections.review(next.id)).checks.every(c=>c.ok)).toBe(true);
  await connections.restore(next.id);expect(await readFile(paths.workbuddy,'utf8')).toBe('[]');expect((await connections.status())[2].backups.every(r=>r.state==='restored')).toBe(true);
 });
+it('writes WorkBuddyAI gateway models without changing the domestic file',async()=>{
+ const {paths,connections}=await setup();await mkdir(join(paths.workbuddy,'..'),{recursive:true});await writeFile(paths.workbuddy,'[{"id":"kept"}]');
+ const ai=(await connections.status()).find(item=>item.id==='workbuddy-ai')!;
+ expect(ai.path).not.toBe(paths.workbuddy);
+ const record=await connections.apply({target:'workbuddy-ai',revision:ai.revision,origin:'http://127.0.0.1:9527',model:'qoder/k3',sourceId:'s',keyId:randomUUID(),key:'ai-key'});
+ expect(JSON.parse(await readFile(ai.path,'utf8'))[0]).toMatchObject({id:'qoder/k3',url:'http://127.0.0.1:9527/v1/chat/completions',supportsToolCall:true});
+ expect(await readFile(paths.workbuddy,'utf8')).toBe('[{"id":"kept"}]');
+ expect((await connections.review(record.id)).checks.every(check=>check.ok)).toBe(true);
+ await connections.restore(record.id);
+ expect(await readFile(paths.workbuddy,'utf8')).toBe('[{"id":"kept"}]');
+ await expect(readFile(ai.path)).rejects.toMatchObject({code:'ENOENT'});
+});
 it('redacts unrelated provider secrets from approval previews and refuses changed revisions',async()=>{
  const {paths,connections}=await setup();await writeFile(paths.claude,JSON.stringify({env:{ANTHROPIC_CUSTOM_SECRET:'private-secret'}}));const p=await connections.preview('claude','http://127.0.0.1:9527','qoder/k3');expect(JSON.stringify(p)).not.toContain('private-secret');await writeFile(paths.claude,'{"new":true}');
  await expect(connections.apply({target:'claude',revision:p.revision,origin:'http://127.0.0.1:9527',model:'qoder/k3',sourceId:'s',keyId:randomUUID(),key:'key'})).rejects.toThrow();expect(await readFile(paths.claude,'utf8')).toBe('{"new":true}');

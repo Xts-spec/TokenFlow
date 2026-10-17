@@ -13,6 +13,7 @@ import { QuotaDetails } from './QuotaDetails';
 import { qualifiedModelLabel as modelLabel } from './model-label';
 import { formatTokens, percentText, rangeLabel, totalsOf } from './usage-model';
 import type { UsageData } from './usage-data';
+import {officialLoginHeld} from '../../shared/native-login-identity';
 import { clientOptions, loginNames, useNativeLogin, type LoginProvider } from './native-login';
 import { Icon } from './Icons';
 import {UsageFold,modelManufacturer} from './UsagePanel';
@@ -103,7 +104,7 @@ export function AccountsPage({local,usage,disabled,actions,notify,onContext}:{lo
  };
 
  const nativeLogin=login&&client&&<NativeLoginStatus name={loginNames[client]} login={login} showRefresh={false}>
-    {selected&&!selected.local&&!login.status?.readOnly&&<button className="textButton" disabled={locked||!selected.switchable} title={selected.reason||undefined} onClick={()=>void switchLogin(client,selected.id,selected.label)}>切换到此账号</button>}
+    {selected&&client&&!officialLoginHeld(client,selected.local,selected.current)&&!login.status?.readOnly&&<button className="textButton" disabled={locked||!selected.switchable} title={selected.reason||undefined} onClick={()=>void switchLogin(client,selected.id,selected.label)}>切换到此账号</button>}
     {login.status?.backup&&<button className="textButton" disabled={locked} onClick={()=>void (async()=>{if(lock.current)return;if(!await officialConfirm.confirm(loginNames[client],true))return;lock.current=true;setSwitching(true);try{await login.restore();notify({kind:'ok',text:`${loginNames[client]} 已恢复原登录。`});}catch(error){notify({kind:'error',text:error instanceof Error?error.message:'恢复失败'});}finally{await login.refresh();lock.current=false;setSwitching(false);}})()}>恢复原登录</button>}
    </NativeLoginStatus>;
 
@@ -155,7 +156,7 @@ export function AccountsPage({local,usage,disabled,actions,notify,onContext}:{lo
        <ColumnDivider storageKey="token-flow.layout.account-split" label="调整额度与模型宽度"/>
        <section className="tfModelsSide" aria-label="账号模型"><div className="tfAccountModels" id={`models-${account.id}`}>
        <header className="tfAccountModelsHead"><h3>模型</h3><small className="tfAccountModelCount">{account.models?.length??0} 个模型</small></header>
-       {refreshing===provider.id?<LoadingSkeleton label="正在加载账号模型"/>:account.models?.length?<ul aria-label={`${account.label} 支持的模型`}>{shownModels.map(id=><li key={id} className="tfDragRow" {...dropOrder('models',id,shownModels,moveModel)}><DragHandle kind="models" id={id} label={modelLabel(local,id)} items={shownModels} move={moveModel}/><ProviderIcon provider={modelManufacturer(id,local)} size={24}/><span className="tfCatalogModelName"><strong title={modelLabel(local,id)}>{modelLabel(local,id)}</strong></span><button className="textButton" aria-label={`复制模型 ${modelLabel(local,id)}`} title={id} onClick={()=>void copyText(id).then(()=>notify({kind:'ok',text:'模型 ID 已复制'})).catch(()=>notify({kind:'error',text:'复制失败'}))}>复制</button></li>)}</ul>:<p className="tfHint">尚未获取到模型，请启用账号后刷新。</p>}
+       {refreshing===provider.id?<LoadingSkeleton label="正在加载账号模型"/>:account.models?.length?<ul aria-label={`${account.label} 支持的模型`}>{shownModels.map(id=><li key={id} className="tfDragRow" {...dropOrder('models',id,shownModels,moveModel)}><DragHandle kind="models" id={id} label={modelLabel(local,id)} items={shownModels} move={moveModel}/><ProviderIcon provider={modelManufacturer(id,local)} size={28}/><span className="tfCatalogModelName"><strong title={modelLabel(local,id)}>{modelLabel(local,id)}</strong></span><button className="textButton" aria-label={`复制模型 ${modelLabel(local,id)}`} title={id} onClick={()=>void copyText(id).then(()=>notify({kind:'ok',text:'模型 ID 已复制'})).catch(()=>notify({kind:'error',text:'复制失败'}))}>复制</button></li>)}</ul>:<p className="tfHint">尚未获取到模型，请启用账号后刷新。</p>}
       </div></section></div>
      </div>;
     })()}

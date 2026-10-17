@@ -13,7 +13,8 @@
 .tfCredentialModels .tfProbe.ok{color:var(--success)}
 .tfCredentialModels .tfProbe.fail{color:var(--danger)}
 .tfCredentialModels>header strong{font-weight:500;color:var(--muted)}
-.tfCredentialModels>header button{font-size:10px;min-height:24px;padding:2px 0}
+.tfCredentialModels>header .tfProbeActions>button{display:inline-flex;align-items:center;gap:4px;height:24px;min-height:24px;padding:0;font-size:11px;line-height:1;transform:none}
+.tfCredentialModels>header .tfProbeActions>button:is(:hover,:active){transform:none}
 .tfCredentialModels ul{list-style:none;padding:0;margin:0;display:grid;gap:2px;max-height:126px;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
 .tfCredentialModels li{display:flex;align-items:center;gap:12px;min-width:0;padding:4px 0}
 .tfCredentialModels code{font-family:inherit;font-size:11px;line-height:1.5;overflow-wrap:anywhere;min-width:0;flex:1}
@@ -189,7 +190,7 @@ a:hover{text-decoration:underline}
 .tfCredentialBack .inputAction input{padding:4px;min-height:26px}
 .tfCredentialModels{margin-top:4px;flex-shrink:0}
 .tfCredentialModels ul{max-height:88px}
-.tfVerifyDialog{inset:0!important;margin:auto;width:min(440px,calc(100vw - 32px));height:fit-content;max-height:calc(100dvh - 64px);border-radius:14px;background:var(--surface);border:1px solid var(--line);box-shadow:0 24px 80px #0005}
+.tfDialog.tfVerifyDialog,.tfDialog.tfNativeMacDialog.tfVerifyDialog{inset:0!important;margin:auto;width:min(440px,calc(100vw - 32px));height:fit-content!important;max-height:calc(100dvh - 80px);border-radius:14px;background:var(--surface);border:1px solid var(--line);box-shadow:0 24px 80px #0005}
 .tfVerifyDialog .tfDialogContent{padding:22px;display:grid;gap:16px;min-height:0}
 .tfVerifyDialog .tfDialogContent>header{position:static;padding:0;margin:0}
 .tfVerifyDialog .tfDialogContent>header h2{font-size:18px}
@@ -305,6 +306,11 @@ a:hover{text-decoration:underline}
 .tfAgentPickerCatalog>header>.tfAgentCatalogIdentity{display:flex;align-items:center;gap:8px;min-width:0;flex:0 1 auto}
 .tfAgentCatalogIdentity small{max-width:220px}
 .tfAgentPickerCatalog>header>.textButton{margin-left:auto;flex-shrink:0}
+.tfAgentPickerCatalog>header>.tfAgentPickerRings{display:flex;align-items:center;gap:8px;min-width:0;overflow:auto}
+.tfAgentPickerRings .quotaRing{width:36px;height:36px}
+.tfAgentPickerRings .quotaRing>span{font-size:11px}
+.tfAgentPickerRings .quotaRing>span>small{font-size:8px}
+:root :is(.tf,.tfDialog) .tfGatewayTitle .tfAddButton:is(:focus,:focus-visible){outline:0;box-shadow:none}
 .tfAgentPickerQuota{flex-shrink:0}
 /* Trace colors identify input, generation and tool results in both themes. */
 :root[data-theme] .tfTraceLane button.lane-0{background:#69b98a}
@@ -486,6 +492,8 @@ a:hover{text-decoration:underline}
 .tfInlineAgentPicker .tfAgentPickerSearch{margin:0}
 .tfInlineAgentPicker .tfAgentPicked{padding:0;margin:0}
 .tfInlineAgentPicker .tfAgentPickerBrowser{margin:0;min-height:220px;height:340px;max-height:45dvh;flex:none}
+.tfAgentPickerSources,.tfAgentPickerModelList{overflow-anchor:none;contain:paint}
+.tfAgentPickerSources button,.tfAgentPicker .tfPickModel,.tfAgentPicker .tfPickDraggableRow{transition:none}
 .tfInlineAgentPicker .tfAgentPickerSources{padding-bottom:0}
 .tfInlineAgentPicker .tfAgentPickerModelList{padding-bottom:8px}
 /* Disclosure and menu actions use a quiet fill, without a selected outer ring. */
@@ -524,9 +532,9 @@ a:hover{text-decoration:underline}
 
 /* Theme defaults must not erase the difference between active and inactive tabs. */
 .tfSwitchTabs{display:flex;align-items:center;flex-wrap:wrap;gap:20px;border:0}
-:root[data-theme] .tfSwitchTabs>button{display:inline-flex;align-items:center;box-sizing:border-box;min-height:32px;padding:6px 0;border:0;border-radius:0;background:transparent;box-shadow:none;color:var(--muted);font-size:12px;font-weight:500;line-height:1.2;transform:none;scale:1;transition:color .16s ease}
-:root[data-theme] .tfSwitchTabs>button:is([aria-selected=true],[aria-pressed=true]){color:var(--text);background:transparent;font-weight:600}
-:root[data-theme] .tfSwitchTabs>button:hover:not(:disabled){color:var(--hover-text);background:transparent;transform:none;scale:1}
+:root[data-theme] .tfSwitchTabs>button{display:inline-flex;align-items:center;box-sizing:border-box;height:28px;min-height:28px;padding:0 2px;border:0;border-radius:0;background:transparent;box-shadow:none;color:var(--muted);font-size:13px;font-weight:500;line-height:28px;transform:none;scale:1;transition:color .16s ease}
+:root[data-theme] .tfSwitchTabs>button:is([aria-selected=true],[aria-pressed=true]){color:var(--text);background:transparent;font-weight:500}
+:root[data-theme] .tfSwitchTabs>button:is(:hover,:active):not(:disabled){color:var(--hover-text);background:transparent;transform:none;scale:1}
 :root[data-theme] .tfSwitchTabs>button:focus-visible{outline:0;box-shadow:none;background:var(--soft)}
 .tfKeyEndpoint{display:grid;gap:12px;min-width:0}
 .tfKeyEndpoint>div[role=tabpanel]{min-width:0}
@@ -604,8 +612,13 @@ a:hover{text-decoration:underline}
 .tfAccountsPage .tfNativeLogin+.tfAccountManage{border:0;padding-left:0}
 .tfAgentsPage>.tfPanel{margin-top:0;padding-top:12px}
 .tfAgentsPage .tfAgentTitle{flex-wrap:wrap;gap:8px 12px}
-.tfAgentsPage .tfAgentTitle>.tfSwitchTabs{gap:12px;margin-left:8px}
-.tfAgentsPage .tfAgentTitle>.tfSwitchTabs>button{box-sizing:border-box;font-size:11px;height:28px;min-height:28px;padding:0}
+.tfAgentsPage .tfAgentTitle:has(.tfClientPair)>h2{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.tfAgentsPage .tfClientPair{gap:20px}
+:root[data-theme] .tfAgentsPage .tfClientPair>button,:root[data-theme] .tfAgentsPage .tfClientPair>button:is([aria-selected=true],[aria-pressed=true]){box-sizing:border-box;height:28px;min-height:28px;padding:0;font-size:18px;font-weight:550;letter-spacing:-.3px;white-space:nowrap;color:var(--muted)}
+:root[data-theme] .tfAgentsPage .tfClientPair>button:is([aria-selected=true],[aria-pressed=true]){color:var(--text)}
+:root[data-theme] .tfAgentsPage .tfClientPair>button:is(:hover,:active){transform:none}
+:root[data-theme] .tfAgentsPage .tfPanelHead>.tfRow>button,:root[data-theme] .tfAgentsPage .tfLine .tfActions>button,:root[data-theme] .tfKeyDetail :is(.tfModelsHead,.tfKeyModels) .textButton{box-sizing:border-box;display:inline-flex;align-items:center;height:32px;min-height:32px;padding:0 10px;gap:6px;line-height:1;transform:none}
+:root[data-theme] .tfAgentsPage .tfPanelHead>.tfRow>button:is(:hover,:active),:root[data-theme] .tfAgentsPage .tfLine .tfActions>button:is(:hover,:active),:root[data-theme] .tfKeyDetail :is(.tfModelsHead,.tfKeyModels) .textButton:is(:hover,:active){transform:none}
 .tfRequestStatus{justify-content:flex-start;max-width:880px;width:100%;margin-inline:auto;padding:0 16px 8px}
 .tfNotifications,.nativeMac .tfNotifications{inset:auto 16px 80px auto}
 
@@ -629,10 +642,7 @@ body:has(dialog[open]) .tfOperationFeedback{display:none}
 .tfOperationFeedback{background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none}
 @media(prefers-reduced-motion:reduce){.tfNativeRefresh.tfRefreshing>svg{animation:none}}
 
-/* Preserve the standard Agent header order; client switching follows installation. */
-.tfWorkBuddyPanel .tfAgentTitle>h2{width:128px;flex-shrink:0;white-space:nowrap}
-:root[data-theme] .tfAgentTitle>.tfClientSwitch{display:inline-flex;align-items:center;box-sizing:border-box;gap:6px;height:28px;min-height:28px;padding:0;font-size:11px;font-weight:400;color:var(--muted);border:0;background:transparent;white-space:nowrap;transform:none}
-.tfWorkBuddyPanel .tfAgentVersion{min-width:108px}
+/* Client names stay on their own row, so a longer version cannot move the switch. */
 .tfAgentsPage :is(a,button).tfAgentUpdate{box-sizing:border-box;width:28px;height:28px;min-height:28px;padding:0;color:var(--muted);text-decoration:none}
 @media(pointer:coarse){.tfAgentsPage :is(a,button).tfAgentUpdate{width:40px;height:40px;min-height:40px}}
 @media(min-width:951px){.tfDesktopOfficialColumns{grid-template-columns:minmax(0,var(--split,36%)) 8px minmax(0,1fr);gap:12px}}

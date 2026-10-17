@@ -1,6 +1,6 @@
 import type {AgentInstallation} from '../../../packages/core/src/agent-installation';
 import {hasNativeLogin} from './native-login-visibility';
-import {desktopIdentityMatches,officialLoginCoexists,officialLoginSelected} from '../../shared/native-login-identity';
+import {desktopIdentityMatches,officialLoginCoexists,officialLoginHeld,officialLoginSelected} from '../../shared/native-login-identity';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LocalAgentSnapshot } from '../../../packages/core/src/cliproxy';
 import type { AgentConnections } from '../../../packages/core/src/agent-connections';
@@ -54,7 +54,7 @@ export function useNativeLogin(provider:LoginProvider,local:LocalAgentSnapshot,e
  };
  const switchTo=async(id:string,restartCodex=false)=>{
   if(status?.readOnly)throw new Error('请在官方客户端切换本机登录。');
-  const account=accounts.find(a=>a.id===id);if(!account)throw new Error('账号已不可用，请刷新。');if(account.local)return '';
+  const account=accounts.find(a=>a.id===id);if(!account)throw new Error('账号已不可用，请刷新。');if(officialLoginHeld(provider,account.local,account.current))return '';
 
   let latest=await requestJSON<Status>(base(provider));
   const preferred=`${provider}/${latest.model}`;

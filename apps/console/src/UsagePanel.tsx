@@ -150,7 +150,7 @@ export function SourceUsage({ local, rows, title = '按来源账号', empty = '�
     const remaining = quotaRemaining(quota);
     return {
       key: group.key, label: info.label, sub: info.sub, totals: group.totals,
-      icon: <ProviderIcon provider={info.provider} size={20} />,
+      icon: <ProviderIcon provider={info.provider} size={28} />,
       extra: quota&&expandQuota?<div className="tfBreakQuota"><QuotaDetails quota={quota} label={info.label} compact/></div>:quota ? <div className="tfBreakQuota">
         <button type="button" className="textButton" aria-expanded={open === group.key} onClick={() => setOpen(open === group.key ? '' : group.key)}>
           {remaining === null ? '额度' : `官方额度剩余 ${Math.round(remaining)}%`}{open === group.key ? ' · 收起' : ' · 详情'}
@@ -163,18 +163,21 @@ export function SourceUsage({ local, rows, title = '按来源账号', empty = '�
 }
 
 export function modelManufacturer(model:string,local:LocalAgentSnapshot){
- const id=model.split('/').at(-1)!.toLowerCase();
- if(/^(gpt-|o[134](?:-|$)|chatgpt)/.test(id))return 'codex';
- if(/claude|sonnet|opus|haiku/.test(id))return 'claude';
- if(/deepseek/.test(id))return 'deepseek';
- if(/kimi|moonshot/.test(id))return 'kimi';
- if(/glm/.test(id))return 'zai';
- if(/grok/.test(id))return 'xai';
- if(/doubao/.test(id))return 'doubao';
- if(/gemini/.test(id))return 'gemini';
- return local.models.find(item=>item.id===model)?.provider??(model.startsWith('api-')?'api':model.split('/')[0]);
+ const named=local.models.find(item=>item.id===model);
+ const hint=`${named?.displayName??''} ${model.split('/').at(-1)??model}`.toLowerCase();
+ if(/glm/.test(hint))return 'zai';
+ if(/kimi|moonshot/.test(hint))return 'kimi';
+ if(/minimax|\babab\b/.test(hint))return 'minimax';
+ if(/qwen|qwq|qvq/.test(hint))return 'qwen';
+ if(/grok/.test(hint))return 'xai';
+ if(/deepseek/.test(hint))return 'deepseek';
+ if(/doubao/.test(hint))return 'doubao';
+ if(/gemini/.test(hint))return 'gemini';
+ if(/claude|sonnet|opus|haiku/.test(hint))return 'claude';
+ if(/gpt-|chatgpt|\bo[134](?:-|\b)/.test(hint))return 'codex';
+ return named?.provider??(model.startsWith('api-')?'api':model.split('/')[0]);
 }
 export function ModelUsage({ local, rows, title = '按模型', empty = '还没有经过网关的请求。', headerExtra }: { headerExtra?:ReactNode; local: LocalAgentSnapshot; rows: readonly UsageRow[]; title?: string; empty?: string }) {
-  const items: BreakdownItem[] = groupUsage(rows, row => row.model).map(group => ({ key: group.key, label: qualifiedModelLabel(local, group.key), icon:<ProviderIcon provider={modelManufacturer(group.key,local)} size={22}/>, totals: group.totals }));
+  const items: BreakdownItem[] = groupUsage(rows, row => row.model).map(group => ({ key: group.key, label: qualifiedModelLabel(local, group.key), icon:<ProviderIcon provider={modelManufacturer(group.key,local)} size={28}/>, totals: group.totals }));
   return <UsageBreakdown title={title} items={items} empty={empty} headerExtra={headerExtra} />;
 }
