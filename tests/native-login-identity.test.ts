@@ -1,5 +1,14 @@
 import {it,expect} from 'vitest';
-import {desktopIdentityMatches as matches} from '../apps/shared/native-login-identity';
+import {desktopIdentityMatches as matches,officialLoginSelected} from '../apps/shared/native-login-identity';
+it.each(['workbuddy','workbuddy-ai','qoder'])('%s keeps its official identity selected while custom models are connected',provider=>{
+ expect(officialLoginSelected(provider,true,true)).toBe(true);
+ expect(officialLoginSelected(provider,true,false)).toBe(true);
+ expect(officialLoginSelected(provider,false,true)).toBe(false);
+});
+it.each(['codex','claude'])('%s keeps official and gateway modes distinct',provider=>{
+ expect(officialLoginSelected(provider,true,true)).toBe(false);
+ expect(officialLoginSelected(provider,true,false)).toBe(true);
+});
 it('matches official domestic endpoint aliases without mixing international or enterprise logins',()=>{
  const native={accountId:'same-id',domain:'copilot.tencent.com',enterpriseId:'team'};
  for(const domain of ['www.codebuddy.cn','www.workbuddy.cn','https://copilot.tencent.com/'])expect(matches('workbuddy',native,{...native,domain})).toBe(true);

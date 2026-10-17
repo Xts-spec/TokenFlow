@@ -1,4 +1,4 @@
-import { it, expect, afterEach } from 'vitest';
+import { it, expect, afterEach, vi } from 'vitest';
 import { mkdtemp, mkdir, readFile, writeFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -36,6 +36,19 @@ it('does not overwrite locked-store credentials and lets reads recover once unlo
  expect(await readFile(join(root,'secrets','custom.bin'),'utf8')).toBe('encrypted:original');
  available=true;expect(await secrets.get('custom')).toBe('original');
 });
+it.each(['darwin','win32','linux'] as const)('skips all OS storage calls and preserves encrypted files on %s',async platform=>{
+ const root=await setup(),file=join(root,'secrets','cliproxy.bin');await writeFile(file,'encrypted:original');
+ const blocked={isEncryptionAvailable:vi.fn(()=>true),encryptString:vi.fn(storage.encryptString),decryptString:vi.fn(storage.decryptString),getSelectedStorageBackend:vi.fn(()=> 'gnome_libsecret')};
+ const secrets=createSecrets(root,blocked,platform,false);
+ expect(secrets.canEncrypt()).toBe(false);
+ for(let attempt=0;attempt<3;attempt++)expect(await secrets.get('cliproxy')).toBe('');
+ await expect(secrets.set('cliproxy','replacement')).rejects.toThrow('本次启动已跳过');
+ expect(await readFile(file,'utf8')).toBe('encrypted:original');
+ expect(await readdir(join(root,'secrets'))).toEqual(['cliproxy.bin']);
+ for(const operation of Object.values(blocked))expect(operation).not.toHaveBeenCalled();
+ // The decision is session-scoped; allowing access on the next launch reuses the same original ciphertext.
+ expect(await createSecrets(root,storage,platform).get('cliproxy')).toBe('original');
+});
 it('backs up undecryptable API keys before explicit replacement and retains ciphertext if encryption fails',async()=>{
  const root=await setup();const file=join(root,'secrets','openai.bin');await writeFile(file,'broken');
  const failed=createSecrets(root,{...storage,encryptString:()=>{throw new Error('keychain locked');}});
@@ -46,6 +59,25 @@ it('backs up undecryptable API keys before explicit replacement and retains ciph
 });
 it('stores independent Cursor SDK credentials in the encrypted credential store',async()=>{
  const root=await setup();const secrets=createSecrets(root,storage);const credential=JSON.stringify({apiKey:'fixture-cursor-key',disabled:false});await secrets.set('cursor-account',credential);expect(await secrets.get('cursor-account')).toBe(credential);expect((await readdir(join(root,'secrets')))).toContain('cursor-account.bin');await secrets.set('cursor-account','');expect(await secrets.get('cursor-account')).toBe('');
+});
+it('reuses decrypted credentials in memory until their ciphertext changes and never persists the cache',async()=>{
+ const root=await setup(),file=join(root,'secrets','custom.bin');await writeFile(file,'encrypted:original');
+ const decrypt=vi.fn(storage.decryptString),secrets=createSecrets(root,{...storage,decryptString:decrypt});
+ expect(await secrets.get('custom')).toBe('original');expect(await secrets.get('custom')).toBe('original');expect(decrypt).toHaveBeenCalledTimes(1);
+ await writeFile(file,'encrypted:changed');expect(await secrets.get('custom')).toBe('changed');expect(decrypt).toHaveBeenCalledTimes(2);
+ await secrets.set('custom','updated');const calls=decrypt.mock.calls.length;expect(await secrets.get('custom')).toBe('updated');expect(decrypt).toHaveBeenCalledTimes(calls);
+ expect(await readdir(join(root,'secrets'))).toEqual(['custom.bin']);
+ expect(await readFile(file,'utf8')).toBe('encrypted:updated');
+ await secrets.remove('custom');expect(await secrets.get('custom')).toBe('');
+ await writeFile(file,'encrypted:restored');expect(await secrets.get('custom')).toBe('restored');expect(decrypt).toHaveBeenCalledTimes(calls+1);
+});
+it('does not return a cached credential when storage becomes unavailable or its file becomes unreadable',async()=>{
+ const root=await setup(),file=join(root,'secrets','custom.bin');await writeFile(file,'encrypted:original');let available=true;
+ const decrypt=vi.fn(storage.decryptString),secrets=createSecrets(root,{...storage,isEncryptionAvailable:()=>available,decryptString:decrypt});
+ expect(await secrets.get('custom')).toBe('original');available=false;expect(await secrets.get('custom')).toBe('');
+ available=true;expect(await secrets.get('custom')).toBe('original');expect(decrypt).toHaveBeenCalledTimes(1);
+ await writeFile(file,'corrupt');expect(await secrets.get('custom')).toBe('');
+ await writeFile(file,'encrypted:original');expect(await secrets.get('custom')).toBe('original');expect(decrypt).toHaveBeenCalledTimes(3);
 });
 it('encrypts native login backups and fails closed on unreadable or locked originals',async()=>{
  const root=await setup();const secrets=createSecrets(root,storage);await secrets.set('native-login-workbuddy','original-session');expect(await secrets.get('native-login-workbuddy')).toBe('original-session');

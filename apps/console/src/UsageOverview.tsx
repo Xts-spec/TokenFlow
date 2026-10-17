@@ -8,7 +8,8 @@ import type {LocalAgentSnapshot} from '../../../packages/core/src/cliproxy';
 import {ModelUsage,SourceUsage,UsageBreakdown} from './UsagePanel';
 import {ProviderIcon} from './ProviderIcon';
 import {Icon} from './Icons';
-const names:Record<string,string>={codex:'Codex',claude:'Claude Code',workbuddy:'WorkBuddy',qoder:'Qoder',deepseek:'DeepSeek Harness',pi:'Pi Agent',key:'API 代理'};
+import {NativeUsageCoverage,usageClientNames} from './NativeUsageCoverage';
+const names:Record<string,string>={...usageClientNames,key:'API 代理'};
 export function activityStats(rows:readonly UsageRow[],today=new Date()){
  const days=new Map<string,number>();for(const row of rows)if(row.day<=localDay(today))days.set(row.day,(days.get(row.day)??0)+row.inputTokens+row.outputTokens);
  let current=0,longest=0,run=0,previous='';for(const day of [...days.keys()].sort()){if(!days.get(day))continue;const date=new Date(`${day}T12:00:00`);date.setDate(date.getDate()-1);run=localDay(date)===previous?run+1:1;longest=Math.max(longest,run);previous=day;}
@@ -43,6 +44,7 @@ export function UsageOverview({usage,local,onContext}:{onContext?:(context:Maint
    {breakdown==='agent'&&<SourceUsage headerExtra={paths} local={local} rows={rows} title="来源" empty="暂无用量" showQuota={false}/>}
    {breakdown==='model'&&<ModelUsage headerExtra={paths} local={local} rows={rows} title="模型"/>}
   </div>
+  <NativeUsageCoverage coverage={usage.coverage} scanning={usage.scanning}/>
   {usage.warning&&<p className="tfHint">{usage.warning}</p>}
  </section>;
 }

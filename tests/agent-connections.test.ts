@@ -378,7 +378,7 @@ it('exports catalog display names without changing Qoder routing IDs and restore
     expect(config.modelPicker.options).toEqual([{model,label:'qoder/Kimi-K3'}]);
    }else if(target==='pi')expect(config.providers['token-flow'].models[0]).toMatchObject({id:model,name:'qoder/Kimi-K3'});
    else if(target==='qoder')expect(config.providers['token-flow'].models).toEqual([{model,displayName:'qoder/Kimi-K3'}]);
-   else expect(config[0]).toMatchObject({id:model,name:'qoder/Kimi-K3'});
+   else expect(config[0]).toMatchObject({id:'qoder/Kimi-K3',name:'qoder/Kimi-K3'});
   }
   await connections.restore(record.id);expect(await readFile(path,'utf8')).toBe(original);
  }

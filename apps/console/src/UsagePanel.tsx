@@ -1,4 +1,5 @@
 import {LoadError} from './LoadingState';
+import {usageClientNames} from './NativeUsageCoverage';
 import {useId,useState,useRef,useEffect,type ReactNode,type CSSProperties} from 'react';
 import {createPortal} from 'react-dom';
 import type { LocalAgentSnapshot } from '../../../packages/core/src/cliproxy';
@@ -128,7 +129,7 @@ export function describeSource(local: LocalAgentSnapshot, key: string, rows:read
   if (account) return { label: account.label, provider: account.provider, sub: `${local.providers.find(item => item.id === account.provider)?.label ?? account.provider} · 官方授权${inferred?' · 含本机登录识别的用量':''}` };
   const api = local.apiSources?.find(item => item.id === key);
   if (api) return { label: api.name, provider: 'api', sub: `API Key · ${api.baseURL}` };
-  if(key.startsWith('native:')){const [,raw,channel,identity,email]=key.split(':');const provider=raw==='openai'||raw==='openai-codex'?'codex':raw;const label=local.providers.find(item=>item.id===provider)?.label??(provider==='codex'?'OpenAI':provider);const names=[...new Set(rows.map(r=>r.nativeAccountLabel).filter(Boolean))];return {label:names.length===1?names[0]!: `${label} · ${channel==='official'?'官方登录':channel==='api'?'API Key':'渠道未确认'}`,provider,sub:inferred?`${label} · 按用量产生时的本机登录识别`:identity?`日志账号 ${(email||identity).slice(0,8)} · 未关联已保存账号`:'本机日志 · 未记录请求账号或接口'};}
+  if(key.startsWith('native:')){const [,raw,channel,identity,email]=key.split(':');const provider=raw==='openai'||raw==='openai-codex'?'codex':raw;const label=local.providers.find(item=>item.id===provider)?.label??usageClientNames[provider]??provider;const names=[...new Set(rows.map(r=>r.nativeAccountLabel).filter(Boolean))];return {label:names.length===1?names[0]!: `${label} · ${channel==='official'?'官方登录':channel==='api'?'API Key':'渠道未确认'}`,provider,sub:inferred?`${label} · 按用量产生时的本机登录识别`:identity?`日志账号 ${(email||identity).slice(0,8)} · 未关联已保存账号`:'本机日志 · 未记录请求账号或接口'};}
   if (key.startsWith('provider:')) { const id = key.slice(9); const label = local.providers.find(item => item.id === id)?.label ?? id; return { label, provider: id, sub: '账号（未记录具体账号）' }; }
   return { label: '已移除的来源', provider: 'api', sub: '账号或接口已删除' };
 }
@@ -160,7 +161,7 @@ export function modelManufacturer(model:string,local:LocalAgentSnapshot){
  if(/claude|sonnet|opus|haiku/.test(id))return 'claude';
  if(/deepseek/.test(id))return 'deepseek';
  if(/kimi|moonshot/.test(id))return 'kimi';
- if(/glm/.test(id))return 'zcode';
+ if(/glm/.test(id))return 'zai';
  if(/grok/.test(id))return 'xai';
  if(/doubao/.test(id))return 'doubao';
  return local.models.find(item=>item.id===model)?.provider??(model.startsWith('api-')?'api':model.split('/')[0]);

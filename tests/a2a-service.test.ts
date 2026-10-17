@@ -1,6 +1,6 @@
 import {CodexSwitchLifecycle} from '../packages/core/src/codex-switch-lifecycle.js';
 import {CodexContext} from '../packages/core/src/codex-context.js';
-import {parse} from 'smol-toml';
+import {parse,stringify} from 'smol-toml';
 import {CodexThreadMigration} from '../packages/core/src/codex-thread-migration.js';
 import {DatabaseSync} from 'node:sqlite';
 import { it,expect,vi,type MockInstance } from 'vitest';
@@ -13,6 +13,41 @@ import {ClaudeTerminalLifecycle} from '../packages/core/src/claude-terminal-life
 import { QoderLifecycle } from '../packages/core/src/agent-lifecycle.js';
 import { WindowsAgentLifecycle } from '../packages/core/src/windows-agent-lifecycle.js';
 import { createDesktopService } from '../packages/core/src/service.js';
+it.each(['codex','claude'] as const)('%s reapplies explicitly over third-party routing with an exact backup and stale-write protection',async target=>{
+ const root=await mkdtemp(join(await realpath(tmpdir()),'a2a-reapply-'));
+ const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
+ const paths={codex:join(root,'codex/config.toml'),claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/models.json')};
+ await mkdir(join(root,'cliproxy'));await mkdir(join(root,target));
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'codex.json',provider:'codex',status:'active',models:['shared-model']}]));
+ await writeFile(paths[target],target==='codex'?'model = "original"\n':'{}');
+ const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin-token',localKey:'internal-key',secrets:{get:async()=>'',set:async()=>{}},agentPaths:paths,agentProcesses:async()=>[]});
+ const headers={host:'127.0.0.1:9527',authorization:'Bearer admin-token'};
+ const state=async()=>(await service.app.inject({url:'/api/a2a',headers})).json().targets.find((item:{id:string})=>item.id===target);
+ const connect=(payload:object)=>service.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload});
+ try{
+  await service.proxy.start();const sourceId=service.proxy.snapshot().accounts[0].id,model='codex/shared-model';
+  const first=await connect({target,sourceId,model,revision:(await state()).revision});expect(first.statusCode,first.body).toBe(200);
+  const thirdParty=target==='codex'?{model:'third-party-model',model_provider:'third_party',approval_policy:'on-request',model_providers:{third_party:{name:'Third party',base_url:'https://fixture.invalid/v1',experimental_bearer_token:'third-party-secret'}},mcp_servers:{fixture:{command:'fixture-mcp'}}}:{model:'third-party-model',env:{ANTHROPIC_BASE_URL:'https://fixture.invalid',ANTHROPIC_AUTH_TOKEN:'third-party-secret',KEEP:'local-preference'},permissions:{defaultMode:'default'},mcpServers:{fixture:{command:'fixture-mcp'}}};
+  const external=target==='codex'?stringify(thirdParty):JSON.stringify(thirdParty,null,2);
+  await writeFile(paths[target],external);const changed=await state();expect(changed.configurationState).toBe('changed');
+  const payload={target,sourceId,model,replaceId:first.json().id,revision:changed.revision};
+  expect((await connect(payload)).statusCode).toBe(409);expect(await readFile(paths[target],'utf8')).toBe(external);
+  const keysBefore=(await service.app.inject({url:'/api/gateway-keys',headers})).json().keys.length;
+  await writeFile(paths[target],external+'\n');
+  expect((await connect({...payload,rewrite:true})).statusCode).toBe(409);
+  expect(await readFile(paths[target],'utf8')).toBe(external+'\n');
+  expect((await service.app.inject({url:'/api/gateway-keys',headers})).json().keys).toHaveLength(keysBefore);
+  await writeFile(paths[target],external);
+  const applied=await connect({...payload,rewrite:true});expect(applied.statusCode,applied.body).toBe(200);
+  expect(applied.body).not.toContain('third-party-secret');expect(applied.body).not.toContain('tfl_');
+  expect((await state()).configurationState).toBe('configured');
+  const after=target==='codex'?parse(await readFile(paths[target],'utf8')):JSON.parse(await readFile(paths[target],'utf8'));
+  if(target==='codex')expect(after).toMatchObject({model,model_provider:'token_flow',approval_policy:'on-request',model_providers:{third_party:thirdParty.model_providers!.third_party},mcp_servers:thirdParty.mcp_servers});
+  else expect(after).toMatchObject({model,permissions:thirdParty.permissions,mcpServers:thirdParty.mcpServers,env:{KEEP:'local-preference',ANTHROPIC_BASE_URL:'http://127.0.0.1:9527'}});
+  const backup=JSON.parse(await readFile(join(root,'agent-backups',`${applied.json().id}.json`),'utf8'));expect(backup.previousConfig).toBe(external);
+  expect((await service.app.inject({url:'/api/gateway-keys',headers})).json().keys).toHaveLength(1);
+ }finally{await service.app.close();await rm(root,{recursive:true,force:true});}
+});
 it('connects and restores a local Agent through admin APIs without exposing keys or original config',async()=>{
  const root=await mkdtemp(join(await realpath(tmpdir()),'a2a-service-'));
  const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));

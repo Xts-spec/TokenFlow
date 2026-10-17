@@ -1,6 +1,5 @@
 import {hasNativeLogin} from './native-login-visibility';
 import {OfficialAccountIdentity,UnpooledNativeAccount} from './OfficialAccountIdentity';
-import {SwitchTabs} from './SwitchTabs';
 import {NativeLoginStatus} from './NativeLoginStatus';
 import {DesktopOfficialPanel} from './DesktopOfficialPanel';
 import {ClaudeRestartControls} from './ClaudeRestartControls';
@@ -25,7 +24,7 @@ import { UsageFold } from './UsagePanel';
 import {DragHandle,dropOrder,orderModels,useModelOrder} from './display-order';
 import { isSourceSelectionAvailable, sourceLabel, sourceOptions } from './source-options';
 import { qualifiedModelLabel as modelLabel } from './model-label';
-import { clientOptions,useNativeLogin } from './native-login';
+import { useNativeLogin } from './native-login';
 import { FlowDialog } from './FlowDialog';
 import {useListReturn} from './list-return';
 import { AgentModelPicker } from './AgentModelPicker';
@@ -48,14 +47,15 @@ function problemOf(target:AgentTarget,calls:GatewayCall[],available:ReturnType<t
  if(target.error)return target.error;
  if(!connection)return '';
  if(!(connection.selections??[connection]).every(item=>isSourceSelectionAvailable(available,item)))return unavailableSelectionMessage;
- if(target.configurationState==='missing')return '接入配置缺失，请打开维修检查。';
- if(target.configurationState!=='configured')return '接入配置与上次记录不同，请打开维修核对差异。';
+ if(target.configurationState==='missing')return '网关配置已移除，可重新应用所选模型。';
+ if(target.configurationState==='changed')return '配置已被其他应用或手动修改，可重新应用所选模型。';
+ if(target.configurationState!=='configured')return '暂时无法确认接入配置，请打开维修检查。';
  const evidence=connectionEvidence(target,calls,available);
  return evidence.tone==='attention'?evidence.label:'';
 }
 
 export function AgentsPage({local,calls,usage,notify,onRepair,onAgent,localError,reloadLocal}:{local:LocalAgentSnapshot;calls:GatewayCall[];usage:UsageData;notify:Notify;onRepair:(chain:MaintenanceChain,intent?:'codex-history')=>void;onAgent:(id:string)=>void;localError:string;reloadLocal:()=>Promise<void>}){
- const [workbuddyClient,setWorkbuddyClient]=useState<'workbuddy'|'workbuddy-ai'>(()=>{try{return localStorage.getItem(tabKey)==='workbuddy-ai'?'workbuddy-ai':'workbuddy';}catch{return 'workbuddy';}});
+ const [workbuddyClient,setWorkbuddyClient]=useState<'workbuddy'|'workbuddy-ai'>(()=>{try{return (localStorage.getItem('token-flow.workbuddy.client')??localStorage.getItem(tabKey))==='workbuddy-ai'?'workbuddy-ai':'workbuddy';}catch{return 'workbuddy';}});
  const [loadError,setLoadError]=useState('');
  const [targets,setTargets]=useState<AgentTarget[]>();
  const [updates,setUpdates]=useState<Record<string,AgentUpdate>>({});
@@ -70,7 +70,8 @@ export function AgentsPage({local,calls,usage,notify,onRepair,onAgent,localError
  const target=targets?.find(t=>t.id===tab)??targets?.[0];
  useEffect(()=>{onAgent(target?.id==='workbuddy'?workbuddyClient:target?.id??tab);},[target?.id,tab,workbuddyClient,onAgent]);
 
- const clientTabs=target?.id==='workbuddy'?<SwitchTabs label="WorkBuddy 客户端" value={workbuddyClient} options={clientOptions.workbuddy} onChange={setWorkbuddyClient}/>:undefined;
+ const refreshOfficialAccounts=async(provider:string)=>{const pool=provider==='workbuddy-ai'?'workbuddy':provider;try{await requestJSON(`/api/local-agent/providers/${pool}/refresh`,post({force:true}),300000);}finally{await Promise.all([reloadLocal(),logins[provider]?.refresh(true)]);}};
+ const clientSwitch=target?.id==='workbuddy'?<button className="textButton tfClientSwitch" aria-label={`切换到 ${workbuddyClient==='workbuddy'?'WorkBuddyAI':'WorkBuddy'}`} onClick={()=>{const next=workbuddyClient==='workbuddy'?'workbuddy-ai':'workbuddy';setWorkbuddyClient(next);try{localStorage.setItem('token-flow.workbuddy.client',next);}catch{}}}>{workbuddyClient==='workbuddy'?'WorkBuddyAI':'WorkBuddy'}<Icon name="chevron" size={12}/></button>:undefined;
  return <div className="tfPage tfAgentsPage">
   <ScrollRail className="tfTiles" role="tablist" aria-label="本地 Agent">
    {targets?.map(item=>{
@@ -80,18 +81,18 @@ export function AgentsPage({local,calls,usage,notify,onRepair,onAgent,localError
     const problem=client!=='workbuddy-ai'&&!!problemOf(item,calls,available);
     return <button key={item.id} role="tab" aria-selected={target?.id===item.id} tabIndex={target?.id===item.id?0:-1} className="tfTile" onClick={()=>choose(item.id)}>
      <ProviderIcon provider={item.id} size={30}/>
-     <span className="tfTileText"><strong>{item.name}</strong><small>{item.id==='claude'?'终端 · ':''}{connection?modelLabel(local,connection.model):native?`本机 · ${native}`:client!=='workbuddy-ai'&&item.connection?'模型不可用':'未接入'}</small></span>
+     <span className="tfTileText"><strong>{client==='workbuddy-ai'?'WorkBuddyAI':item.name}</strong><small>{item.id==='claude'?'终端 · ':''}{connection?modelLabel(local,connection.model):native?`本机 · ${native}`:client!=='workbuddy-ai'&&item.connection?'模型不可用':'未接入'}</small></span>
      <i className={`dot ${problem?'bad':connection||native?'ok':''}`} aria-label={problem?'有问题':connection||native?'使用中':'未接入'}/>
     </button>;
    })}
   </ScrollRail>
   {(loadError||localError)&&<LoadError message="暂时无法读取本机 Agent，请检查连接后重试。" retry={()=>Promise.allSettled([reloadLocal(),refresh()])}/>}
   {!targets&&!loadError&&!localError&&<LoadingSkeleton label="正在读取本机 Agent" variant="cards"/>}
-  {target?.id==='workbuddy'&&workbuddyClient==='workbuddy-ai'?<DesktopOfficialPanel usage={usage} clientTabs={clientTabs} key="workbuddy-ai" provider="workbuddy-ai" login={logins['workbuddy-ai']} notify={notify}/>:target&&<AgentPanel clientTabs={clientTabs} key={target.id} target={target} update={updates[target.id]} login={logins[target.id]} local={local} usage={usage} problem={problemOf(target,calls,available)} notify={notify} onRepair={onRepair} onChanged={refresh} onProgramChanged={refreshUpdates}/>}
+  {target?.id==='workbuddy'&&workbuddyClient==='workbuddy-ai'?<DesktopOfficialPanel local={local} onRefresh={()=>refreshOfficialAccounts('workbuddy-ai')} usage={usage} clientSwitch={clientSwitch} key="workbuddy-ai" provider="workbuddy-ai" login={logins['workbuddy-ai']} notify={notify}/>:target&&<AgentPanel onRefreshAccounts={()=>refreshOfficialAccounts(target.id)} clientSwitch={clientSwitch} key={target.id} target={target} update={updates[target.id]} login={logins[target.id]} local={local} usage={usage} problem={problemOf(target,calls,available)} notify={notify} onRepair={onRepair} onChanged={refresh} onProgramChanged={refreshUpdates}/>}
  </div>;
 }
 
-function AgentPanel({clientTabs,target,update,login,local,usage,problem,notify,onRepair,onChanged,onProgramChanged}:{clientTabs?:ReactNode;target:AgentTarget;update?:AgentUpdate;login?:Login;local:LocalAgentSnapshot;usage:UsageData;problem:string;notify:Notify;onRepair:(chain:MaintenanceChain,intent?:'codex-history')=>void;onChanged:()=>Promise<void>;onProgramChanged:()=>Promise<void>}){
+function AgentPanel({onRefreshAccounts,clientSwitch,target,update,login,local,usage,problem,notify,onRepair,onChanged,onProgramChanged}:{onRefreshAccounts:()=>Promise<void>;clientSwitch?:ReactNode;target:AgentTarget;update?:AgentUpdate;login?:Login;local:LocalAgentSnapshot;usage:UsageData;problem:string;notify:Notify;onRepair:(chain:MaintenanceChain,intent?:'codex-history')=>void;onChanged:()=>Promise<void>;onProgramChanged:()=>Promise<void>}){
  const [modelOrder,,modelRanks,moveModel]=useModelOrder();
  const [gatewayPending,setGatewayPending]=useState<boolean>();
  const [programError,setProgramError]=useState('');
@@ -116,6 +117,8 @@ function AgentPanel({clientTabs,target,update,login,local,usage,problem,notify,o
  const hide=(next:string[])=>{setHidden(next);try{localStorage.setItem(hiddenKey(target.id),JSON.stringify(next));}catch{/* Hiding is cosmetic. */}};
  const available=sourceOptions(local);const running=local.state==='running';
  const connection=target.connection;
+ const configurationChanged=!!connection&&!target.error&&['changed','missing'].includes(target.configurationState);
+ const [reapply,setReapply]=useState<{selections:Choice[];preferred?:Choice;target:AgentTarget}>();
  const [draftModels,setDraftModels]=useState<Choice[]>(()=>{try{const saved=JSON.parse(localStorage.getItem(`token-flow.agent.models.${target.id}`)??'[]');return Array.isArray(saved)?saved.filter(v=>typeof v?.model==='string'&&typeof v?.sourceId==='string'):[];}catch{return [];}});
  const [draftDirty,setDraftDirty]=useState(()=>{try{return localStorage.getItem(`token-flow.agent.models.pending.${target.id}`)==='true';}catch{return false;}});
  const saveDraft=(choices:Choice[],dirty=true)=>{setDraftModels(choices);setDraftDirty(dirty);try{localStorage.setItem(`token-flow.agent.models.${target.id}`,JSON.stringify(choices));localStorage.setItem(`token-flow.agent.models.pending.${target.id}`,String(dirty));}catch{}};
@@ -156,15 +159,18 @@ function AgentPanel({clientTabs,target,update,login,local,usage,problem,notify,o
   setMigrationProgress(undefined);
   return run(()=>work(automatic&&approved));
  };
- const connectSelected=(selections:Choice[],preferred?:Choice)=>{
+ const connectSelected=(selections:Choice[],preferred?:Choice,confirmedTarget?:AgentTarget)=>{
+  if(configurationChanged&&!confirmedTarget){setReapply({selections,preferred,target});return;}
   saveDraft(selections,true);
   return changeCodex(async restartCodex=>{
   const choice=preferred??selections.find(item=>isCurrent(item))??selections[0];
   if(!choice)throw new Error('请至少选择一个模型。');
   saveDraft(selections,true);
-  const next=await latest();
-  await requestJSON('/api/a2a/connect',post({allowRunning:true,restartCodex,target:target.id,selections,sourceId:choice.sourceId,model:choice.model,revision:next.revision,...(next.connection?{replaceId:next.connection.id}:{}),tokenLimit:null}),600000);
-  saveDraft(selections,false);configurationSaved(restartCodex);
+  // A confirmed replacement uses the displayed snapshot, never a newer silently accepted revision.
+  const next=confirmedTarget??await latest();
+  if(!confirmedTarget&&next.connection&&['changed','missing'].includes(next.configurationState))throw new Error('配置刚被其他应用修改，请刷新后选择重新应用。');
+  await requestJSON('/api/a2a/connect',post({allowRunning:true,restartCodex,target:target.id,selections,sourceId:choice.sourceId,model:choice.model,revision:next.revision,...(next.connection?{replaceId:next.connection.id}:{}),...(confirmedTarget?{rewrite:true}:{}),tokenLimit:null}),600000);
+  saveDraft(selections,false);setReapply(undefined);configurationSaved(restartCodex);
   if(hidden.includes(choiceId(choice)))hide(hidden.filter(id=>id!==choiceId(choice)));
   const label=modelLabel(local,choice.model);
   const menu=target.id==='qoder'||target.id==='workbuddy'?`，在它的模型菜单里选 ${label}`:'';
@@ -172,7 +178,7 @@ function AgentPanel({clientTabs,target,update,login,local,usage,problem,notify,o
   if(target.id==='deepseek')return `DeepSeek Harness 桌面版已导入 ${selections.length} 个模型，默认 ${label}；重新打开应用后生效。`;
   if(restartCodex)return `Codex 已配置 ${selections.length} 个模型，默认 ${label}，旧对话已迁移并自动重新打开。`;
   return `${target.name} 已配置 ${selections.length} 个模型，默认 ${label}。重启后可在 Agent 内切换${menu}。`;
- });};
+ },!!confirmedTarget);};
  const restore=(promptRestart=true,history=false,approved=false)=>changeCodex(async restartCodex=>{
   const next=await latest();
   await requestJSON('/api/a2a/restore',post({id:next.connection!.id,revision:next.revision,allowRunning:true,restartCodex,restoreHistory:history,overwrite:true}),600000);
@@ -189,7 +195,7 @@ function AgentPanel({clientTabs,target,update,login,local,usage,problem,notify,o
  const officialConfirm=useOfficialLoginConfirm();
  const desktopOfficial=target.id==='workbuddy'||target.id==='qoder';
  const restoreOfficial=async()=>{if(!await officialConfirm.confirm(target.id==='claude'?'Claude Code 终端':target.name,true))return;return run(async()=>{await login!.restore();setRestartPending(false);return `${target.name} 已恢复切换前登录并重新打开，请确认登录状态。`;});};
- const switchAccount=async(id:string,label:string)=>{if(desktopOfficial||target.id==='claude'){if(!await officialConfirm.confirm(target.id==='claude'?'Claude Code 终端':target.name))return;return run(async()=>{const note=await login!.switchTo(id);setRestartPending(false);return `${target.name} 已保存账号 ${label}。${note}`;});}return changeCodex(async restartCodex=>{const note=await login!.switchTo(id,restartCodex);configurationSaved(restartCodex);return `${target.name} 已切换到账号 ${label}。${restartCodex?'Codex 已自动重新打开。':`${desktopRestart?'重启':'下次启动'}后生效。`}${note}`;},false,false);};
+ const switchAccount=async(id:string,label:string)=>{if(login?.accounts.find(account=>account.id===id)?.local)return;if(desktopOfficial||target.id==='claude'){if(!await officialConfirm.confirm(target.id==='claude'?'Claude Code 终端':target.name))return;return run(async()=>{const note=await login!.switchTo(id);setRestartPending(false);return `${target.name} 已保存账号 ${label}。${note}`;});}return changeCodex(async restartCodex=>{const note=await login!.switchTo(id,restartCodex);configurationSaved(restartCodex);return `${target.name} 已切换到账号 ${label}。${restartCodex?'Codex 已自动重新打开。':`${desktopRestart?'重启':'下次启动'}后生效。`}${note}`;},false,false);};
  const repair=()=>onRepair({target:target.id,...(connection?{sourceId:connection.sourceId,model:connection.model,connectionId:connection.id}:{})});
  const toggleDetail=(id:string)=>{if(open!==id)rememberDetail();setOpen(open===id?'':id);};
 
@@ -201,10 +207,10 @@ function AgentPanel({clientTabs,target,update,login,local,usage,problem,notify,o
   return result.message;
  });
  useEffect(()=>{if(!busy&&target.installation.installed&&pendingSelection.current){const pending=pendingSelection.current;pendingSelection.current=undefined;void connectSelected(pending.selections,pending.preferred);}},[busy,target.installation.installed]);
- return <section className="tfPanel" aria-label={target.name}>
+ return <section className={`tfPanel${target.id==='workbuddy'?' tfWorkBuddyPanel':''}`} aria-label={target.name}>
   <header className="tfPanelHead">
    <ProviderIcon provider={target.id} size={40}/>
-   <div><div className="tfAgentTitle"><h2>{target.name}</h2>{clientTabs}<button className="tfAgentUpdate" disabled={busy} aria-label={`${target.installation.installed?'更新':'安装'} ${target.name}`} title={updateAvailable?`有新版本 ${update.latestVersion}，点击更新`:target.installation.installed?'下载最新版':'安装官方客户端'} onClick={()=>target.installation.installed?void manageProgram('update'):askProgram('install')}><Icon name="download" size={15}/>{updateAvailable&&<span className="tfUpdateDot" role="img" aria-label="有可用更新"/>}</button>{target.installation.installed&&<span className="tfAgentVersion">已安装{target.installation.version?` · ${target.installation.version}`:''}</span>}</div><UsageFold loaded={usage.loaded} error={usage.error} onRetry={usage.reload} title={`${target.name} 用量`} rows={allAgentRows} range="today"/></div>
+   <div><div className="tfAgentTitle"><h2>{target.name}</h2><button className="tfAgentUpdate" disabled={busy} aria-label={`${target.installation.installed?'更新':'安装'} ${target.name}`} title={updateAvailable?`有新版本 ${update.latestVersion}，点击更新`:target.installation.installed?'下载最新版':'安装官方客户端'} onClick={()=>target.installation.installed?void manageProgram('update'):askProgram('install')}><Icon name="download" size={15}/>{updateAvailable&&<span className="tfUpdateDot" role="img" aria-label="有可用更新"/>}</button>{target.installation.installed&&<span className="tfAgentVersion">已安装{target.installation.version?` · ${target.installation.version}`:''}</span>}{clientSwitch}</div><UsageFold loaded={usage.loaded} error={usage.error} onRetry={usage.reload} title={`${target.name} 用量`} rows={allAgentRows} range="today"/></div>
    <div className="tfRow">
     {!models.length&&<button className="textButton" disabled={busy||!running||!!target.error||!available.length} onClick={()=>setPicking(true)}><Icon name="plus" size={15}/>选择模型</button>}
     {target.id==='claude'&&<ClaudeRestartControls notify={notify} disabled={busy}/>}
@@ -243,7 +249,12 @@ function AgentPanel({clientTabs,target,update,login,local,usage,problem,notify,o
    {programError&&<p className="tfError" role="alert">{programError}</p>}
    <footer><button disabled={busy} onClick={()=>{setProgramOpen(false);pendingSelection.current=undefined;}}>稍后再说</button><button className="primary" disabled={busy} onClick={()=>void manageProgram()}>{busy?'正在处理…':target.installation.automatic?programAction==='install'?'下载安装':'更新到最新版本':'打开官方下载页面'}</button></footer>
   </FlowDialog>
-  {visibleProblem&&<p className="tfProblem" role="status">{visibleProblem}{problem===unavailableSelectionMessage&&<button type="button" className="textButton" disabled={busy} onClick={()=>{saveDraft(models.filter(choice=>isSourceSelectionAvailable(available,choice)));setOpen('');}}>移除不可用模型（{unavailableModels.length}）</button>}</p>}
+  {visibleProblem&&<p className="tfProblem" role="status">{visibleProblem}{configurationChanged&&<button type="button" className="textButton" disabled={busy||!running||!models.length} onClick={()=>void applySelected(shownModels)}>重新应用</button>}{problem===unavailableSelectionMessage&&<button type="button" className="textButton" disabled={busy} onClick={()=>{saveDraft(models.filter(choice=>isSourceSelectionAvailable(available,choice)));setOpen('');}}>移除不可用模型（{unavailableModels.length}）</button>}</p>}
+  <FlowDialog className="tfRestartDialog" open={!!reapply} title="重新应用网关模型？" busy={busy} onClose={()=>setReapply(undefined)}>
+   <p className="tfDialogLead">先备份当前配置，再将接入地址、Key 和模型设置更新为 TokenFlow 的所选模型。其他设置保留。</p>
+   <p className="tfHint">{target.id==='codex'&&desktopRestart?'请先保存工作。确认后会退出 Codex，应用配置并重新打开。':'重新打开客户端后生效。'}如果 CC Switch 等工具再次切换配置，可在这里重新应用。</p>
+   <footer><button disabled={busy} onClick={()=>setReapply(undefined)}>取消</button><button className="primary" disabled={busy} onClick={()=>{if(reapply)void connectSelected(reapply.selections,reapply.preferred,reapply.target);}}>{busy?'正在应用…':target.id==='codex'&&desktopRestart?'备份、应用并重启':'备份并应用'}</button></footer>
+  </FlowDialog>
   <FlowDialog className="tfRestartDialog" open={desktopRestart&&restartOpen} title={restartPending?'配置已保存，现在生效？':`重启 ${target.name}`} onClose={()=>setRestartOpen(false)} busy={busy}>
    <p className="tfDialogLead">{restartPending?`重新打开 ${target.name} 后，会加载新的模型与账号配置。`:`重新打开 ${target.name}，加载已保存的配置。`}</p>
    <p className="tfHint">{target.id==='codex'?'请先保存工作。确认后会尝试退出 Codex，再重新打开。若仍有运行中的任务或退出提示，请按提示手动处理。':'请先保存工作并结束生成。你也可以稍后从 Agent 标题旁重启。'}</p>
@@ -254,23 +265,23 @@ function AgentPanel({clientTabs,target,update,login,local,usage,problem,notify,o
   {officialConfirm.dialog}
 
   <div className={`tfAgentColumns${login&&hasNativeLogin(login)&&models.length?' hasLogin':''}`}>
-  {login&&hasNativeLogin(login)&&<section className="tfAgentSection" aria-label="官方登录账号">
-   <header className="tfAgentSectionHead"><h3>官方登录账号</h3><NativeLoginStatus name={target.name} login={login}>{(desktopOfficial||target.id==='claude')&&login.status?.backup&&<button className="textButton" disabled={busy} onClick={()=>void restoreOfficial()}>恢复原登录</button>}</NativeLoginStatus></header>
+  {login&&hasNativeLogin(login)&&<section className="tfAgentSection tfOfficialAccounts" aria-label="官方登录账号">
+   <header className="tfAgentSectionHead"><h3>官方登录账号</h3><NativeLoginStatus name={target.name} login={login} onRefresh={onRefreshAccounts}>{(desktopOfficial||target.id==='claude')&&login.status?.backup&&<button className="textButton" disabled={busy} onClick={()=>void restoreOfficial()}>恢复原登录</button>}</NativeLoginStatus></header>
   <ul className="tfLines" aria-label={`${target.name} 官方登录账号`}>
    <UnpooledNativeAccount provider={target.id} login={login}/>
    {accounts.map(account=>{
     const id=`account:${account.id}`;const quota=local.quotas[account.id];
     return <li key={id} className={account.current?'on':''}>
      <div className="tfLine">
-      <button className="tfLineMain" aria-pressed={account.current} disabled={busy||account.current||!account.switchable} title={account.switchable?undefined:account.reason} onClick={()=>void switchAccount(account.id,account.label)}>
+      <button className="tfLineMain" aria-pressed={account.current} disabled={busy||account.local||!account.switchable} title={account.switchable?undefined:account.reason} onClick={()=>void switchAccount(account.id,account.label)}>
        <OfficialAccountIdentity provider={target.id} account={account}/>
       </button>
       <span className="tfActions">
-       <button className="textButton" onClick={()=>toggleDetail(id)}>{open===id?'收起':'详情'}</button>
+       <button className="textButton" aria-expanded={open===id} aria-controls={`quota-${target.id}-${account.id}`} onClick={()=>toggleDetail(id)}>{open===id?'收起':'详情'}</button>
        <button className="textButton danger" disabled={account.local} title={account.local?'正在使用，不能删除':'从这里移除，账号本身保留'} onClick={()=>hide([...hidden,id])}>删除</button>
       </span>
      </div>
-     {open===id&&<div className="tfUsage"><strong>额度</strong>{quota?<QuotaDetails quota={quota} label={account.label} compact/>:<span>额度暂未提供</span>}</div>}
+     {open===id&&<div id={`quota-${target.id}-${account.id}`} className="tfAccountQuotaExpanded">{quota?<QuotaDetails quota={quota} label={account.label} compact concise/>:<span>额度暂未提供</span>}</div>}
     </li>;
    })}
   </ul>

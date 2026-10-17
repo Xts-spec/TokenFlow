@@ -43,3 +43,17 @@ it('rejects malformed negative billing and respects cancellation',async()=>{
  transport(()=>({totalUsageEventsCount:1,usageEventsDisplay:[{conversationId:'agent-target',tokenUsage:{inputTokens:-1}}]}));await expect(new CursorUsage('fixture-key').runUsage('agent-target',Date.now(),signal())).rejects.toThrow();
  const controller=new AbortController();controller.abort();await expect(new CursorUsage('fixture-key').runUsage('agent-target',Date.now(),controller.signal)).rejects.toThrow();
 });
+
+it('reads paginated direct bills under the key’s verified identity without creating credentials or using headless=false as IDE proof',async()=>{
+ const at=Date.now(),fetcher=transport((method,body)=>method==='GetMe'?{email:'BILLING@example.test'}:body.page===1?{totalUsageEventsCount:101,usageEventsDisplay:[{timestamp:String(at),model:'gemini-fixture',conversationId:'local-composer',isHeadless:false,tokenUsage:{inputTokens:4,outputTokens:2}}]}:{totalUsageEventsCount:101,usageEventsDisplay:[{timestamp:String(at+1),model:'gemini-fixture',conversationId:'sdk-agent',isHeadless:false,tokenUsage:{inputTokens:9}}]});
+ const result=await new CursorUsage('fixture-key').events(at-1000,at+1000,signal());expect(result).toMatchObject({email:'billing@example.test',complete:true});expect(result.events).toHaveLength(2);expect(result.events[0]).toMatchObject({timestamp:at,tokenUsage:{inputTokens:4,outputTokens:2,cacheReadTokens:0,cacheWriteTokens:0}});
+ expect(fetcher.mock.calls.map(([url])=>String(url).split('/').pop())).toEqual(['exchange_user_api_key','GetMe','GetFilteredUsageEvents','GetFilteredUsageEvents']);
+});
+it('bounds direct pagination and marks truncated bills incomplete instead of replacing measured history',async()=>{
+ const fetcher=transport(method=>method==='GetMe'?{email:'a@example.test'}:{totalUsageEventsCount:2001,usageEventsDisplay:[]});
+ expect(await new CursorUsage('fixture-key').events(0,Date.now(),signal())).toMatchObject({complete:false});expect(fetcher.mock.calls.filter(([url])=>String(url).endsWith('/GetFilteredUsageEvents'))).toHaveLength(20);
+});
+it('accepts a protobuf empty bill with omitted zero defaults as an empty verified period',async()=>{
+ transport(method=>method==='GetMe'?{email:'a@example.test'}:{});
+ expect(await new CursorUsage('fixture-key').events(0,Date.now(),signal())).toEqual({email:'a@example.test',events:[],complete:true});
+});

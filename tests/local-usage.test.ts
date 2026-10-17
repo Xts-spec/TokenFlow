@@ -2,6 +2,10 @@ import {describe,it,expect} from 'vitest';
 import {LocalUsageParser,mergeLocalUsageRows} from '../packages/core/src/local-usage.js';
 const timestamp='2026-10-12T08:00:00.000Z';
 describe('local program token accounting',()=>{
+ it('collects WorkBuddyAI separately and still excludes its imported gateway models',()=>{
+  const p=new LocalUsageParser('workbuddy-ai','intl');for(const model of ['builtin','custom-local:antigravity/Gemini'])p.accept({id:model,timestamp,message:{usage:{input_tokens:20,output_tokens:5}},providerData:{messageId:model,requestModelId:model,rawUsage:{prompt_tokens:20,completion_tokens:5,prompt_tokens_details:{cached_tokens:10}}}});
+  expect(p.rows()).toHaveLength(1);expect(p.rows()[0]).toMatchObject({target:'workbuddy-ai',provider:'workbuddy-ai',channel:'official',inputTokens:20,cachedTokens:10,outputTokens:5});
+ });
  it('prefers Codex per-response records over repeated cumulative notifications and dedupes copied sessions',()=>{
   const p=new LocalUsageParser('codex','one');p.accept({type:'session_meta',payload:{model_provider:'openai',creator_account_id:'owner-not-billing'}});p.accept({type:'turn_context',payload:{model:'gpt-test'}});
   const usage={input_tokens:100,cached_input_tokens:60,output_tokens:20,reasoning_output_tokens:10};
@@ -46,4 +50,18 @@ describe('local program token accounting',()=>{
   const rows=mergeLocalUsageRows([...make('one'),...make('copy')]);expect(rows[0]).toMatchObject({requests:1,inputTokens:10,outputTokens:5,channel:'api'});
  });
 
+});
+
+it('uses the response thread for route exclusion and keeps sibling responses independent',()=>{
+ const seen:string[]=[];const p=new LocalUsageParser('codex','parent',{channelFor:thread=>{seen.push(thread);return thread==='gateway-child'?'gateway':thread==='official-child'?'official':'unknown';}});
+ p.accept({type:'session_meta',payload:{id:'parent',model_provider:'openai'}});p.accept({type:'turn_context',payload:{model:'gpt-test'}});
+ for(const thread of ['gateway-child','official-child'])p.accept({type:'token_usage_record',timestamp,payload:{thread_id:thread,response_id:thread,usage:{input_tokens:100,output_tokens:20}}});
+ expect(seen).toEqual(['gateway-child','official-child']);expect(p.rows()).toHaveLength(1);expect(p.rows()[0]).toMatchObject({channel:'official',inputTokens:100,outputTokens:20});
+});
+
+it('does not inherit parent gateway configuration or billing identity into another thread',()=>{
+ const p=new LocalUsageParser('codex','parent',{channelFor:thread=>thread==='direct-child'?'official':'unknown'});
+ p.accept({type:'session_meta',payload:{id:'parent',model_provider:'token-flow',billing_account_id:'parent-payer'}});p.accept({type:'turn_context',payload:{model:'workbuddy/parent-model'}});
+ for(const thread of ['direct-child','unconfirmed-child'])p.accept({type:'token_usage_record',timestamp,payload:{thread_id:thread,response_id:thread,usage:{input_tokens:100,output_tokens:20}}});
+ expect(p.rows()).toHaveLength(2);expect(p.rows().map(r=>r.channel)).toEqual(['official','unknown']);expect(p.rows().every(r=>!r.nativeAccountId&&r.model==='未标注模型')).toBe(true);
 });

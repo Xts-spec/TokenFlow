@@ -13,6 +13,31 @@
     "trae.png": "https://lf16-web-neutral.traecdn.ai/obj/trae-ai-static/trae_website/favicon.png",
     "cursor.png": "https://cursor.com/marketing-static/icon-192x192-light.png",
     "deepseek.svg": "@deepseek-ai/dsh-web-frontend bundled favicon.svg (dsh 0.2.0-rc.2), blue fill",
-    "pi.svg": "https://pi.dev/logo.svg"
+    "pi.svg": "https://pi.dev/logo.svg",
+    "workbuddy.png": "Official WorkBuddy 5.8.3 and WorkBuddyAI 5.5.2 macOS application bundles: Contents/Resources/icon.icns, converted losslessly to PNG",
+    "xai-mark.svg": "https://docs.x.ai/_next/static/media/favicon-light.1u6watcuoe8mg.svg (official foreground paths extracted for theme-aware monochrome display)",
+    "zai.svg": "https://z-cdn.chatglm.cn/z-ai/static/logo.svg"
+  },
+  "verification": {
+    "date": "2026-10-17",
+    "report": "doc/testing/interface-and-icons.md",
+    "sha256": {
+      "codex.ico": "def0730c050afcd86acd21bd1edf54f0ee3638c9e642f0e4107f7d666bc292a9",
+      "claude.ico": "525d5c063365f7656ba0fe8b9165742c4874e70852d9bed7153b6faca8663a02",
+      "antigravity.png": "193ba1805de11c23cd0c7a1df92aa0a886708e57350f6f7766100afe5befed73",
+      "kimi.ico": "df91c1ecf1d4894cf05845cdce44549ed3ccca3478b97a70972d1bc82ac4f2d1",
+      "xai.svg": "f441eef32955dabf2ded0bb66bf5674a53afb81557d9281c00735dd245dfdc86",
+      "qoder.png": "2276f0f8e6240959e70b83ebc48ec1dac1c0180e24528794f9a52b7386026f3d",
+      "workbuddy.svg": "149baa45b9f9370c15f20d599afe381aa138e4fc13acf503f435c571ac93ecf5",
+      "zcode.png": "089bdfa74910eaed241eac46bf5d02bb5718f15d8d6b247a1ee61b3372c9c82c",
+      "doubao.png": "bf8e41bcc864c00099a98080825ea42aba7cf481303dad3312f44a5da68c3f3b",
+      "trae.png": "49d523938a22af5a70dd79923725df38674823026e2f917e76337319969f4af4",
+      "cursor.png": "267649be4d2a26dea632bb6cc1f7a400daa117e5cd3335a140ba5cb0148aaedc",
+      "deepseek.svg": "d3f69c53ee05ac74dac3efd19fbf9b6c6d90709f26356989586cdf490ea74182",
+      "pi.svg": "abd66e7868b2d24f0f0895f9237ee8a6dcb22337583b0dc54aeb595acecb4d6b",
+      "workbuddy.png": "1ed2dbd10b96120191a8a18b4be0e44b518eef398940cec0e7fe8ad56844c06a",
+      "xai-mark.svg": "308d10a2930646e0406377208f50f68f7fe1b468aade96182f627ff34e80ead8",
+      "zai.svg": "07a45e8e35b0b631ed2c68cd1cb041f9721b1ceeb0bd0e34f1459b0304a741c7"
+    }
   }
 }

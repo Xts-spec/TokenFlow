@@ -26,6 +26,11 @@ it('resolves roaming, macOS and Linux XDG paths without assuming path separators
 it('identifies an existing Qoder login before any TokenFlow switch without writing a journal',async()=>{
  const f=await setup('qoder');expect(await f.manager.status()).toMatchObject({accountId:'original',email:'original@example.test',backup:null});expect(f.secrets.set).not.toHaveBeenCalled();expect(await readFile(f.path)).toEqual(f.original);
 });
+it('observes desktop usage identities without backups, respects skipped decryption and isolates international logins',async()=>{
+ const q=await setup('qoder'),blocked={get:vi.fn(async()=>{throw Error('Must not read backups');}),set:vi.fn(async()=>{})};
+ const skipped=new DesktopAccounts('qoder',blocked,async()=>[],{paths:{qoder:q.path},platform:'darwin'});expect(await skipped.usageLogin()).toBeNull();expect(blocked.get).not.toHaveBeenCalled();expect(await q.manager.usageLogin()).toMatchObject({provider:'qoder',accountId:'original',email:'original@example.test'});
+ const w=await setup();expect(await w.manager.usageLogin()).toMatchObject({provider:'workbuddy',accountId:'original',organizationId:'enterprise-original'});await writeFile(w.path,originalWB.replace('copilot.tencent.com','www.workbuddy.ai'));expect(await w.manager.usageLogin()).toBeNull();await writeFile(w.path+'.logged-out','true');expect(await w.manager.usageLogin()).toBeNull();expect(w.secrets.set).not.toHaveBeenCalled();
+});
 it('displays a native WorkBuddy nickname even when it has no email and is not in the gateway pool',async()=>{
  const f=await setup();await writeFile(f.path,JSON.stringify({account:{uid:'native',nickname:'Local WorkBuddy User'},auth:{domain:'copilot.tencent.com'}}));expect(await f.manager.status()).toMatchObject({accountId:'native',displayName:'Local WorkBuddy User',backup:null});expect(f.secrets.set).not.toHaveBeenCalled();
 });

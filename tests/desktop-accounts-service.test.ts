@@ -28,7 +28,7 @@ it('shares Qoder authorization eligibility and keeps the two native identities i
   change.mockImplementationOnce(async(_target,work)=>{await work();throw Error('launch failed');});const unconfirmed=await service.app.inject({url:'/api/native-accounts/qoder-ide/switch',method:'POST',headers,payload:{sourceId:account.id,revision:restored.json().revision}});expect(unconfirmed.statusCode).toBe(409);expect(unconfirmed.json().error).toContain('原登录备份仍保留');expect((await service.app.inject({url:'/api/native-accounts/qoder-ide',headers})).json().backup).toMatchObject({state:'applied'});
  }finally{await service.app.close();await rm(root,{recursive:true,force:true});}
 });
-it('shares desktop login APIs, authenticates requests, disconnects gateway only after validation and restores original login',async()=>{
+it('switches and restores desktop logins without removing independent custom gateway models',async()=>{
  const root=await mkdtemp(join(await realpath(tmpdir()),'desktop-api-')),allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
  await mkdir(join(root,'cliproxy/auth'),{recursive:true});
  const entries=['qoder','workbuddy'].map(provider=>({name:`${provider}.json`,provider,status:'active',models:['fixture']}));
@@ -50,10 +50,16 @@ it('shares desktop login APIs, authenticates requests, disconnects gateway only 
    expect((await service.app.inject({url:`${url}/switch`,method:'POST',headers,payload:{...payload,sourceId:other.id}})).statusCode).toBe(409);
    const targets=(await service.app.inject({url:'/api/a2a',headers})).json().targets;
    const connected=await service.app.inject({url:'/api/a2a/connect',method:'POST',headers,payload:{target:provider,revision:targets.find((t:{id:string})=>t.id===provider).revision,sourceId:source.id,model:`${provider}/fixture`}});expect(connected.statusCode,connected.body).toBe(200);
+   const imported=await readFile(paths[provider]);
    rejected=true;const calls=change.mock.calls.length;
    const denied=await service.app.inject({url:`${url}/switch`,method:'POST',headers,payload});expect(denied.statusCode,denied.body).toBe(409);expect(change.mock.calls.length).toBe(calls);expect((await service.app.inject({url,headers})).json().gatewayConnected).toBe(true);
-   rejected=false;const switched=await service.app.inject({url:`${url}/switch`,method:'POST',headers,payload});expect(switched.statusCode,switched.body).toBe(200);status=switched.json();expect(status.gatewayConnected).toBe(false);expect(status.accountId).toBe('new');expect(switched.body).not.toMatch(/test-secret|test-refresh|access_token/);
+   rejected=false;const switched=await service.app.inject({url:`${url}/switch`,method:'POST',headers,payload});expect(switched.statusCode,switched.body).toBe(200);status=switched.json();expect(status.gatewayConnected).toBe(true);expect(status.accountId).toBe('new');expect(switched.body).not.toMatch(/test-secret|test-refresh|access_token/);
+   expect(await readFile(paths[provider])).toEqual(imported);
    const restored=await service.app.inject({url:`${url}/restore`,method:'POST',headers,payload:{revision:status.revision}});expect(restored.statusCode,restored.body).toBe(200);expect(restored.json().backup).toBeNull();await expect(readFile(loginPaths[provider])).rejects.toHaveProperty('code','ENOENT');
+   expect(restored.json().gatewayConnected).toBe(true);expect(await readFile(paths[provider])).toEqual(imported);
+   expect((await service.app.inject({url:'/api/a2a',headers})).json().targets.find((t:any)=>t.id===provider).connection.id).toBe(connected.json().id);
+   const config=JSON.parse(imported.toString()),key=provider==='qoder'?config.providers['token-flow'].apiKey:config[0].apiKey;
+   expect((await service.app.inject({url:'/v1/models',headers:{host:headers.host,authorization:`Bearer ${key}`}})).statusCode).toBe(200);
   }
   for(const a of entries)expect(await readFile(join(root,'cliproxy/auth',a.name),'utf8')).toContain('test-refresh');
  }finally{await service.app.close();await rm(root,{recursive:true,force:true});}

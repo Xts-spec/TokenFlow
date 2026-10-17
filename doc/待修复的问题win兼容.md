@@ -1,12 +1,83 @@
 # Windows 兼容问题与实机接手说明
 
-记录日期：2026-10-16。最近已发布基线：v10.15.26.12，提交 `b5c30fd`；Windows 标题栏修复基线为 `5fe1177`。本轮窗口修复尚需 Windows 实机验收。
+记录日期：2026-10-16；最近补充：2026-10-17。旧 Windows 包基线：v10.15.26.12，提交 `b5c30fd`；Windows 标题栏修复基线为 `5fe1177`。M 芯片 Mac v10.15.26.13 已安装核对，交付记录提交 `172c361`，不代表 Windows 已打包或实测通过。
+
+文档入口见 [项目文档](README.md)；当前待办统一在 [TODO](TODO.md) 维护。Claude 和反重力的渠道／来源统计分别对应 USAGE-001、USAGE-002、USAGE-003；全部客户端直连采集范围对应 USAGE-004，本页保留 Windows 执行步骤，不另行维护重复状态。
 
 ## 仓库与交付约定（按用户最新确认）
 
 本次继续使用 **https://github.com/haruinia/TokenFlow.git**。当前开发机的远程别名为 `TokenFlow`，`main` 跟踪 `TokenFlow/main`。用户已确认保留这个仓库，请在这里做 Windows 功能测试、修复并提交结果。
 
 新克隆默认可能叫 `origin`，不必把别名改成 `TokenFlow`；以远程 URL 和实际提交号为准。交付记录必须注明 `git rev-parse HEAD` 和设置页版本号，不能仅以 v10.15.26.12 判断是否包含 `5fe1177` 的窗口修复。
+
+## main 与 win-fix 的同步交接（2026-10-17）
+
+这是本次文档补充前的提交快照，后续两边继续提交时应重新核对，不能把下表当作永远有效的分支状态：
+
+| 项目 | 提交 |
+| --- | --- |
+| 共同祖先 | `32fa0e8ba3e02d78467618721b5af834671a5d24` |
+| 本地 main（补充文档前） | `42065c92c9e14c9bfe5661c6e4ca87a1731c24d0` |
+| TokenFlow/main（本次检查时） | `66c65e810c93af1b723217c2abd676b46c50034d` |
+| TokenFlow/win-fix | `2c3815e6fcb59195d17207c6ec13aa433f7095f7` |
+| 分叉后的提交数 | 本地 main 独有 12 笔，win-fix 独有 7 笔；本次推送还将包含后续交接文档提交 |
+
+本次只补充交接记录，不合并或改写 `win-fix`。已发布提交保持原提交号；不要为了补提交说明而 amend、重写历史或强制推送。Windows 接手者同步时需要同时保留两边修改，不能用整文件覆盖解决冲突。
+
+下列提交表是当时快照。后续 Cursor 原生直连已在 main 接入并完成 macOS 实测，当前范围见 [USAGE-004](TODO.md) 与本页 U13，不再按 `66c65e8` 时的“尚未接入”判断。
+
+### main 的问题、改进与对应提交
+
+| 提交（按先后顺序） | 遇到的问题与原因 | 已完成的改进／交接重点 |
+| --- | --- | --- |
+| `709122d` | CC Switch 等改过接入字段后，差异保护阻止普通应用，维修入口过于间接。 | 增加明确确认后的“重新应用”，保存替换前原文并校验确认版本；仅检测或取消不写入，损坏／权限错误不强行覆盖。关联 CONFIG-001。 |
+| `6cd4c3a` | 当前说明、待办与历史报告散落，容易把历史验证当作当前结果。 | 集中到 `doc/`，TODO 维护当前状态，`testing/` 维护验收，`archive/` 保留历史。同步时保留路径迁移与导航。 |
+| `8c8e37e`、`44f727c` | WorkBuddy 原生选择器在名称与 ID 不同时追加 `:ID`，出现 `qoder/GLM-5.3-Flash:qoder/gfmodel`。 | 客户端使用可读的模型名称／ID，`modelAliases` 在内部映射回网关路由；需同时保留配置导出、路由、权限和统计映射，不能只改显示文字。旧接入需重新应用。关联 MODEL-001。 |
+| `f190438` | 把官方登录与自定义模型混为互斥状态，使用网关后官方账号错误地取消选中。 | WorkBuddy、WorkBuddyAI、Qoder 保留官方登录与独立自定义模型；切换／还原登录不删除自定义模型或撤销其 Key。Codex、Claude 仍区分官方／网关模式，地区及客户端身份仍隔离。关联 LOGIN-001。 |
+| `dd08bf7`、`1072a5f` | 刷新只重读登录、未查询额度；账号重复切换、标题跳动、加载提示叠加，部分图标资源过时。 | 强制刷新供应商额度；本机账号防重复切换；统一标题／版本和额度详情，避免重复加载提示；核对并更新官方图标。原因和逐项验证见[界面记录](testing/interface-and-icons.md)。 |
+| `be7a0b9`、`797f8c7`、`3eea483` | 应用自身安全存储初始化早于说明，系统先弹钥匙串；选择页与加载页各自居中导致品牌跳动。 | 先绘制说明并等待选择，再初始化安全存储与服务；选择页沿用普通加载页，品牌共用节点与占位，选择后才显示动画。“暂不读取”跳过外部客户端安全存储，仍加载 TokenFlow 自己的已保存账号。 |
+| `66c65e8` | 反重力原生 SQLite 没有直连采集；历史账号归属及网关排重不完整，未采集容易被误认为零。 | 增加只读 SQLite／protobuf 用量采集、连续登录观察、历史未知归属、WAL 重扫与去重；界面展示采集覆盖和缺口。关联 USAGE-002／USAGE-004。 |
+| `66c65e8` | Cursor SDK 已给 usage 时跳过官方账单，真实调用出现 SDK 输出 5、官方同一 agent 输出 29 的差异。 | 优先使用同一 fresh agent 的官方明细，不可用才回退 SDK；增加回归并真实复测响应、账本、官方明细一致。**这是网关对账，Cursor 原生直连仍未接入。** |
+| `42065c9` | 原启动主入口测试停在服务监听前，界面只比最终位置，不能证明完整交接及中间绘制顺序。 | 补齐允许／跳过、安全存储可用／不可用组合；断言加载绘制先于安全存储、工作台显示后关闭启动页，逐帧核对品牌坐标和说明／动画互斥。具体结果与系统授权边界见[界面记录](testing/interface-and-icons.md)。 |
+
+命名的复现和测试见 [WorkBuddy 模型名称](testing/workbuddy-model-labels.md)，账号并存见[官方登录与自定义模型](testing/official-login-coexist.md)，用量的字段、范围和实测见[客户端直连用量](testing/native-direct-usage.md)。具体未完成项只在 [TODO](TODO.md) 维护。
+
+### 66c65e8 的关键实现与验证边界
+
+- 反重力仅从 `gen_metadata` 读取调用，`steps` 复制的用量不再次累加；输入已包含缓存，思考输出不再额外相加。只支持已确认的 SQLite `user_version=1`，旧 `.pb` 和其他结构保持待适配。
+- 真实本机只读核对 1 个数据库、45 次生成：输入 2,014,552（包含缓存读取 1,800,288）、输出 20,171。这 45 次旧调用没有历史登录观察，保持未关联，不能分配给当前授权账号。
+- 登录补充归属只覆盖两次相同身份、间隔不超过 15 秒的观察之间；不跨启动、休眠或切换补历史。过期／停用授权仍可识别历史，多份授权合并代表记录；地区、企业、组织和项目保留隔离。
+- 网关排重在首次解析也校验已保存的 response hash，避免仅在缓存重扫时生效。无请求渠道证据时，不因当前已登录就把自定义调用认作官方。
+- Qoder 观察必须沿用启动安全存储选择；不得为了补用量而提前触发钥匙串、读取登录备份或改写客户端配置。
+- Cursor 修复后真实调用为输入 1,994、输出 5、合计 1,999，HTTP 200，响应／账本／同一 agent 的官方明细一致；已只读确认与本机 IDE 同账号。原生设置页只有汇总百分比，不能用其变化证明单次 Token。
+- 本轮 16 个用量／账号测试文件的 93 项、Cursor 的 40 项回归通过，类型检查和生产构建通过；反重力生产 Worker 只读验证通过。这里不是全仓库测试全部通过，也不是 Windows 实机通过；**66c65e8 没有更新安装包**。
+- Cursor 原生直连、Kimi／ZCode／Trae／Grok 采集仍待完成；WorkBuddyAI 同格式 JSONL 入口已接入，但本机旧版 local_storage 和全部版本未验证；Claude Intel 安装版历史归属问题仍未关闭。不得把账号授权成功写成全部客户端直连统计已完成。
+
+### win-fix 已有改动与合并注意点
+
+以下是远程分支的提交与源码审阅结果，**本机没有执行这些 Windows 实机测试**，不替代接手者提交的测试报告：
+
+| win-fix 提交 | 已有改动范围 |
+| --- | --- |
+| `0de3eaf` | 商店 Codex CLI 路径识别、JS sidecar 启动、SQLite 锁和 Electron 测试清理。 |
+| `d3e263d` | Windows 换行符／`git apply` 兼容及 sidecar 编译。 |
+| `6534de8` | a2a-service 的 Windows 生命周期 mock 与实机测试入口。 |
+| `4652c2b` | Windows 客户端便捷启动脚本。 |
+| `1394150` | Windows 本机全量真实端到端测试入口。 |
+| `9a2ab19` | Codex CLI／后台进程的路径及身份识别。仍需覆盖误识别、权限差异和多安装实例。 |
+| `2c3815e` | 便捷启动兼容 `release\win-unpacked\TokenFlow.exe`。 |
+
+本快照中，两边共同修改过的文件及需同时保留的行为：
+
+| 文件 | main 的变化 | win-fix 的变化 |
+| --- | --- | --- |
+| `packages/core/src/agent-installation.ts` | WorkBuddyAI 独立安装／版本检测。 | 商店 Codex CLI 的候选路径选择。 |
+| `packages/core/src/cliproxy.ts` | `nativeUsageAccounts()` 提供历史归属所需账号元数据。 | JS sidecar 使用 `process.execPath` 启动，并保留配置参数。 |
+| `tests/a2a-service.test.ts` | 确认后重新应用、取消及配置版本冲突测试。 | WindowsAgentLifecycle 的 stop/open mock、平台断言与清理。 |
+
+共同修改不一定产生文本冲突；自动合并成功也需要验证行为。建议完整合入 main 的连续改动，再按本文和后续清单验收；只摘取 `66c65e8` 会遗漏此前的接入、命名、登录与文档依赖。不要用整份 main 文件覆盖 win-fix 的进程、启动或测试适配。
+
+同步后先运行类型检查、构建及相关源码回归，再执行 Windows 的进程重启、备份／恢复、账号授权和切换、CC Switch 重新应用、官方／自定义并存、启动读取选择、窗口与托盘、SQLite 占用及直连用量检查。下文清单中的 Windows 项目仍按“未测”开始；新增测试脚本的存在不等于这些场景已经通过。
 
 ## 1. Codex 重启、备份对话与切换环境失败（待实机定位）
 
@@ -92,6 +163,16 @@ npx electron scripts/windows-window-ui-check.cjs
 
 参考：Electron 官方窗口标题栏文档：<https://www.electronjs.org/docs/latest/tutorial/custom-title-bar>。
 
+### CC Switch 等工具改动接入配置后的重新应用（代码已调整，待 Windows 验收）
+
+截图中的“接入配置与上次记录不同”是接入字段差异检查，与已取消的密钥类型白名单无关。首次接入已有第三方配置可以写入；已有 TokenFlow 接入记录后，第三方修改地址、Key 或模型会导致普通切换无法安全逆向原改动。此前只能走维修方案，入口过于间接。
+
+- 本地 Agent 页面现在显示“重新应用”。启动开关、应用模型也会在存在差异时进入同一确认流程，无需先删除接入记录。
+- 确认后使用现有接入重写逻辑，先保存本次替换前的完整配置，再更新接入所需字段；其他 provider、MCP、权限与偏好设置保留。备份中 `previousConfig` 是替换前原文，仅存本机，不能上传或复制到运行日志。原有恢复入口仍按接入备份的规则恢复，不是 CC Switch 的配置历史管理器。
+- 只检测到变化、打开确认、取消均不写入。确认绑定看到的配置版本；确认后其他程序再次写入时返回冲突，关闭确认并重新操作。格式损坏、软链、权限错误不会被强行覆盖。
+- Codex 确认中说明自动退出、应用与重新打开，合并为一次确认；Windows 能否正确识别和重启进程仍按第 1 节实机验证。
+- 已在 macOS 宿主通过 `tests/a2a-service.test.ts`、`tests/agent-connections.test.ts`、`tests/agent-model-switching.test.ts` 共 67 项回归、类型检查与构建；新增 `scripts/agent-reapply-ui-check.cjs` 验证真实构建界面的确认、取消、版本冲突与启动开关。这些是隔离夹具结果，**尚未验证真实 Windows + CC Switch 共存**。
+
 ## 3. Windows 全功能测试的执行规则
 
 以下把 macOS 开发机上的测试资产、已确认结果与人工验收场景转成 Windows 接手清单。**每个 Windows 用例初始都为“未测”**；代码测试存在、macOS 上通过、页面模拟通过，都不能直接标记 Windows 实机通过。
@@ -164,7 +245,7 @@ node scripts/check-file-cleanup-native.mjs
 | --- | --- | --- |
 | S01 | 干净测试配置首次打开最终 Windows 包 | 架构正确，无缺失 DLL／SDK／sidecar；启动窗口及时出现；最终进入工作台 |
 | S02 | 保留旧配置覆盖升级，再冷启动 | 原账号、来源、Key、用量、备份、主题仍可读；不新建错误配置目录 |
-| S03 | 启动确认选择“暂不读取”，再访问账号／本地 Agent 页、刷新和导入 | 被保护的客户端安全存储不被后续轮询绕过；已保存的 TokenFlow 账号仍可调用；需要安全存储的操作给出明确提示；普通本地文件读取与安全存储访问分开记录 |
+| S03 | 启动确认选择“暂不读取”，再访问账号／本地 Agent 页、刷新和导入 | 本次启动完全跳过 TokenFlow 自身和外部客户端的系统安全存储，包括可用性检查、加密与解密；内部网关使用临时密钥，依赖安全存储的账号／API 密钥暂不可用并明确提示。轮询、刷新、导入不得绕过；原密文不变，下次允许后可恢复。此标准取代早期“跳过后已保存账号仍可调用”的描述 |
 | S04 | 下一次启动选择“允许读取”；另做系统拒绝／安全存储不可用 | 允许后才能访问相关安全存储；拒绝时有错误与恢复方法，不覆盖原密文，不伪装登录成功 |
 | S05 | 启动确认卡片用 Tab、Shift+Tab、Enter、Esc；缩到 900×640 | 默认焦点“暂不读取”；键盘不意外授权；内容完整；选择后继续加载，不挂起 |
 | S06 | 工作台点 ×，托盘重新打开，再通过托盘退出 | 点 × 保留网关和单实例；托盘可恢复；明确退出后清理受管进程和占用端口 |
@@ -172,6 +253,15 @@ node scripts/check-file-cleanup-native.mjs
 | S08 | 区分启动页 ×、主窗口 ×、菜单退出、系统关机 | 当前启动页 × 会终止启动；主窗口 × 为托盘驻留；其余退出能保存并清理资源 |
 | S09 | 安装包放在中文／空格目录、切换工作目录、普通权限运行 | 路径解析与启动命令正确；不能依赖开发仓库当前目录 |
 | S10 | 深浅主题、Alt、最大化／恢复、Snap、100/125/150% DPI、多显示器 | 按第 2 节检查融合标题栏、系统按钮、拖动区、窗口边界、弹窗、内容不遮挡 |
+
+以下新增项均为 **Windows 未实测**。`522e5bb`、`caec7f4` 已修改启动安全存储与读取偏好行为，旧测试结论不得直接沿用；macOS／隔离夹具通过不等于 Windows DPAPI 通过。
+
+| ID | 前置与操作 | 预期／核对点 |
+| --- | --- | --- |
+| S11 | 首次允许读取并成功读取／保存，再完整退出重开；另测首次暂不读取 | 成功后才记住允许，后续直接显示加载页；暂不读取不记作允许，不因凭据文件存在推断同意。Windows Credential Manager／DPAPI 实际行为单独记录 |
+| S12 | 从托盘选择“下次启动重新选择登录读取”，退出再打开；另测偏好文件无效、系统存储不可用 | 重新询问；存储不可用清除已记住偏好、保留密文；不无限加载、不伪装读取成功。菜单可用性由 Windows 实机核对 |
+| S13 | 同一进程多次加载账号；隔离测试资料中修改／移除／损坏加密文件，再退出重开 | 内存解密缓存不返回旧文件的值；写入／删除同步失效；退出不保留明文缓存；异常有终态。不得用真实账号资料做破坏性测试 |
+| S14 | 首次选择页、记住后的加载页、系统拒绝／取消／延迟响应，分别最小窗口和 DPI 缩放 | 品牌／图标位置稳定，读取说明先于受保护访问；选择与加载动画不重叠，授权由测试者本人操作，处理后工作台自动打开。M 芯片 Mac 安装通过仅作对照 |
 
 ### 5.2 每家平台账号授权（P0：至少 Codex、WorkBuddy；完整交付覆盖全部可用平台）
 
@@ -214,6 +304,7 @@ node scripts/check-file-cleanup-native.mjs
 | L10 | Antigravity 本机账号切换、退出客户端后恢复 | 数据库／身份和账号池正确关联；文件变化／占用时拒绝覆盖；没有自动重启能力时明确人工步骤 |
 | L11 | Cursor 本机身份变化后刷新 | 只读显示准确；需在官方客户端切换时明示，不把网关来源变更当作官方登录变更 |
 | L12 | 重启期间再点切换／删除／恢复；进程自重启、PID 复用 | 操作互斥；不写入过期预览；不启动重复实例，不关闭已变成其他程序的 PID |
+| L13 | WorkBuddy、WorkBuddyAI、Qoder 保留官方身份并使用自定义模型，切换／恢复官方账号；另核对 Codex 网关模式 | 官方身份仍选中并显示“已登录”；切账号不移除自定义模型与 Key，国内／海外不互相影响；Codex 的活动 provider 模式仍区分。LOGIN-001，见 [验证记录](testing/official-login-coexist.md)；WorkBuddyAI 本轮未新增自动导入入口 |
 
 ### 5.4 接入配置、模型切换、对话备份和恢复（P0）
 
@@ -227,8 +318,10 @@ node scripts/check-file-cleanup-native.mjs
 | C06 | 接入前文件不存在、格式损坏、只读、软链、中文路径 | 缺失文件可按规则建立并恢复为原缺失；损坏／冲突有明确提示；路径按 Windows 实际目录解析 |
 | C07 | Claude 选择 opus/sonnet/haiku 等官方别名，切换主／辅助模型 | 等价别名不误报配置变更；真实路由偏离能检测；辅助模型不会漏走官方来源 |
 | C08 | WorkBuddy/Qoder 官方 SDK 工具往返；Claude、Chat、Responses 协议客户端 | 文本和受支持的工具结果完整返回；不把 SDK 的内部消息直接当网关协议；不丢工具调用对应关系 |
-| C09 | 当前主界面提示配置与记录不同，进入维修检查 | 读取实际差异与所选客户端；不能仅清除提示而没有恢复正确配置 |
+| C09 | 接入 TokenFlow 后用 CC Switch 切换 Codex／Claude Code 的地址、Key 和模型，再返回 TokenFlow | 显示“重新应用”；先取消确认，文件和 Key 均不变；再次确认后备份完整旧配置并更新所选模型，保留其他 provider、MCP、权限与偏好设置；真实客户端发消息验证路由；Codex 只确认一次并退出、应用、重开 |
 | C10 | 客户端未安装、装多个版本、不同配置目录、客户端仍运行 | 明确支持范围；配置写入、退出和重启均有正确前置判断；安装失败不冒充接入成功 |
+| C11 | 打开重新应用确认后，再用第三方工具写入同一配置；另测第三方工具持续回写、文件损坏与无法写入 | 版本冲突不覆盖新改动；取消并重开确认可获取新版本；持续回写应提示冲突，不自动循环争抢；坏文件／权限错误保留原文与备份，不能仅清除提示 |
+| C12 | WorkBuddy 重新导入 Qoder／Codex 模型并打开原生菜单；重命名、重启、同名模型和恢复配置 | 只显示可读名称，不出现“名称:内部 ID”；实际请求仍使用原来源与模型，用量归属正确；同名项可区分且不覆盖其他自定义模型。MODEL-001 的 macOS 原生函数／CLI 已验证，Windows 4.22.16 菜单仍需实测，见 [验证记录](testing/workbuddy-model-labels.md) |
 
 ### 5.5 API 来源、导出 Key、协议与真实调用（P0/P1）
 
@@ -274,8 +367,43 @@ node scripts/check-file-cleanup-native.mjs
 | U08 | 缓存／依赖／安装包候选、受保护文件、同名副本、文件扫描后变化 | 分类与元数据证据一致；不只按名字断言重复；失效扫描和变化条目不直接删除 |
 | U09 | 在测试目录执行回收站／永久删除、取消与恢复测试 | 按明确确认的范围处理；受保护项有影响说明；Windows 回收站语义正确；不能影响真实对话和账号数据 |
 | U10 | 设置、复制、外链、侧栏宽度、拖动排序、通知、弹窗、长名称 | 状态持久化、复制反馈正确、官方链接只开浏览器；键盘和滚动不跳位；页面不溢出 |
+| U11 | Claude Code 分别使用官方登录、直接 API、TokenFlow 反重力来源；反重力两个账号提供同名 Gemini／Claude 模型 | 核对 target／provider／sourceId／channel／origin；同名模型不串来源，停用账号不改路由；导出 Key 不冒称客户端身份，重启／重扫不重复累计。反重力 SQLite v1 已接入，Windows 需实测 DB／WAL 更新、双账号／项目切换和旧 `.pb` 明确不可读；无身份历史单列。详见 [直连采集](testing/native-direct-usage.md) |
+| U12 | 所有已授权平台分别从客户端直连一次，再经 TokenFlow 使用一次；覆盖 WorkBuddyAI 国际版与 Qoder 官方／自定义模型共存 | 来源、渠道和目标不串；重复授权／过期／停用不丢历史身份，跳过安全存储不弹读取提示；无支持的采集器必须显示“尚未采集”。Kimi／ZCode／Trae／Grok 等未适配项按 USAGE-004 采集脱敏结构和实际 Token 对账，不勾为通过，不用额度反推 Token；Cursor 单列 U13 |
+| U13 | Cursor：原生 No Repo／无工具消息一次，再经 TokenFlow SDK 一次；重复扫描、重启并清空可清空的活动轨迹后核对 | main 已在 macOS Cursor 3.25.6 实测原生 14,052 Token。Windows 仍未测：核对 `%APPDATA%/Cursor/User/globalStorage/state.vscdb`／WAL、代理与普通权限；本机 composer＋授权账号官方事件精确关联，不能用 `isHeadless=false` 判断。直连只进 native，SDK 只进 gateway，来源账号／活动一致；排重文件不随清空轨迹删除，重启或导入 SDK 副本不双算。测试双账号、无邮箱授权、停用、空／延迟／不完整账单，网络失败保留旧计数；无 Key 创建或客户端认证／配置写回。更多版本、同步会话和大账单范围见[直连文档](testing/native-direct-usage.md#cursor-原生客户端直连采集2026-10-17) |
+
+#### Cursor 安装版补充验收（Windows 未实测，P1）
+
+- **U14：最终 Windows 包显示核对**。同步包含 `6f1729d` 的直连实现及后续改进后，重新构建 Windows 包；在设置页记录实际版本和提交。完成 U13 后无需手工刷新，在“用量总览 → 使用方式 → 显示全部”看到 Cursor，再核对来源账号、活动中的“官方明细核对”和请求数。完整退出重开后统计不丢失、不重复；后台对账延迟或失败时保留已有已核对计数并显示状态。
+- macOS v10.15.26.13 的参考样本是 **14,052 Token（输入 14,047、输出 5、缓存读取 0、1 次请求）**，安装界面四舍五入显示 **1.4 万**。Windows 应使用自己的原生测试请求及对应官方明细核对，不把这个数字作为固定预期，也不把账号来源中的网关＋直连合计误认作客户端原生直连。
+- **U15：原生数据库与权限**。客户端运行／退出、SQLite 与 WAL 变化、普通权限、受占用／拒绝读取、自定义或旧资料目录逐项记录；读取前后数据库不被采集器改写。没有本机会话证据的网页／其他设备账单不能计入；不得改读 Cursor 原生登录密钥或创建 SDK Key 来补计数。大账单、同步历史、团队等尚未验证边界继续按[直连文档](testing/native-direct-usage.md)记录未测或阻塞。
+
+#### Codex 请求统计与归属（U16，Windows 未实测，P1）
+
+- 从包含本轮 Codex 请求线程修复的提交构建包；旧 M 芯片 v10.15.26.13 包没有本轮修改。用父日志内含子线程响应、不同模型和账号的脱敏夹具核对请求线程优先级；没有唯一证据时不继承父模型或账号。
+- v12 索引升级后，即使原日志未变化也重扫 Codex，其他客户端缓存保留。同响应副本／累计通知不双算，缓存不额外加一次；归属修复不应改变真实 Token 总额。账号切换、子线程独立路由、网关排重分别验收。
+- 官方个人主页与 TokenFlow 对账记录同账号、日界线、版本和采集时点。macOS 的 3.5 亿对约 6.43 亿差额尚未闭环，不是 Windows 已通过的基线；没有账号证据的 Token 保持已统计、归属未确认。见 [Codex 排查记录](testing/native-direct-usage.md#codex-个人主页与本机日志差异排查2026-10-17)。
+
+#### 多客户端计数与缓存兼容（U18，Windows 未实测，P1）
+
+- [ ] 复跑 `tests/gateway-activity.test.ts`：Chat Completions 响应同时有 prompt_tokens 和 Anthropic 缓存别名时，输入不再重复加缓存；JSON／SSE 均应为输入 100、输出 10、总量 110。保留原 Anthropic 分项输入与 Responses 包含式输入的断言。
+- [ ] 在 Windows 安装包中核对逐请求详情、来源、总览一致；先记录真实响应字段和计数，再与客户端／官方同账号同日明细比较，不按额度百分比倒推 Token。
+- [ ] 分别核对 Claude、Qoder、WorkBuddy、反重力和 Cursor 的直连／网关路径；“官方类型”与“已匹配账号”分开验收。无记录、无授权、尚未支持时不得显示成确定的零消耗。
+- [ ] Codex 对账按逐请求证据、登录观察推断、其他账号、未知账号分组；诊断脚本新增证据分项只用于排查，不修改生产数字。macOS 精确证据本身仍高于个人主页，不能把差额简单归因于未知账号。
+
+macOS 已完成的范围与保留缺口见 [跨客户端核对](testing/native-direct-usage.md#跨客户端计数复核与-codex-同账号差额2026-10-17)。关联 USAGE-001／002／004／005，不能把 Mac 源码回归当作 Windows 实机通过。
+
+#### Codex 独立对账记录器（U19，Windows 未实测，P1）
+
+- [ ] 使用真实 Windows Codex 会话目录、TokenFlow 数据目录和官方 CLI 可执行文件路径运行 `scripts/codex-reconciliation-record.ts`；不能照抄 macOS 的目录。普通用户权限验证目录锁、文件权限、符号链接／目录联接和文件占用。
+- [ ] 新账号从完整日开始使用，按 [记录方案](testing/native-direct-usage.md#新账号完整日对账记录器2026-10-17)核对本机逐请求、账号观察及官方最近 7 日日桶。切换账号、跨午夜、休眠、网络失效、强退及重新启动后，保留窗口、记录中断、按响应最新修订排重。
+- [ ] 精确账号证据后到或文件轮转时不重新计数，不被较弱的当前登录观察覆盖；不同精确证据冲突必须保留冲突。子线程使用自己的来源／身份；创建者不作为请求付款账号。
+- [ ] 官方快照失败标记不可用，个人空间／服务端时区未公开时保持未确认。日志不包含凭据、消息或原始账号 ID；实际日志保持 Git 忽略，只同步源码与脱敏结论。
+
+v10.15.26.15 源码已接入桌面自动启停；Windows 包仍待构建与实测。补验打开应用自动续记、关闭窗口保持记录、完整退出关闭 Worker／官方 CLI、系统重启后打开应用恢复，以及选择“暂不读取”跳过官方认证查询。确认包内包含 codex-reconciliation-worker.js，不依赖源码或全局 Node。旧手动记录器占用日志时不双写，锁释放后自动接管。macOS 结果不替代 Windows 实测，USAGE-005 仍未完成官方对账。
 
 ### 5.8 最终 Windows 包交付（P0）
+
+用量对账补充 U17（Windows 未实测）：在开发测试环境使用实际已安装官方 CLI 运行 `scripts/codex-official-usage-check.ts` 的只读检查，记录账号是否匹配、日桶原始数值与采集时刻；不登录新账号、不创建模型请求、不输出凭据。对照本机审计的同账号／其他账号／未确认分区和半开日期窗口，标出尚未结束的时区日窗；空日桶与 0 不混淆。macOS 已观察到个人主页 3.5 亿与官方 CLI 263,551,960 不同，不能拿任何一方作为 Windows 的固定预期，也不能为了匹配而改本机 Token。新版主页接口若返回权限错误就记录阻塞，不绕过权限。
 
 | ID | 前置与操作 | 预期／核对点 |
 | --- | --- | --- |
@@ -335,8 +463,9 @@ Windows 版本／架构／终端：
 脚本索引也包含构建、补丁、探测、真实账号 live 和历史修复工具，**不是批量执行清单**。运行 live／repair／replay／stress 类工具前必须读其文件头、参数、路径和副作用，适配 Windows 并使用测试账号／测试配置；已有脚本里有硬编码 macOS 路径，不得直接照搬执行。
 
 <details>
-<summary>Vitest 测试文件：105 个</summary>
+<summary>Vitest 测试文件：114 个</summary>
 
+- [packages/contracts/fixtures.test.ts](../packages/contracts/fixtures.test.ts)
 - [tests/a2a-interoperability.test.ts](../tests/a2a-interoperability.test.ts)
 - [tests/a2a-service.test.ts](../tests/a2a-service.test.ts)
 - [tests/account-label.test.ts](../tests/account-label.test.ts)
@@ -348,6 +477,9 @@ Windows 版本／架构／终端：
 - [tests/agent-model-switching.test.ts](../tests/agent-model-switching.test.ts)
 - [tests/agent-processes.test.ts](../tests/agent-processes.test.ts)
 - [tests/agent-updates.test.ts](../tests/agent-updates.test.ts)
+- [tests/antigravity-usage-index.test.ts](../tests/antigravity-usage-index.test.ts)
+- [tests/antigravity-usage-service.test.ts](../tests/antigravity-usage-service.test.ts)
+- [tests/antigravity-usage.test.ts](../tests/antigravity-usage.test.ts)
 - [tests/api-protocol.test.ts](../tests/api-protocol.test.ts)
 - [tests/api-source-draft.test.ts](../tests/api-source-draft.test.ts)
 - [tests/api-sources.test.ts](../tests/api-sources.test.ts)
@@ -371,6 +503,8 @@ Windows 版本／架构／终端：
 - [tests/credential-identity.test.ts](../tests/credential-identity.test.ts)
 - [tests/cursor-local-service.test.ts](../tests/cursor-local-service.test.ts)
 - [tests/cursor-local.test.ts](../tests/cursor-local.test.ts)
+- [tests/cursor-native-usage-service.test.ts](../tests/cursor-native-usage-service.test.ts)
+- [tests/cursor-native-usage.test.ts](../tests/cursor-native-usage.test.ts)
 - [tests/cursor-usage.test.ts](../tests/cursor-usage.test.ts)
 - [tests/cursor.test.ts](../tests/cursor.test.ts)
 - [tests/deepseek-config.test.ts](../tests/deepseek-config.test.ts)
@@ -407,6 +541,8 @@ Windows 版本／架构／终端：
 - [tests/native-accounts.test.ts](../tests/native-accounts.test.ts)
 - [tests/native-login-identity.test.ts](../tests/native-login-identity.test.ts)
 - [tests/native-login-visibility.test.ts](../tests/native-login-visibility.test.ts)
+- [tests/native-usage-accounts.test.ts](../tests/native-usage-accounts.test.ts)
+- [tests/native-usage-coverage.test.ts](../tests/native-usage-coverage.test.ts)
 - [tests/native-usage-login-readers.test.ts](../tests/native-usage-login-readers.test.ts)
 - [tests/native-usage-logins.test.ts](../tests/native-usage-logins.test.ts)
 - [tests/network-check.test.ts](../tests/network-check.test.ts)
@@ -427,6 +563,7 @@ Windows 版本／架构／终端：
 - [tests/secrets.test.ts](../tests/secrets.test.ts)
 - [tests/service.test.ts](../tests/service.test.ts)
 - [tests/source-options.test.ts](../tests/source-options.test.ts)
+- [tests/startup-credential-order.test.ts](../tests/startup-credential-order.test.ts)
 - [tests/switch-journal.test.ts](../tests/switch-journal.test.ts)
 - [tests/trae-acceptance-platform.test.ts](../tests/trae-acceptance-platform.test.ts)
 - [tests/trae-codex-config.test.ts](../tests/trae-codex-config.test.ts)
@@ -442,6 +579,7 @@ Windows 版本／架构／终端：
 - [tests/usage-overview.test.ts](../tests/usage-overview.test.ts)
 - [tests/window-options.test.ts](../tests/window-options.test.ts)
 - [tests/windows-agent-lifecycle.test.ts](../tests/windows-agent-lifecycle.test.ts)
+- [tests/workbuddy-model-labels.test.ts](../tests/workbuddy-model-labels.test.ts)
 
 </details>
 
@@ -468,11 +606,12 @@ Windows 版本／架构／终端：
 </details>
 
 <details>
-<summary>脚本完整索引（需逐个确认平台和副作用）：74 个</summary>
+<summary>脚本完整索引（需逐个确认平台和副作用）：82 个</summary>
 
 - [scripts/a2a-desktop-live.ts](../scripts/a2a-desktop-live.ts)
 - [scripts/account-startup-ui-check.cjs](../scripts/account-startup-ui-check.cjs)
 - [scripts/after-pack.cjs](../scripts/after-pack.cjs)
+- [scripts/agent-reapply-ui-check.cjs](../scripts/agent-reapply-ui-check.cjs)
 - [scripts/agent-startup-ui-check.cjs](../scripts/agent-startup-ui-check.cjs)
 - [scripts/agent-task-live.ts](../scripts/agent-task-live.ts)
 - [scripts/antigravity-fault-proxy.ts](../scripts/antigravity-fault-proxy.ts)
@@ -480,9 +619,11 @@ Windows 版本／架构／终端：
 - [scripts/before-pack.cjs](../scripts/before-pack.cjs)
 - [scripts/build-sidecar.mjs](../scripts/build-sidecar.mjs)
 - [scripts/catalog-smoke.ts](../scripts/catalog-smoke.ts)
+- [scripts/check-antigravity-native-usage.mjs](../scripts/check-antigravity-native-usage.mjs)
 - [scripts/check-file-cleanup-native.mjs](../scripts/check-file-cleanup-native.mjs)
 - [scripts/check-packaged-runtime.mjs](../scripts/check-packaged-runtime.mjs)
 - [scripts/check-runtime-bundle.mjs](../scripts/check-runtime-bundle.mjs)
+- [scripts/check-workbuddy-model-labels.ts](../scripts/check-workbuddy-model-labels.ts)
 - [scripts/claude-integration-ui-check.ts](../scripts/claude-integration-ui-check.ts)
 - [scripts/clean-build.mjs](../scripts/clean-build.mjs)
 - [scripts/clean-package.mjs](../scripts/clean-package.mjs)
@@ -498,6 +639,10 @@ Windows 版本／架构／终端：
 - [scripts/codex-subagent-routing-smoke.mjs](../scripts/codex-subagent-routing-smoke.mjs)
 - [scripts/codex-workbuddy-tools-live.ts](../scripts/codex-workbuddy-tools-live.ts)
 - [scripts/context-codex-smoke.ts](../scripts/context-codex-smoke.ts)
+- [scripts/cursor-native-usage-check.cjs](../scripts/cursor-native-usage-check.cjs)
+- [scripts/cursor-native-usage-check.ts](../scripts/cursor-native-usage-check.ts)
+- [scripts/cursor-usage-live.cjs](../scripts/cursor-usage-live.cjs)
+- [scripts/cursor-usage-live.ts](../scripts/cursor-usage-live.ts)
 - [scripts/deepseek-settings-check.ts](../scripts/deepseek-settings-check.ts)
 - [scripts/fetch-upstream.mjs](../scripts/fetch-upstream.mjs)
 - [scripts/file-cleanup-native-check.ts](../scripts/file-cleanup-native-check.ts)
@@ -508,6 +653,7 @@ Windows 版本／架构／终端：
 - [scripts/network-connectivity-check.ts](../scripts/network-connectivity-check.ts)
 - [scripts/network-diagnostics-ui-check.cjs](../scripts/network-diagnostics-ui-check.cjs)
 - [scripts/official-catalog-overlay.mjs](../scripts/official-catalog-overlay.mjs)
+- [scripts/official-login-coexist-ui-check.cjs](../scripts/official-login-coexist-ui-check.cjs)
 - [scripts/official-login-ui-check.ts](../scripts/official-login-ui-check.ts)
 - [scripts/package-release.mjs](../scripts/package-release.mjs)
 - [scripts/provider-login-overlay.mjs](../scripts/provider-login-overlay.mjs)

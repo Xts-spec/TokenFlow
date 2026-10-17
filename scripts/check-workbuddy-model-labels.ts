@@ -1,0 +1,21 @@
+// Reads the installed WorkBuddy formatter; never starts its app or reads user credentials.
+import {createRequire} from 'node:module';
+import {runInNewContext} from 'node:vm';
+import assert from 'node:assert/strict';
+import {connectedConfig} from '../packages/core/src/agent-connections.ts';
+const require=createRequire(import.meta.url),asar=require('@electron/asar');
+const archive=process.argv[2];
+if(!archive)throw new Error('Pass the installed WorkBuddy app.asar path. This check only reads the bundle and uses synthetic model configs.');
+const renderer=asar.listPackage(archive).find((p:string)=>/^\/renderer\/assets\/contexts-.*\.js$/.test(p));
+const source=asar.extractFile(archive,renderer.slice(1)).toString();
+const segment=(start:string,end:string)=>{const i=source.indexOf(start),j=source.indexOf(end,i);assert.ok(i>=0&&j>i);return source.slice(i,j);};
+const display=segment('function getModelDisplayName(','function localizeSystemModelOptions(');
+const custom=segment('function isCustomModel(','function getModelDisplayName(');
+const strip=segment('function stripCustomLocalPrefix(','var aB=');
+const aliases=source.match(/ajt=(\{[^}]+\})/)![1],system=source.match(/ojt=(\{[^}]+\})/)![1];
+const formatter=runInNewContext(`const ajt=${aliases},ojt=${system};${custom}${strip}${display};getModelDisplayName`);
+const ids=['qoder/gfmodel','codex/gpt-5.6-luna'],labels=['qoder/GLM-5.3-Flash','codex/GPT-5.6-Luna'];
+assert.equal(formatter({id:'custom-local:'+ids[0],name:labels[0],tags:['custom']},(s:string)=>s),labels[0]+':'+ids[0]);
+const models=JSON.parse(connectedConfig('workbuddy',null,'http://127.0.0.1:9527',ids[0],'fixture-key',undefined,ids,Object.fromEntries(ids.map((id,i)=>[id,labels[i]]))));
+const actual=models.map((m:any)=>formatter({...m,id:'custom-local:'+m.id,tags:['custom']},(s:string)=>s));assert.deepEqual(actual,labels);
+console.log(JSON.stringify({nativeVersion:JSON.parse(asar.extractFile(archive,'package.json').toString()).version,originalIssueReproduced:true,actualNativeFormatterLabels:actual,passed:true}));

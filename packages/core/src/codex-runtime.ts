@@ -11,7 +11,7 @@ const fail=(message:string)=>new RunnerCoreError(message,{statusCode:409,code:'c
 export async function migrationBinary(binary?:string){
  const win=process.platform==='win32';
  const candidates=binary?[binary]:[
-  ...['/Applications',join(homedir(),'Applications')].flatMap(base=>['ChatGPT','Codex'].map(app=>join(base,`${app}.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`))),
+  ...['/Applications',join(homedir(),'Applications')].flatMap(base=>['ChatGPT','Codex'].flatMap(app=>['bin/codex','CodexCLI.app/Contents/MacOS/codex'].map(leaf=>join(base,`${app}.app/Contents/Resources/codex-cli`,leaf)))),
   // npm creates codex.cmd on Windows; resolve its native executable below.
   ...[...(process.env.PATH??'').split(win?';':':'),...(win&&process.env.APPDATA?[join(process.env.APPDATA,'npm')]:[])].filter(Boolean).flatMap(dir=>win?[join(dir,'codex.exe'),join(dir,'codex.cmd')]:[join(dir,'codex')]),
  ];

@@ -1,3 +1,5 @@
+> 历史记录：保留当时的结论与验证范围；当前待办以 [TODO](../../TODO.md) 为准，产品行为以当前源码和 [使用指南](../../guides/usage.md) 为准。
+
 # TRAE 在 Codex 中的网页搜索兼容
 
 日期：2026-10-16。承接 `0c9675b` 的截断、额度与账号展示修复。
@@ -25,11 +27,11 @@ Codex CLI 0.154.0 默认发送 `web_search` 声明，且默认 `external_web_acc
 
 离线回归覆盖真实执行器入口、流式与非流式结果、搜索引用事件、客户端工具混用、恢复后的搜索历史、用户与工具角色分离、域名过滤、取消、错误和循环上限。原有 Qoder、WorkBuddy 和共享协议测试通过。
 
-真实 Codex 验收使用本机 CLI 0.154.0、已安装 TokenFlow sidecar、独立临时项目与配置。配置不包含 `web_search` 覆盖项。测试实际搜索两个查询，读取/写入/回读文件，验证约 6.6 万字符长上下文与两次退出后的同一会话恢复；不修改用户当前 Codex 配置或旧对话。结果见 [最终客户端记录](catalog-followup-2026-10-16/trae-web-search-codex.json)。这是 CLI 客户端验收，不是桌面界面自动操作会话。
+真实 Codex 验收使用本机 CLI 0.154.0、已安装 TokenFlow sidecar、独立临时项目与配置。配置不包含 `web_search` 覆盖项。测试实际搜索两个查询，读取/写入/回读文件，验证约 6.6 万字符长上下文与两次退出后的同一会话恢复；不修改用户当前 Codex 配置或旧对话。结果见 [最终客户端记录](../evidence/catalog-followup-2026-10-16/trae-web-search-codex.json)。这是 CLI 客户端验收，不是桌面界面自动操作会话。
 
-另通过安装版 Responses 检查长历史下的搜索、函数调用、结果回传和完整最终文本，覆盖流式/非流式、默认缓存/允许联网声明；见 [最终并发记录](catalog-followup-2026-10-16/trae-web-search-stress.json)。
+另通过安装版 Responses 检查长历史下的搜索、函数调用、结果回传和完整最终文本，覆盖流式/非流式、默认缓存/允许联网声明；见 [最终并发记录](../evidence/catalog-followup-2026-10-16/trae-web-search-stress.json)。
 
-中间压力测试保留了失败证据：8 并发首轮 23/24，复跑 24/24；16 并发首轮 44/46。后者两个失败的原文均完整：一个把检索链接的语言路径改成英文，另一个在完整最终标记前增加解释。已核对实际请求中的用户/工具边界正确；引用事件增加标准 annotation 事件，工具说明明确要求保留真实来源的完整链接，复测提示也明确区分用户新请求与工具结果。没有截断、改写或过滤模型原文来让校验通过。初次 23/24 未保存具体回复，不能据此推断其内容。故障记录见 [中间结果](catalog-followup-2026-10-16/trae-web-search-before-final.json)。
+中间压力测试保留了失败证据：8 并发首轮 23/24，复跑 24/24；16 并发首轮 44/46。后者两个失败的原文均完整：一个把检索链接的语言路径改成英文，另一个在完整最终标记前增加解释。已核对实际请求中的用户/工具边界正确；引用事件增加标准 annotation 事件，工具说明明确要求保留真实来源的完整链接，复测提示也明确区分用户新请求与工具结果。没有截断、改写或过滤模型原文来让校验通过。初次 23/24 未保存具体回复，不能据此推断其内容。故障记录见 [中间结果](../evidence/catalog-followup-2026-10-16/trae-web-search-before-final.json)。
 
 ## 最终结果
 
@@ -41,7 +43,7 @@ Codex CLI 0.154.0 默认发送 `web_search` 声明，且默认 `external_web_acc
 | 默认配置及切换恢复、额度与账号回归 | 5 项通过；已在不含其他未提交改动的快照单独复核 |
 | 本机替换、正常启动、签名和 ZIP 一致性 | 通过；HTTP 200，构建与安装的 sidecar 一致 |
 
-签名、安装包与运行文件哈希见 [最终安装记录](catalog-followup-2026-10-16/trae-web-search-installation.json)。原始默认配置失败见 [复现记录](catalog-followup-2026-10-16/trae-web-search-repro.json)。
+签名、安装包与运行文件哈希见 [最终安装记录](../evidence/catalog-followup-2026-10-16/trae-web-search-installation.json)。原始默认配置失败见 [复现记录](../evidence/catalog-followup-2026-10-16/trae-web-search-repro.json)。
 
 ## 复测
 

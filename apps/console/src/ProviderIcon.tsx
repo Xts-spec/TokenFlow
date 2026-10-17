@@ -1,7 +1,7 @@
 import { Icon } from './Icons';
 
 const icons:Record<string,string>={
- codex:'codex.ico',claude:'claude.ico',antigravity:'antigravity.png',kimi:'kimi.ico',xai:'xai-mark.svg',qoder:'qoder.png',workbuddy:'workbuddy.svg',zcode:'zcode.png',doubao:'doubao.png',trae:'trae.png',cursor:'cursor.png',deepseek:'deepseek.svg',pi:'pi.svg',
+ codex:'codex.ico',claude:'claude.ico',antigravity:'antigravity.png',kimi:'kimi.ico',xai:'xai-mark.svg',qoder:'qoder.png',workbuddy:'workbuddy.png',zcode:'zcode.png',zai:'zai.svg',doubao:'doubao.png',trae:'trae.png',cursor:'cursor.png',deepseek:'deepseek.svg',pi:'pi.svg',
 };
 
 /** Provider marks bundled locally so navigation also works offline. */

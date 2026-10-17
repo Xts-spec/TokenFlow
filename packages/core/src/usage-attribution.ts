@@ -38,10 +38,11 @@ export function enrichAccountRows(rows:readonly LocalUsageRow[],evidence:readonl
  const byThread=new Map<string,AttributionRecord[]>();for(const e of evidence){const list=byThread.get(e.thread)??[];list.push(e);byThread.set(e.thread,list);}
  return rows.map(row=>{
   if(row.nativeAccountEvidence==='conflict'||row.target!=='codex'||!row.nativeThreadId||row.channel==='api'||row.nativeAccountId&&row.nativeAccountEvidence!=='otel'&&row.nativeAccountEvidence!=='login-snapshot')return row;
-  const matches=(byThread.get(row.nativeThreadId)??[]).filter(e=>e.model===row.model&&Math.abs(e.time-Date.parse(row.last))<=5000&&e.input===row.inputTokens&&e.read===row.cachedTokens&&e.write===(row.cacheWriteTokens??0)&&e.output===row.outputTokens);
+  const matches=(byThread.get(row.nativeThreadId)??[]).filter(e=>(row.nativeModelUnconfirmed||e.model===row.model)&&Math.abs(e.time-Date.parse(row.last))<=5000&&e.input===row.inputTokens&&e.read===row.cachedTokens&&e.write===(row.cacheWriteTokens??0)&&e.output===row.outputTokens);
+  if(row.nativeModelUnconfirmed&&new Set(matches.map(e=>e.model)).size!==1)return row;
   const identities=new Map(matches.map(e=>[`${e.account}:${e.email??''}`,e]));if(!identities.size)return row;
   if(row.nativeAccountId&&row.nativeAccountEvidence!=='login-snapshot'&&matches.some(e=>e.account!==row.nativeAccountId||e.email!==row.nativeEmailHash)||identities.size>1){const {nativeAccountId,nativeEmailHash,nativeOrganizationId,nativeAccountLabel,nativeAccountEvidence,...unconfirmed}=row;return {...unconfirmed,nativeAccountEvidence:'conflict',sourceId:'',keyId:`native:${row.target}`};}
-  const identity=[...identities.values()][0];return {...row,channel:'official',keyName:'官方登录',nativeAccountId:identity.account,nativeAccountEvidence:'otel',nativeEmailHash:identity.email,nativeOrganizationId:undefined,nativeAccountLabel:undefined};
+  const identity=[...identities.values()][0];return {...row,model:identity.model,nativeModelUnconfirmed:undefined,channel:'official',keyName:'官方登录',nativeAccountId:identity.account,nativeAccountEvidence:'otel',nativeEmailHash:identity.email,nativeOrganizationId:undefined,nativeAccountLabel:undefined};
  });
 }
 export function mapNativeAccounts<T extends LocalUsageRow>(rows:readonly T[],accounts:readonly {id:string;provider?:string;accountId:string|null;email:string|null;organizationId?:string|null;label?:string}[],local:readonly NativeUsageAccount[]=[]):T[]{

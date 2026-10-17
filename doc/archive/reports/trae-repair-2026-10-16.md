@@ -1,3 +1,5 @@
+> 历史记录：保留当时的结论与验证范围；当前待办以 [TODO](../../TODO.md) 为准，产品行为以当前源码和 [使用指南](../../guides/usage.md) 为准。
+
 # TRAE DeepSeek 截断、额度与账号展示修复
 
 更新日期：2026-10-16。修复已安装至本机 TokenFlow 10.15.26.6，并完成真实 Codex CLI 续接验收。
@@ -48,4 +50,4 @@ TOKEN_FLOW_TRAE_INSTALLED_LIVE=1 node scripts/test-trae-responses-installed.mjs
 TOKEN_FLOW_TRAE_INSTALLED_LIVE=1 node scripts/test-trae-codex-installed.mjs
 ```
 
-脱敏证据：[Codex 实机结果](catalog-followup-2026-10-16/trae-codex-cli.json)、[安装与压力验收](catalog-followup-2026-10-16/installation.json)、[上游生成方式对照](catalog-followup-2026-10-16/trae-stream-differential.json)。认证信息不进入报告或 Git。
+脱敏证据：[Codex 实机结果](../evidence/catalog-followup-2026-10-16/trae-codex-cli.json)、[安装与压力验收](../evidence/catalog-followup-2026-10-16/installation.json)、[上游生成方式对照](../evidence/catalog-followup-2026-10-16/trae-stream-differential.json)。认证信息不进入报告或 Git。

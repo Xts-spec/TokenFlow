@@ -68,6 +68,12 @@ async function antigravity(){
  let pids:number[]=[];const store=new AntigravityAccountStore(path),manager=new NativeAccounts(join(root,'backup.json'),store,async()=>pids);
  return {root,path,store,manager,running:(v:number[])=>{pids=v;}};
 }
+it('observes Antigravity usage identity only with a login and keeps project scopes separate',async()=>{
+ const {store,manager}=await antigravity();expect(await store.usageLogin()).toBeNull();
+ await manager.switch({revision:(await manager.status()).revision},{...credential('User@example.test'),project_id:'project-one'});
+ expect(await store.usageLogin()).toEqual({provider:'antigravity',accountId:'user@example.test',email:'user@example.test',organizationId:'project-one'});
+ await manager.restore({revision:(await manager.status()).revision});expect(await store.usageLogin()).toBeNull();
+});
 it('switches Antigravity in a transaction and restores login without changing history or other topic rows',async()=>{
  const {path,store,manager}=await antigravity(),original=await store.read();
  await manager.switch({revision:(await manager.status()).revision},credential());expect((await manager.status()).email).toBe('one@example.test');

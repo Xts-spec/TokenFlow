@@ -1,5 +1,6 @@
+import type {AgentInstallation} from '../../../packages/core/src/agent-installation';
 import {hasNativeLogin} from './native-login-visibility';
-import {desktopIdentityMatches} from '../../shared/native-login-identity';
+import {desktopIdentityMatches,officialLoginCoexists,officialLoginSelected} from '../../shared/native-login-identity';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LocalAgentSnapshot } from '../../../packages/core/src/cliproxy';
 import type { AgentConnections } from '../../../packages/core/src/agent-connections';
@@ -10,7 +11,7 @@ import { sourceOptions } from './source-options';
 export type LoginProvider='codex'|'claude'|'antigravity'|'workbuddy'|'workbuddy-ai'|'qoder'|'qoder-ide'|'cursor';
 export const loginNames:Record<LoginProvider,string>={codex:'Codex',claude:'Claude Code',antigravity:'Antigravity',workbuddy:'WorkBuddy','workbuddy-ai':'WorkBuddyAI',qoder:'Qoder','qoder-ide':'Qoder IDE',cursor:'Cursor'};
 export const clientOptions={workbuddy:[['workbuddy','WorkBuddy'],['workbuddy-ai','WorkBuddyAI']],qoder:[['qoder','Qoder'],['qoder-ide','Qoder IDE']]} as const;
-type Status={readOnly?:boolean;displayName?:string;loginState?:'signed-in'|'signed-out'|'unreadable';readError?:string;unavailableReason?:string;message?:string;organizationId?:string|null;domain?:string;enterpriseId?:string;revision:string;email?:string|null;accountId?:string|null;model?:string|null;pids:number[];backup:{state:string}|null;gatewayConnected:boolean;
+type Status={installation?:AgentInstallation;readOnly?:boolean;displayName?:string;loginState?:'signed-in'|'signed-out'|'unreadable';readError?:string;unavailableReason?:string;message?:string;organizationId?:string|null;domain?:string;enterpriseId?:string;revision:string;email?:string|null;accountId?:string|null;model?:string|null;pids:number[];backup:{state:string}|null;gatewayConnected:boolean;
  accounts:{organizationId?:string|null;domain?:string;enterpriseId?:string;id:string;email?:string|null;accountId?:string|null;switchable:boolean;reason:string}[]};
 export type LoginAccount={id:string;label:string;remaining:number|null;models:string[];switchable:boolean;reason:string;current:boolean;local:boolean};
 
@@ -37,14 +38,14 @@ export function useNativeLogin(provider:LoginProvider,local:LocalAgentSnapshot,e
 
  const accounts:LoginAccount[]=pooled.filter(a=>!desktop||status?.accounts.some(c=>c.id===a.id)).map(a=>{
   const credential=status?.accounts.find(item=>item.id===a.id);
-  const current=matches(credential)&&!status?.gatewayConnected;
+  const current=officialLoginSelected(provider,matches(credential),!!status?.gatewayConnected);
   return {id:a.id,label:a.label,remaining:a.remaining,models:usable(provider,a.models),switchable:!!credential?.switchable,reason:credential?.reason??'',current,local:matches(credential)};
  });
  const current=accounts.find(a=>a.current);
  const nativeCurrent=pooled.find(a=>matches(status?.accounts.find(c=>c.id===a.id)));
  const nativeLabel=hasNativeLogin({status,error})?((provider==='qoder'||provider==='qoder-ide')?status?.email||status?.displayName:'')||nativeCurrent?.label||status?.email||status?.displayName||(status?.accountId?`${loginNames[provider]} 账号 ${status.accountId.slice(0,8)}`:''):'';
 
- // A client routed through TokenFlow ignores its own login, so switching first restores its original config.
+ // Only clients with an exclusive gateway mode must release it when returning to official login.
  const releaseGateway=async()=>{
   if(provider==='antigravity')return;
   const targets=(await requestJSON<{targets:Awaited<ReturnType<AgentConnections['status']>>}>('/api/a2a')).targets;
@@ -53,14 +54,15 @@ export function useNativeLogin(provider:LoginProvider,local:LocalAgentSnapshot,e
  };
  const switchTo=async(id:string,restartCodex=false)=>{
   if(status?.readOnly)throw new Error('请在官方客户端切换本机登录。');
-  const account=accounts.find(a=>a.id===id);if(!account)throw new Error('账号已不可用，请刷新。');
+  const account=accounts.find(a=>a.id===id);if(!account)throw new Error('账号已不可用，请刷新。');if(account.local)return '';
+
   let latest=await requestJSON<Status>(base(provider));
   const preferred=`${provider}/${latest.model}`;
   const model=account.models.includes(preferred)?preferred:account.models[0];
   // Codex, desktop clients and Claude use server-side lifecycle checks before releasing the gateway.
   if(!desktop&&provider!=='codex'&&provider!=='claude'&&latest.pids.length)throw new Error(`请先完全退出 ${loginNames[provider]}，再切换本机登录。`);
   if(provider==='codex'&&!model)throw new Error('这个账号还没有可用模型，请先刷新账号。');
-  const released=latest.gatewayConnected;
+  const released=latest.gatewayConnected&&!officialLoginCoexists(provider);
   if(released&&!desktop&&provider!=='codex'&&provider!=='claude'){await releaseGateway();latest=await requestJSON<Status>(base(provider));}
   const body=provider==='codex'?{revision:latest.revision,allowRunning:true,restartCodex,sourceId:id,model}:provider==='claude'?{revision:latest.revision,sourceId:id,restart:true}:{revision:latest.revision,sourceId:id};
   const saved=await requestJSON<Status>(`${base(provider)}/switch`,post(body),provider==='codex'||provider==='claude'||desktop?600000:20000);setStatus(saved);

@@ -1,5 +1,5 @@
 import {CredentialHistory} from './credential-history.js';
-import {credentialIdentity,credentialFingerprint,compareCredentials,credentialPreference,credentialSubject} from './credential-identity.js';
+import {credentialIdentity,credentialFingerprint,compareCredentials,credentialPreference,credentialSubject,credentialEmail} from './credential-identity.js';
 import {desktopCredentialSchema,desktopPoolProvider,workbuddyLoginDomain,workbuddyLoginIssue,workbuddyLoginTarget,type DesktopProvider} from './desktop-accounts.js';
 import { retryQuotaCall, QuotaTransportError, transientQuotaStatus } from './quota/retry.js';
 import {qoderAccountingReader} from './qoder-accounting.js';
@@ -535,6 +535,22 @@ export class CLIProxyManager {
         return {id:account.id,email:parsed.success?parsed.data.email:null,accountId:parsed.success?parsed.data.account_uuid:null,organizationId:parsed.success?parsed.data.organization_uuid:null,switchable:parsed.success,reason:parsed.success?'':'缺少完整登录凭据（邮箱、令牌或有效期），请重新授权'};
       }catch{return {id:account.id,email:null,switchable:false,reason:'授权文件暂不可读取'};}
     }));
+  }
+  /** Historical accounting needs identity, not today's switching eligibility.
+   * Include expired/disabled grants, collapse duplicate authorizations, and never
+   * return tokens. Region, enterprise and project remain separate identities. */
+  async nativeUsageAccounts(){
+    const text=(v:unknown)=>typeof v==='string'&&v.trim()?v.trim().slice(0,320):typeof v==='number'&&Number.isSafeInteger(v)?String(v):null;
+    const rows=await Promise.all(this.accounts.filter(a=>!a.isDuplicate&&['codex','claude','antigravity','workbuddy','qoder'].includes(a.provider)).map(async a=>{
+      try{
+        const name=this.names.get(a.id);if(!name||name.includes('/')||name.includes('\\'))return null;
+        const raw=JSON.parse(await readConfig(join(this.root,'cliproxy','auth',name))??'null');if(!raw||typeof raw!=='object')return null;
+        const email=credentialEmail(raw.email)??null,provider=a.provider==='workbuddy'?workbuddyLoginTarget(text(raw.domain)??undefined):a.provider;if(!provider)return null;
+        const accountId=provider==='codex'?text(raw.account_id):provider==='claude'?text(raw.account_uuid):provider==='antigravity'?email:text(raw.uid);
+        const organizationId=provider==='claude'?text(raw.organization_uuid):provider==='antigravity'?text(raw.project_id):a.provider==='workbuddy'?text(raw.enterprise_id):null;
+        return {id:a.id,provider,accountId,email,organizationId,label:a.label};
+      }catch{return null;}
+    }));return [...rows.filter((row):row is NonNullable<typeof row>=>row!==null),...this.cursor.nativeUsageAccounts()];
   }
   private async nativeCredentialFile(provider:NativeProvider|DesktopProvider,id:string){
     id=this.preferredCredential(id);

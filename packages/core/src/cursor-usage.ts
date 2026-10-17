@@ -7,6 +7,9 @@ const count=z.number().int().nonnegative().safe();
 const integer=z.union([count,z.string().regex(/^\d+$/).transform(Number).pipe(count)]);
 const tokens=z.object({inputTokens:count.default(0),outputTokens:count.default(0),cacheReadTokens:count.default(0),cacheWriteTokens:count.default(0)});
 const eventPage=z.object({totalUsageEventsCount:count.default(0),usageEventsDisplay:z.array(z.object({conversationId:z.string().optional(),tokenUsage:tokens.optional()})).default([])});
+const directEvent=z.object({timestamp:integer,model:z.string().min(1).max(300),conversationId:z.string().min(1).max(128).optional(),tokenUsage:tokens.optional(),userEmail:z.string().email().optional(),isHeadless:z.boolean().optional(),cloudAgentId:z.string().optional(),automationId:z.string().optional(),clientType:z.string().optional()});
+export type CursorUsageEvent=z.infer<typeof directEvent>;
+export type CursorUsageEvents={email:string;events:CursorUsageEvent[];complete:boolean};
 const percent=z.number().finite().nonnegative();
 const planResponse=z.object({isMerged:z.boolean().optional(),planInfo:z.object({planName:z.string(),includedUsagePeriod:z.union([z.string(),z.number()]).optional(),includedUsageResetsAt:integer.optional()}).optional()});
 const periodResponse=z.object({billingCycleEnd:integer.optional(),planUsage:z.object({includedSpend:count.default(0),limit:count.optional(),remaining:count.optional(),bonusSpend:count.default(0),totalSpend:count.default(0),autoSpend:count.optional(),autoLimit:count.optional(),apiSpend:count.optional(),apiLimit:count.optional(),autoPercentUsed:percent.optional(),apiPercentUsed:percent.optional(),totalPercentUsed:percent.optional()}).optional(),spendLimitUsage:z.object({individualLimit:count.optional(),individualUsed:count.default(0)}).optional()});
@@ -59,6 +62,21 @@ export class CursorUsage {
    if(spend?.individualLimit!==undefined)windows.push({id:'on-demand',label:'按量付费用量',usedPercent:spend.individualLimit>0?Math.min(100,spend.individualUsed/spend.individualLimit*100):null,used:spend.individualUsed/100,limit:spend.individualLimit/100,unit:'USD',resetsAt:iso(period.billingCycleEnd)});
   }
   return {plan:plan.planInfo?.planName,windows,note:`${plan.planInfo?.planName?`${plan.planInfo.planName} · `:''}${unified?'新版套餐 · ':''}来自 Cursor 官方账单，包含该账号在各客户端的用量；账单可能延迟更新。`};
+ }
+
+ /** Read only the authorization's own bill, with bounded pagination. Local IDE
+  * conversation proof is joined by the collector, never by account-total deltas. */
+ async events(start:number,end:number,signal:AbortSignal):Promise<CursorUsageEvents>{
+  const deadline=AbortSignal.any([signal,AbortSignal.timeout(30000)]);
+  const {email}=z.object({email:z.string().email()}).parse(await this.call('GetMe',{},deadline));
+  const events:CursorUsageEvent[]=[];
+  for(let page=1;page<=20;page++){
+   deadline.throwIfAborted();
+   const value=z.object({totalUsageEventsCount:count.default(0),usageEventsDisplay:z.array(directEvent).default([])}).parse(await this.call('GetFilteredUsageEvents',{startDate:String(start),endDate:String(end),page,pageSize:100},deadline));
+   events.push(...value.usageEventsDisplay);
+   if(page*100>=value.totalUsageEventsCount)return {email:email.toLowerCase(),events,complete:true};
+  }
+  return {email:email.toLowerCase(),events,complete:false};
  }
 
  /** Each gateway request creates a fresh agent. Match its exact conversation ID,

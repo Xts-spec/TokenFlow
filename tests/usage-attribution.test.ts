@@ -65,3 +65,25 @@ it('replaces a login snapshot with request-level identity and removes its stale 
  expect(enrichAccountRows([inferred],proof)[0]).toMatchObject({nativeAccountId:nativeIdentity('codex','actual'),nativeEmailHash:emailIdentity('actual@example.test'),nativeAccountEvidence:'otel'});
  expect(enrichAccountRows([inferred],proof.map(e=>({...e,email:undefined})))[0].nativeEmailHash).toBeUndefined();
 });
+
+it('attributes a child response using its request thread instead of the containing parent session',()=>{
+ const parser=new LocalUsageParser('codex','parent-file');
+ parser.accept({type:'session_meta',payload:{id:'parent',creator_account_id:'owner-not-payer',model_provider:'openai'}});
+ parser.accept({type:'turn_context',payload:{model:'gpt-test'}});
+ parser.accept({type:'token_usage_record',timestamp:new Date(now).toISOString(),payload:{thread_id:'child',session_id:'parent',response_id:'child-response',usage:{input_tokens:100,cached_input_tokens:60,output_tokens:20}}});
+ const rows=enrichAccountRows(parser.rows(),decodeAccountEvents(event('payer','payer@example.test',now,'child'),now-1,now));
+ expect(rows[0]).toMatchObject({nativeThreadId:nativeIdentity('thread','child'),nativeAccountId:nativeIdentity('codex','payer'),nativeAccountEvidence:'otel'});
+ const copied=new LocalUsageParser('codex','child-file');copied.accept({type:'session_meta',payload:{id:'child',model_provider:'openai'}});copied.accept({type:'turn_context',payload:{model:'gpt-test'}});copied.accept({type:'token_usage_record',timestamp:new Date(now).toISOString(),payload:{thread_id:'child',response_id:'child-response',usage:{input_tokens:100,cached_input_tokens:60,output_tokens:20}}});
+ const merged=mergeLocalUsageRows([...rows,...copied.rows()]);expect(merged).toHaveLength(1);expect(merged[0]).toMatchObject({requests:1,inputTokens:100,outputTokens:20,nativeAccountId:nativeIdentity('codex','payer')});
+});
+
+it('does not borrow the parent model for a child completion; only unambiguous request evidence resolves it',()=>{
+ const parser=new LocalUsageParser('codex','parent-file');parser.accept({type:'session_meta',payload:{id:'parent',model_provider:'openai'}});parser.accept({type:'turn_context',payload:{model:'parent-model'}});
+ parser.accept({type:'token_usage_record',timestamp:new Date(now).toISOString(),payload:{thread_id:'child',response_id:'child-response',usage:{input_tokens:100,cached_input_tokens:60,output_tokens:20}}});
+ const unconfirmed=parser.rows()[0];expect(unconfirmed.model).toBe('未标注模型');
+ const evidence=decodeAccountEvents(event('payer','payer@example.test',now,'child'),now-1,now);
+ const verified=enrichAccountRows([unconfirmed],evidence)[0];for(const copies of [[verified,unconfirmed],[unconfirmed,verified]])expect(mergeLocalUsageRows(copies)[0]).toMatchObject({model:'gpt-test',nativeAccountId:nativeIdentity('codex','payer'),requests:1});
+ expect(verified).toMatchObject({model:'gpt-test',nativeAccountId:nativeIdentity('codex','payer')});
+ expect(enrichAccountRows([unconfirmed],[...evidence,{...evidence[0],model:'other-model'}])[0].nativeAccountId).toBeUndefined();
+ expect(enrichAccountRows([unconfirmed],evidence.map(e=>({...e,input:101})))[0].nativeAccountId).toBeUndefined();
+});
