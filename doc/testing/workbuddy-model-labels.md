@@ -31,6 +31,16 @@ npx tsx scripts/check-workbuddy-model-labels.ts /Applications/WorkBuddy.app/Cont
 
 原生函数检查仅读取安装包并使用合成配置，不启动客户端、不读取登录或真实账号。Windows 传入对应安装位置的 `app.asar`；若客户端代码结构变化，检查脚本应失败并人工复核，不自动标记通过。
 
+## 2026-10-18 本机菜单
+
+macOS 上打开已经接入的客户端，只核对模型菜单里的可见名称。没有为这次核对发起新的推理请求。
+
+DeepSeek Harness 的模型菜单列出 `token-flow`、`workbuddy/Kimi-K3`、`workbuddy/Step-5-Preview`、`codex/GPT-6-Astra`、`antigravity/Gemini-3.8-Flash-(High)`、`qiniu · moonshotai/kimi-k-3-free`、`workbuddy/Hy4-preview`、`workbuddy/Hy3`、`workbuddy/Deepseek-V4.1-Flash`、`qoder/DeepSeek-Flash`。当前选中的是 `qoder/DeepSeek-Flash`。账号来源显示为「来源/可读名」，API 来源显示为「来源名 · 模型路径」。没有出现 `名称:内部ID`。
+
+Claude Desktop 的 Code 模式菜单列出 `antigravity/Claude-Opus-4.6-(Thinking)`、`antigravity/Gemini-3.8-Flash-(High)`、`codex/GPT-6-Astra`、`qoder/DeepSeek-Flash`、`qoder/Qwen3.8-Max`、`workbuddy/Deepseek-V4.1-Flash`、`workbuddy/Hy4-preview`。当前选中的是 `antigravity/Gemini-3.8-Flash-(High)`。名称同样是「来源/可读名」，没有内部 ID 后缀。菜单里的英文说明和数字快捷键是 Claude Desktop 自己的，不是 TokenFlow 写入的模型名。
+
+这两处只说明菜单名称。WorkBuddy 自己的窗口、Windows，以及选中后是否仍打到原来源，仍按上面的验证范围，不因这两张菜单视为全部通过。
+
 ## 已导入配置如何更新
 
 更新 TokenFlow 后，在本地 Agent → WorkBuddy 重新应用所选模型，并重启 WorkBuddy 加载配置。旧安装包或此前已经写入的 `models.json` 不会因为本次 Git 提交自动改变；不要手工删除请求必需字段，也不要直接修改 WorkBuddy 安装文件。
