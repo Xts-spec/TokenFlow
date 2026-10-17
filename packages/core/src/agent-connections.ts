@@ -57,20 +57,21 @@ export async function agentProcesses(target:Target|'antigravity'|'workbuddy-ai'|
       // Migration must see the native CLI PID before desktop-only identity checks.
       // This is read-only; lifecycle stop/open validates an app separately.
       if(target==='codex'){
-        const {stdout}=await exec('tasklist',['/FO','CSV','/NH'],{timeout:5000,maxBuffer:2*1024*1024});
+        // Cold-start PowerShell/CIM on Windows can exceed 5s; these are read-only queries.
+        const {stdout}=await exec('tasklist',['/FO','CSV','/NH'],{timeout:15000,maxBuffer:2*1024*1024});
         return stdout.split('\n').flatMap(line=>{const m=line.match(/^"(?:codex|ChatGPT|CodexCLI)(?:\.exe)?","(\d+)"/i);return m?[Number(m[1])]:[];});
       }
       if(target==='qoder'||target==='qoder-ide'||target==='workbuddy'||target==='workbuddy-ai'||target==='deepseek'){
         const desktop=(await new WindowsAgentLifecycle().processes(target)).map(p=>p.pid);
         if(target!=='deepseek'||desktop.length)return desktop;
       }
-      const {stdout}=await exec('tasklist',['/FO','CSV','/NH'],{timeout:5000,maxBuffer:2*1024*1024});
+      const {stdout}=await exec('tasklist',['/FO','CSV','/NH'],{timeout:15000,maxBuffer:2*1024*1024});
       const names=target==='deepseek'?'dsh':`${target}${target==='antigravity'?'(?: IDE)?':''}`;
       const found=stdout.split('\n').flatMap(line=>{const m=line.match(/^"([^"]+)","(\d+)"/);return m&&new RegExp(`^${names}(?:\\.exe)?$`,'i').test(m[1])?[Number(m[2])]:[];});
       if(!['pi','deepseek','claude'].includes(target))return found;
       const runtime=basename(process.execPath).replaceAll("'","''");
       const script=`Get-CimInstance Win32_Process -Filter "Name='node.exe' OR Name='${runtime}'" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress`;
-      const result=await exec('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{timeout:5000,maxBuffer:2*1024*1024,windowsHide:true});
+      const result=await exec('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{timeout:15000,maxBuffer:2*1024*1024,windowsHide:true});
       const nodes=result.stdout.trim()?JSON.parse(result.stdout):[];
       const launcher=target==='pi'?/[\\/](?:@earendil-works|@mariozechner)[\\/]pi-coding-agent[\\/]dist[\\/](?:bundle[\\/])?cli\.js$/i:target==='claude'?/[\\/]@anthropic-ai[\\/]claude-code[\\/]cli\.js$/i:/[\\/]@deepseek-ai[\\/]dsh[\\/]lib[\\/]bin\.js$/i;
       return [...new Set([...found,...(Array.isArray(nodes)?nodes:[nodes]).flatMap(node=>{const m=typeof node.CommandLine==='string'?node.CommandLine.match(/^\s*(?:"[^"]*"|\S+)\s+(?:"([^"]+)"|(\S+))/):null;return m&&Number.isInteger(node.ProcessId)&&launcher.test(m[1]??m[2])?[node.ProcessId]:[];})])];
