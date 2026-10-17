@@ -98,5 +98,4 @@ output/
 # Miscellaneous
 .impeccable.md
 .DS_Store
-release2/
-release3/
+release*/
