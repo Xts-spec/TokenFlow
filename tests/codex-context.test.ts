@@ -27,6 +27,16 @@ it('blocks live rollout rewrites, migrates legacy gateway checkpoints with backu
  const text=await readFile(f.file,'utf8');const row=JSON.parse(text.split('\n')[3]!);expect(row.payload.replacement_history).toEqual(history);expect(row.payload.window_number).toBe(2);expect(text).toContain('Future turn');
  const batch=(await readdir(join(f.root,'codex-context-backups')))[0]!;expect(await readFile(join(f.root,'codex-context-backups',batch,'0.jsonl'),'utf8')).toBe(original);
  expect(await f.migration.prepareOfficial([scope],async()=>[])).toEqual({migrated:0});
+ expect(await readdir(join(f.root,'codex-context-staging'))).toEqual([]);
+});
+it('stops before backup when a staged rollout changes after scanning',async()=>{
+ const f=await fixture();const scope={owner:'old-key',source:'qoder-account',model:'qoder/m'};
+ await writeFile(f.file,rollout(f.context.encodeCheckpoint(history,scope)));
+ const edited=rollout('edited-after-scan');
+ await expect(f.migration.prepareOfficial([scope],async()=>{await writeFile(f.file,edited);return [];})).rejects.toThrow('会话发生变化');
+ expect(await readFile(f.file,'utf8')).toBe(edited);
+ expect(await readdir(join(f.root,'codex-context-backups')).catch(()=>[])).toEqual([]);
+ expect(await readdir(join(f.root,'codex-context-staging'))).toEqual([]);
 });
 it('only materializes foreign encrypted checkpoints that this managed connection recovered',async()=>{
  const f=await fixture();await writeFile(f.file,rollout('official-ciphertext'));
