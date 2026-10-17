@@ -22,15 +22,22 @@ export function RangeTabs({ range, onChange }: { range: RangeId; onChange: (rang
 
 const share = (value: number, total: number) => total > 0 ? `${(value / total) * 100}%` : '0%';
 
+/** Keep the usage popover against the control that opened it, above the control when the space below is shorter. */
+export function usagePopoverPosition(box:{left:number;top:number;bottom:number},viewport:{width:number;height:number}){
+ const gap=8,roomBelow=viewport.height-box.bottom-gap-12,roomAbove=box.top-gap-12,below=roomBelow>=180||roomBelow>=roomAbove,width=Math.min(360,viewport.width-24);
+ return {left:Math.max(12,Math.min(box.left,viewport.width-width-12)),top:below?box.bottom+gap:Math.max(12,box.top-gap-Math.min(360,roomAbove)),maxHeight:Math.max(160,below?roomBelow:Math.min(360,roomAbove))};
+}
+
 /** Usage stays out of the way: one line of the headline numbers, details on demand. */
 export function UsageFold({title='用量统计',subtitle,rows,range,loaded=true,error='',onRetry}:{title?:string;subtitle?:string;rows:readonly UsageRow[];range:RangeId;loaded?:boolean;error?:string;onRetry?:()=>unknown}){
- const [open,setOpen]=useState(false);const [position,setPosition]=useState({left:0,top:0});const id=useId();const button=useRef<HTMLButtonElement>(null),panel=useRef<HTMLDivElement>(null);const totals=totalsOf(rows);
- useEffect(()=>{if(!open)return;panel.current?.focus();const resized=()=>setOpen(false);window.addEventListener('resize',resized);const close=(event:PointerEvent)=>{if(!panel.current?.contains(event.target as Node)&&!button.current?.contains(event.target as Node))setOpen(false);};const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'){setOpen(false);button.current?.focus();}};document.addEventListener('pointerdown',close);document.addEventListener('keydown',escape);return()=>{window.removeEventListener('resize',resized);document.removeEventListener('pointerdown',close);document.removeEventListener('keydown',escape);};},[open]);
- const toggle=()=>{const box=button.current?.getBoundingClientRect();if(box)setPosition({left:Math.max(12,Math.min(box.left,window.innerWidth-372)),top:Math.max(12,Math.min(box.bottom+8,window.innerHeight-360))});setOpen(!open);};
+ const [open,setOpen]=useState(false);const [position,setPosition]=useState({left:0,top:0,maxHeight:320});const id=useId();const button=useRef<HTMLButtonElement>(null),panel=useRef<HTMLDivElement>(null);const totals=totalsOf(rows);
+ const place=()=>{const box=button.current?.getBoundingClientRect();if(!box)return;const next=usagePopoverPosition(box,{width:window.innerWidth,height:window.innerHeight});setPosition(current=>current.left===next.left&&current.top===next.top&&current.maxHeight===next.maxHeight?current:next);};
+ useEffect(()=>{if(!open)return;panel.current?.focus();place();const close=()=>setOpen(false);const outside=(event:PointerEvent)=>{if(!panel.current?.contains(event.target as Node)&&!button.current?.contains(event.target as Node))setOpen(false);};const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'){setOpen(false);button.current?.focus();}};window.addEventListener('resize',close);document.addEventListener('scroll',place,true);document.addEventListener('pointerdown',outside);document.addEventListener('keydown',escape);return()=>{window.removeEventListener('resize',close);document.removeEventListener('scroll',place,true);document.removeEventListener('pointerdown',outside);document.removeEventListener('keydown',escape);};},[open]);
+ const toggle=()=>{place();setOpen(value=>!value);};
  if(!loaded)return <section className="tfUsageFold" aria-label={title}>{error?<LoadError message="用量暂不可用" retry={onRetry??(()=>{})}/>:<span className="tfSkeletonLine tfUsageFoldSkeleton" role="status" aria-label={`正在加载${title}`} aria-busy="true"/>}</section>;
  return <section className={`tfUsageFold${open?' open':''}`} aria-label={title}>
   <button ref={button} type="button" className="tfUsageFoldHead" title={subtitle??title} aria-label={title} aria-expanded={open} aria-controls={id} onClick={toggle}><Icon name="tokens" size={17}/>{range==='today'&&<span>今日用量</span>}<b>{compactTokens(totals.totalTokens)}</b><span>Token</span><i aria-hidden="true">·</i><span>缓存命中 {percentText(totals.hitRate)}</span></button>
-  {open&&createPortal(<div ref={panel} tabIndex={-1} id={id} className="tfUsagePopover" role="dialog" aria-label={title} style={{...position,maxHeight:Math.max(200,window.innerHeight-position.top-12)}}><header><strong>Token 用量</strong><b>{formatTokens(totals.totalTokens)} Token</b><button className="iconButton" aria-label="关闭用量" onClick={()=>setOpen(false)}><Icon name="close" size={14}/></button></header><dl><div><dt>缓存命中</dt><dd>{percentText(totals.hitRate)}</dd></div><div><dt>{totals.unknownCacheTokens?'未缓存／未拆分输入':'未缓存输入'}</dt><dd>{formatTokens(totals.uncachedTokens)} Token</dd></div><div><dt>缓存读取</dt><dd>{formatTokens(totals.cachedTokens)} Token</dd></div>{totals.cacheWriteTokens>0&&<div><dt>缓存写入</dt><dd>{formatTokens(totals.cacheWriteTokens)} Token</dd></div>}<div><dt>输出</dt><dd>{formatTokens(totals.outputTokens)} Token</dd></div><div><dt>请求</dt><dd>{formatTokens(totals.requests)} 次 · {rangeLabel(range)}</dd></div></dl></div>,document.body)}
+  {open&&createPortal(<div ref={panel} tabIndex={-1} id={id} className="tfUsagePopover" role="dialog" aria-label={title} style={position}><header><strong>Token 用量</strong><b>{formatTokens(totals.totalTokens)} Token</b><button className="iconButton" aria-label="关闭用量" onClick={()=>setOpen(false)}><Icon name="close" size={14}/></button></header><dl><div><dt>缓存命中</dt><dd>{percentText(totals.hitRate)}</dd></div><div><dt>{totals.unknownCacheTokens?'未缓存／未拆分输入':'未缓存输入'}</dt><dd>{formatTokens(totals.uncachedTokens)} Token</dd></div><div><dt>缓存读取</dt><dd>{formatTokens(totals.cachedTokens)} Token</dd></div>{totals.cacheWriteTokens>0&&<div><dt>缓存写入</dt><dd>{formatTokens(totals.cacheWriteTokens)} Token</dd></div>}<div><dt>输出</dt><dd>{formatTokens(totals.outputTokens)} Token</dd></div><div><dt>请求</dt><dd>{formatTokens(totals.requests)} 次 · {rangeLabel(range)}</dd></div></dl></div>,document.body)}
  </section>;
 }
 
@@ -164,6 +171,7 @@ export function modelManufacturer(model:string,local:LocalAgentSnapshot){
  if(/glm/.test(id))return 'zai';
  if(/grok/.test(id))return 'xai';
  if(/doubao/.test(id))return 'doubao';
+ if(/gemini/.test(id))return 'gemini';
  return local.models.find(item=>item.id===model)?.provider??(model.startsWith('api-')?'api':model.split('/')[0]);
 }
 export function ModelUsage({ local, rows, title = '按模型', empty = '还没有经过网关的请求。', headerExtra }: { headerExtra?:ReactNode; local: LocalAgentSnapshot; rows: readonly UsageRow[]; title?: string; empty?: string }) {

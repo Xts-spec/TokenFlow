@@ -50,6 +50,7 @@ xAI 曾被怀疑存在裁切问题；逐条比对官方原始 SVG 后确认是�
 | Cursor | `cursor.png` | 与 [Cursor 官网](https://cursor.com/marketing-static/icon-192x192-light.png) 字节相同；安装版使用不同底板／明暗层次的官方立方体，不视为串用品牌。 |
 | DeepSeek Harness / DeepSeek | `deepseek.svg` | 与本机官方安装包内 `@deepseek-ai/dsh-web-frontend/dist/favicon.svg` 的所有图形路径相同；界面保留蓝色填充，桌面应用是深色图形与浅色底板。 |
 | Pi Agent | `pi.svg` | 与 [Pi 官网](https://pi.dev/logo.svg) 字节相同，当前官网 `logo-auto.svg` 也是同一资源。 |
+| Gemini | `gemini.svg` | 与 [Google 官方星标](https://www.gstatic.com/lamda/images/gemini_sparkle_v002_d4735304ff6292a690345.svg) 字节相同；用于模型行，Antigravity 产品入口仍用自己的图标。 |
 
 资源来源与本次文件校验值保存在 [sources.json](../../apps/console/public/provider-icons/sources.json)。未知来源保留现有文字缩写／来源平台回退，不凭空生成“官方图标”。
 

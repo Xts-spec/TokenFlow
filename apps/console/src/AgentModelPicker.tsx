@@ -41,7 +41,7 @@ export function AgentModelPicker({open,title,local,current,selected,onConfirm,on
   <section className="tfAgentPicked" aria-label="已选模型">
    <header><span>已选模型 <b aria-live="polite">{draft.length}</b></span><div className="tfRow">{embedded&&unavailableCount>0&&<button type="button" className="textButton" onClick={removeUnavailable}>移除不可用模型（{unavailableCount}）</button>}<button type="button" className="textButton" disabled={!draft.length} onClick={()=>updateDraft([])}>清空选择</button></div></header>
    <ul>{chosen.map(choice=>{const group=all.find(group=>group.id===choice.sourceId);const label=modelLabel(local,choice.model);const ok=available(choice);return <li className={`tfAgentPickedTag tfDragRow ${ok?'':'unavailable'}`} key={`${choice.sourceId}/${choice.model}`} {...dropOrder('models',choice.model,chosenIds,move)} title={`${label} · ${group?.accountLabel??'来源不可用'}`}>
-    <DragHandle kind="models" id={choice.model} label={label} items={chosenIds} move={move}/><ProviderIcon provider={modelManufacturer(choice.model,local)} size={16}/><strong>{label}</strong><button type="button" className="iconButton" aria-label={`移除 ${label}`} onClick={()=>toggle(choice)}><Icon name="close" size={12}/></button>
+    <DragHandle kind="models" id={choice.model} label={label} items={chosenIds} move={move}/><ProviderIcon provider={modelManufacturer(choice.model,local)} size={20}/><strong>{label}</strong><button type="button" className="iconButton" aria-label={`移除 ${label}`} onClick={()=>toggle(choice)}><Icon name="close" size={12}/></button>
    </li>;})}</ul>{!chosen.length&&<p>从下方选择模型</p>}
   </section>
   <div className="tfAgentPickerBrowser">

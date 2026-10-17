@@ -10,6 +10,10 @@ it('keeps yesterday’s streak before today has activity and ends it after an id
  const rows=[row('2026-10-10',1),row('2026-10-11',1)];expect(activityStats(rows,new Date('2026-10-12T12:00:00')).current).toBe(2);expect(activityStats(rows,new Date('2026-10-13T12:00:00')).current).toBe(0);
 });
 
-import {modelManufacturer} from '../apps/console/src/UsagePanel';
+import {modelManufacturer,usagePopoverPosition} from '../apps/console/src/UsagePanel';
 import type {LocalAgentSnapshot} from '../packages/core/src/cliproxy';
-it('recognizes GPT manufacturer independent of source namespace',()=>{const local={models:[]} as unknown as LocalAgentSnapshot;for(const id of ['gpt-6-astra','gpt-6.1-sol','api-custom/gpt-6.1-sol','codex/gpt-6-astra'])expect(modelManufacturer(id,local)).toBe('codex');expect(modelManufacturer('workbuddy/DeepSeek-V4-Pro',local)).toBe('deepseek');});
+it('recognizes GPT manufacturer independent of source namespace',()=>{const local={models:[]} as unknown as LocalAgentSnapshot;for(const id of ['gpt-6-astra','gpt-6.1-sol','api-custom/gpt-6.1-sol','codex/gpt-6-astra'])expect(modelManufacturer(id,local)).toBe('codex');expect(modelManufacturer('workbuddy/DeepSeek-V4-Pro',local)).toBe('deepseek');expect(modelManufacturer('antigravity/gemini-3-flash',local)).toBe('gemini');});
+it('anchors the usage popover to the control instead of a fixed viewport offset',()=>{const viewport={width:1200,height:800};expect(usagePopoverPosition({left:40,top:80,bottom:112},viewport)).toMatchObject({top:120,maxHeight:668});const low=usagePopoverPosition({left:40,top:700,bottom:732},viewport);expect(low.top).toBe(332);expect(low.top+low.maxHeight).toBe(692);});
+
+import {connectivityResult} from '../apps/console/src/ApiInflow';
+it('keeps connectivity results to a short phrase',()=>{expect(connectivityResult(true,'最小文本调用通过；未验证工具、图片或客户端。')).toMatchObject({phrase:'已连通',hint:'文本请求有返回'});expect(connectivityResult(false,'接口有响应，但未返回完整文本；可能达到输出上限，不能据此判断权限失效。')).toMatchObject({phrase:'有响应'});expect(connectivityResult(false,'最小调用未通过（HTTP 401）；请检查地址、协议、密钥和模型权限。').phrase).toBe('未连通');});
