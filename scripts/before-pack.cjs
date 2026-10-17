@@ -39,7 +39,9 @@ async function beforePack(context){
     const hash=`sha512-${createHash('sha512').update(data).digest('base64')}`;
     if(hash!==integrity)throw new Error(`Integrity mismatch for ${name}@${version}`);
     const archive=join(stage,filename);await writeFile(archive,data);
-    await exec('tar',['-xzf',archive,'-C',stage]);
+    // Windows GNU tar treats "d:\..." as a remote host; the system bsdtar handles drive paths.
+    const tarExecutable=process.platform==='win32'?join(process.env.SystemRoot??'C:\\Windows','System32','tar.exe'):'tar';
+    await exec(tarExecutable,['-xzf',archive,'-C',stage]);
     const destination=join(stage,'node_modules',name);await mkdir(join(stage,'node_modules',name.startsWith('@')?name.split('/')[0]:''),{recursive:true});
     await rename(join(stage,'package'),destination);
     const metadata=JSON.parse(await readFile(join(destination,'package.json'),'utf8'));
