@@ -198,6 +198,17 @@ function appliedConfig(record:Record,current:string|null):boolean {
     return kept(record.before===null?undefined:decodeConfig(record.target,record.before),decodeConfig(record.target,record.after),actual);
   }catch{return false;}
 }
+// Codex may rewrite a gateway field in place. Leaving that gateway is still safe when its route remains.
+function codexGatewayStillPresent(current:string|null):boolean {
+  if(current===null)return false;
+  try{
+    const doc=decodeConfig('codex',current) as {[key:string]:any};
+    const providers=isObject(doc.model_providers)?doc.model_providers:{};
+    const profile=typeof doc.profile==='string'&&isObject(doc.profiles)?doc.profiles[doc.profile]:undefined;
+    const provider=isObject(profile)&&typeof profile.model_provider==='string'?profile.model_provider:doc.model_provider;
+    return provider==='token_flow'||Object.hasOwn(providers,'token_flow');
+  }catch{return false;}
+}
 // Reverse only the fields this connection changed. Client settings added later survive.
 function restoredConfig(record:Record,current:string|null):string|null {
   if(equivalentConfig(record.target,current,record.before))return current;
@@ -552,10 +563,13 @@ export class AgentConnections {
       if(approval?.revision&&current!==approval.revision)throw conflict('审批后配置已变更，请重新生成方案。');
       if(equivalentConfig(record.target,currentText,record.before)){record.state='restored';await this.save(record);if(record.target==='deepseek')await this.updateDeepseekEnv(null);await this.retirePrevious(record);return publicRecord(record);}
       let restored:string|null;
-      if(approval?.overwrite){
-        try{restored=restoredConfig(record,currentText);}catch{restored=record.before;}
-      }else{
-        restored=restoredConfig(record,currentText);
+      try{restored=restoredConfig(record,currentText);}
+      catch(error){
+        // Codex 可能就地改写网关字段：只要路由还在，就按字段还原，不要整段覆盖用户的后续设置。
+        const codexRecoverable=record.target==='codex'&&error instanceof Error&&error.message.includes('无法安全还原')&&codexGatewayStillPresent(currentText);
+        if(codexRecoverable)restored=repairConfigBase(record,currentText);
+        else if(approval?.overwrite)restored=record.before;
+        else throw error;
       }
       await this.replace(record.target,current,restored,approval?.allowRunning);
       if(record.target==='deepseek')await this.updateDeepseekEnv(null);

@@ -1,13 +1,22 @@
 import {describe,it,expect} from 'vitest';
-import {mkdtemp,writeFile,rm,mkdir,stat} from 'node:fs/promises';
+import {mkdtemp,writeFile,readFile,rm,stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHmac} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {codexRouteEvidence,gatewayResponseEvidence,routeChannel} from '../packages/core/src/local-usage-evidence.js';
 import {LocalUsageParser} from '../packages/core/src/local-usage.js';
+import {nativeIdentity} from '../packages/core/src/local-usage.js';
+import {appendGatewayResponseHashes} from '../packages/core/src/gateway-response-evidence.js';
 const time='2026-10-13T08:00:00Z',ms=Date.parse(time);
 describe('historical usage evidence',()=>{
+ it('keeps complete response evidence when the previous append is torn',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'tf-response-append-'));try{
+   await writeFile(join(root,'gateway-response-evidence.jsonl'),'"interrupted');
+   await appendGatewayResponseHashes(root,[nativeIdentity('response','complete-response'),'invalid']);
+   const evidence=await gatewayResponseEvidence(root);expect(evidence.matches('complete-response')).toBe(true);expect(evidence.matches('other-response')).toBe(false);
+  }finally{await rm(root,{recursive:true,force:true});}
+ });
  it('requires the same thread and nearby unambiguous inference route',()=>{
   const routes=[{threadId:'one',time:ms-20_000,channel:'official' as const}];
   expect(routeChannel(routes,'one',time)).toBe('official');expect(routeChannel(routes,'other',time)).toBe('unknown');expect(routeChannel(routes,'one',new Date(ms+121_000).toISOString())).toBe('unknown');
@@ -30,7 +39,10 @@ describe('historical usage evidence',()=>{
  it('matches the salted response identity in old gateway traces, independently of model aliases',async()=>{
   const root=await mkdtemp(join(tmpdir(),'tf-response-'));try{
    const salt='a'.repeat(64),keyId='gateway-key',responseId='msg-test';await writeFile(join(root,'gateway-traces.json'),JSON.stringify({salt,records:[{keyId,responseRef:createHmac('sha256',salt).update(`${keyId}\n${responseId}`).digest('hex')}]}));
-   const evidence=await gatewayResponseEvidence(root);expect(evidence.matches(responseId)).toBe(true);expect(evidence.matches('msg-other')).toBe(false);
+   const evidence=await gatewayResponseEvidence(root);expect(evidence.matches(responseId)).toBe(true);expect(evidence.matches('msg-other')).toBe(false);await evidence.flush();
+   const path=join(root,'gateway-response-evidence.jsonl'),saved=await readFile(path,'utf8');expect(saved).not.toContain(responseId);expect(saved).not.toContain(keyId);
+   for(const trace of [JSON.stringify({salt,records:[]}),'invalid JSON']){await writeFile(join(root,'gateway-traces.json'),trace);const restored=await gatewayResponseEvidence(root);expect(restored.matches(responseId)).toBe(true);expect(restored.matches('msg-other')).toBe(false);await restored.flush();}
+   expect(await readFile(path,'utf8')).toBe(saved);
   }finally{await rm(root,{recursive:true,force:true});}
  });
 });
