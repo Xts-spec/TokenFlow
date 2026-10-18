@@ -53,7 +53,7 @@ it('rebuilds v15 Claude cache to recover third-party history previously hidden b
  }finally{await index.close();await rm(root,{recursive:true,force:true});}
 });
 
-it.each([14,15,16])('retains confirmed Claude attribution through v%s migration after observations expire',async(version)=>{
+it.each([10,11,12,13,14,15,16])('retains confirmed Claude attribution through v%s migration after observations expire',async(version)=>{
  const root=await mkdtemp(join(await realpath(tmpdir()),'tf-claude-usage-')),paths=agentPaths(root),directory=join(root,'.claude','projects');let index=new LocalUsageIndex(root,paths);
  try{
   const store=await NativeUsageLogins.open(root),now=Date.parse('2026-10-16T10:00:00Z'),a={provider:'claude' as const,accountId:'a',email:'a@example.test'},b={...a,accountId:'b',email:'b@example.test'};
