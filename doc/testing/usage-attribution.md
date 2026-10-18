@@ -13,16 +13,33 @@
 
 例如 Claude Code 通过 TokenFlow 使用反重力的 Claude 模型，正确归属是：目标 Claude Code、来源反重力账号、来源渠道官方账号、采集位置网关。它不应计入 Claude 官方账号直连用量。
 
+界面按同一口径汇总：“使用方式”按 `target` 分为各本地 Agent（Claude CLI 与 Claude Desktop 分开）、API 代理（导出的 Key）和 TokenFlow 内部调用；“来源”按账号授权或 API 接口；账号授权页的今日用量只包含该平台账号服务的网关请求，以及本机日志中已确认走官方登录的请求，渠道未确认或 API Key 直连不计入。
+
 ## 当前实现范围
 
 | 路径 | 当前依据 | 状态 |
 | --- | --- | --- |
 | Claude Code → TokenFlow → 反重力／其他来源 | 受管连接 Key 与来源绑定，上游 usage | 已有实现；本轮增加反重力双账号、Gemini／Claude、流式／非流式和重启测试 |
 | 独立 Key → TokenFlow → 反重力 | 独立 Key 的 `sourceId` 与模型权限 | 来源可确定；目标记为 `key`，不能仅因授权 `agents=['claude']` 就认定客户端身份 |
+| Claude Desktop → TokenFlow → 反重力／其他来源 | 网关记为 `target=claude-desktop`，来源按所选账号；用同一响应 ID 的哈希或日志自身记录的网关路由排除本机副本，不读取当前 Desktop 配置推断历史 | 2026-10-18 修正；第三方模式记为 API 渠道，不计入 Claude 登录账号。旧 Claude 索引按 v16 重建，不迁移历史网关账本 |
 | Claude Code 本机官方直连 | 本机 JSONL、请求证据或有效登录观察时间段 | 夹具回归通过；复杂真实环境及包内历史失败仍待验收 |
 | Claude Code 本机 API／第三方直连 | 日志中的认证证据，证据不足时未知 | 不能拿当前 TokenFlow 来源、当前登录或模型名倒填历史归属 |
 | 反重力客户端自身的官方直连 | 2026-10-17 已接入原生 SQLite v1 的生成 Token 记录 | 生产 Worker 已在本机数据验证；旧 `.pb`、其他版本和无身份历史有边界，见 [直连采集](native-direct-usage.md) |
 | 反重力周／5 小时额度 | `quota/antigravity.ts` 独立查询两个模型组、四个窗口 | 属于额度信息，不能从百分比反推 Token 或逐请求账号归属 |
+
+### Claude Desktop 历史去重修正（2026-10-18）
+
+旧实现把当前 `3p` 配置是否指向 TokenFlow 作为排除所有 Desktop 第三方历史的条件，因此同一份日志会随当前配置变化，出现 110 → 0 → 110。现在只使用日志本身的路由标记，或网关实际观察到的同一响应标识去重；没有这些证据的第三方记录保留为 API 用量。
+
+网关另外追加保存 `gateway-response-evidence.jsonl`；新响应只保存 ID 的 SHA-256 哈希。为迁移旧版 HMAC 引用，还会保存其盐值、内部 Key 标识和响应引用，不保存原始响应 ID、正文、账号或真实 API 密钥。这份证据不随最近 1000 条／30 天轨迹的裁剪或清空删除，因此重启、日志追加或删除索引重建也不会让已确认的网关副本重新计数。升级会在裁剪或清空轨迹前保存尚存的响应哈希和旧版加盐引用；旧引用在与原生日志精确匹配后也会保存为响应哈希。
+
+已经在旧版本中丢失的轨迹、且本机日志也没有网关路由标记的历史，无法事后确定经过哪个网关，仍保留为 API 记录，不根据当前配置猜测。原生日志尚在时，v16 自动重建 Claude 索引以恢复之前被误排除的记录。重建 v10–v15 缓存（包括当前 main 的 v13）时保留已确认的账号证据，并按样本 ID 和 Token 计数匹配，避免登录观察过期后丢失原有归属；明确的 API 记录不继承官方账号。
+
+回归覆盖：相同日志切换外部服务／TokenFlow／外部服务、证据晚于首次索引到达、重启、日志追加、删除索引重建、v15 错误缓存恢复、轨迹裁剪与清空、旧版哈希迁移，以及中断写入后的继续追加。
+
+```sh
+npx vitest run tests/local-usage.test.ts tests/local-usage-index.test.ts tests/local-usage-evidence.test.ts tests/gateway-traces.test.ts
+```
 
 ## 本轮可复跑测试
 

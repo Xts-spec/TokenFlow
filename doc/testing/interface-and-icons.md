@@ -51,8 +51,8 @@ xAI 曾被怀疑存在裁切问题；逐条比对官方原始 SVG 后确认是�
 | DeepSeek Harness / DeepSeek | `deepseek.svg` | 与本机官方安装包内 `@deepseek-ai/dsh-web-frontend/dist/favicon.svg` 的所有图形路径相同；界面保留蓝色填充，桌面应用是深色图形与浅色底板。 |
 | Pi Agent | `pi.svg` | 与 [Pi 官网](https://pi.dev/logo.svg) 字节相同，当前官网 `logo-auto.svg` 也是同一资源。 |
 | Gemini | `gemini.png` | 从界面核对时提供的四色星标截图抠出，去掉底板；此前的 gstatic 细线星标在列表里发糊。只用于模型行，Antigravity 产品入口仍用自己的图标。 |
-| MiniMax | `minimax.png` | 取自 [MiniMax 官网声明的品牌图](https://filecdn.minimax.chat/public/58eca777-e31f-448a-9823-e2220e49b426.png)，裁掉底部文字，只留波形标记。 |
-| Qwen | `qwen.svg` | 图形取自 [通义千问对话页官方标识](https://assets.alicdn.com/g/qwenweb/qwen-chat-fe/0.3.19/static/images/qwen-logo.svg) 左侧标记，去掉文字。 |
+| MiniMax | `minimax.png` | 取自 [MiniMax 官网品牌图](https://filecdn.minimax.chat/public/58eca777-e31f-448a-9823-e2220e49b426.png) 的白色波形，按底板的粉到橙渐变着色，去掉文字和整块底板。 |
+| Qwen | `qwen.svg` | 图形取自 [Qwen 官网当前图标](https://img.alicdn.com/imgextra/i4/O1CN01OXv3EM1FN8t9W4P79_!!6000000000474-2-tps-80-80.png)，蓝色六角标记，透明底。 |
 
 资源来源与本次文件校验值保存在 [sources.json](../../apps/console/public/provider-icons/sources.json)。未知来源保留现有文字缩写／来源平台回退，不凭空生成“官方图标”。
 
