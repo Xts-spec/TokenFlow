@@ -24,6 +24,19 @@ it('migrates response hashes from old traces before pruning them on open',async(
  await rm(join(root,'gateway-response-evidence.jsonl'));const path=join(root,'gateway-traces.json'),saved=JSON.parse(await readFile(path,'utf8'));saved.records[0].startedAt=new Date(Date.now()-31*86400_000).toISOString();await writeFile(path,JSON.stringify(saved));
  const reopened=await GatewayTraces.open(root);try{expect(reopened.list()).toEqual([]);expect((await gatewayResponseEvidence(root)).matches('old-response')).toBe(true);}finally{await reopened.close();}
 });
+it.each([false,true])('preserves expired legacy response references before pruning, mixed hashes: %s',async(mixed)=>{
+ const traces=await GatewayTraces.open(root);traces.record(call(),requestTrace({}),{tools:[],responseId:'legacy-response'});
+ if(mixed)traces.record(call(),requestTrace({}),{tools:[],responseId:'new-response'});await traces.close();
+ await rm(join(root,'gateway-response-evidence.jsonl'));const path=join(root,'gateway-traces.json'),saved=JSON.parse(await readFile(path,'utf8'));
+ const legacy=saved.records.at(-1);delete legacy.responseHash;legacy.startedAt=new Date(Date.now()-31*86400_000).toISOString();await writeFile(path,JSON.stringify(saved));
+ expect((await gatewayResponseEvidence(root)).matches('legacy-response')).toBe(true);
+ const reopened=await GatewayTraces.open(root);try{
+  expect(reopened.list()).toHaveLength(mixed?1:0);await reopened.clear();await rm(path);
+  const restored=await gatewayResponseEvidence(root);expect(restored.matches('legacy-response')).toBe(true);expect(restored.matches('other-response')).toBe(false);await restored.flush();
+  expect((await gatewayResponseEvidence(root)).matches('legacy-response')).toBe(true);
+  expect(await readFile(join(root,'gateway-response-evidence.jsonl'),'utf8')).not.toContain('legacy-response');
+ }finally{await reopened.close();}
+});
 it('links actual tool calls to results, deduplicates replayed history, persists across restarts and omits full messages',async()=>{
  const traces=await GatewayTraces.open(root);const observer=new ResponseObserver();
  observer.inspect({choices:[{index:0,delta:{content:'PRIVATE_ASSISTANT',reasoning_content:'PRIVATE_REASONING',tool_calls:[{index:0,id:'tool1',function:{name:'read'}}]}}]});

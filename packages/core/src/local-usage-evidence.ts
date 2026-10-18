@@ -3,7 +3,7 @@ import {readFile,stat} from 'node:fs/promises';
 import {join} from 'node:path';
 import type {UsageChannel} from './local-usage.js';
 import {nativeIdentity} from './local-usage.js';
-import {appendGatewayResponseHashes,readGatewayResponseHashes} from './gateway-response-evidence.js';
+import {appendGatewayResponseHashes,readGatewayResponseEvidence,type LegacyResponseRef} from './gateway-response-evidence.js';
 
 export type RouteEvidence={threadId:string;time:number;channel:UsageChannel|'gateway'};
 /** A nearby inference endpoint in the same thread is evidence; model names and current logins aren't. */
@@ -30,16 +30,18 @@ export async function codexRouteEvidence(home:string,gatewayPorts:number[]=[]):P
 }
 /** Old traces used a salted response reference. Match exactly without copying messages or response IDs. */
 export async function gatewayResponseEvidence(root:string){
- const hashes=await readGatewayResponseHashes(root),discovered=new Set<string>(),refs=new Map<string,Set<string>>();
+ const saved=await readGatewayResponseEvidence(root),hashes=saved.hashes,discovered=new Set<string>(),refs=new Map<string,{salt:string;keyId:string;values:Set<string>}>();
+ const addRef=({salt,keyId,responseRef}:LegacyResponseRef)=>{const key=JSON.stringify([salt,keyId]),group=refs.get(key)??{salt,keyId,values:new Set<string>()};group.values.add(responseRef);refs.set(key,group);};
+ for(const row of saved.refs)addRef(row);
  try{
   const path=join(root,'gateway-traces.json');if((await stat(path)).size>32*1024*1024)throw Error('large trace file');
   const data=JSON.parse(await readFile(path,'utf8'));if(!/^[a-f0-9]{64}$/.test(data.salt))throw Error('invalid salt');
   for(const row of (data.records??[]).slice(0,1000)){
    if(/^[a-f0-9]{64}$/.test(row.responseHash??'')&&!hashes.has(row.responseHash)){hashes.add(row.responseHash);discovered.add(row.responseHash);}
-   if(typeof row.keyId==='string'&&/^[a-f0-9]{64}$/.test(row.responseRef??'')){const set=refs.get(row.keyId)??new Set<string>();set.add(row.responseRef);refs.set(row.keyId,set);}
+   if(typeof row.keyId==='string'&&/^[a-f0-9]{64}$/.test(row.responseRef??''))addRef({salt:data.salt,keyId:row.keyId,responseRef:row.responseRef});
   }
-  // Promote exact legacy matches too, before those traces can expire.
-  const matches=(id:string)=>{const hash=nativeIdentity('response',id);if(hashes.has(hash))return true;for(const[key,set]of refs)if(set.has(createHmac('sha256',data.salt).update(`${key}\n${id}`).digest('hex'))){hashes.add(hash);discovered.add(hash);return true;}return false;};
-  return {hashes,matches,flush:async()=>{await appendGatewayResponseHashes(root,discovered);discovered.clear();}};
- }catch{return {hashes,matches:(id:string)=>hashes.has(nativeIdentity('response',id)),flush:async()=>{}};}
+ }catch{/* Durable evidence remains valid even when recent traces are missing. */}
+ // Promote exact legacy matches too, before those traces can expire.
+ const matches=(id:string)=>{const hash=nativeIdentity('response',id);if(hashes.has(hash))return true;for(const{salt,keyId,values}of refs.values())if(values.has(createHmac('sha256',salt).update(`${keyId}\n${id}`).digest('hex'))){hashes.add(hash);discovered.add(hash);return true;}return false;};
+ return {hashes,matches,flush:async()=>{await appendGatewayResponseHashes(root,discovered);discovered.clear();}};
 }

@@ -53,7 +53,7 @@ it('rebuilds v15 Claude cache to recover third-party history previously hidden b
  }finally{await index.close();await rm(root,{recursive:true,force:true});}
 });
 
-it('retains Claude account and official classification when a log grows after restart and older observations expire',async()=>{
+it.each([14,15,16])('retains confirmed Claude attribution through v%s migration after observations expire',async(version)=>{
  const root=await mkdtemp(join(await realpath(tmpdir()),'tf-claude-usage-')),paths=agentPaths(root),directory=join(root,'.claude','projects');let index=new LocalUsageIndex(root,paths);
  try{
   const store=await NativeUsageLogins.open(root),now=Date.parse('2026-10-16T10:00:00Z'),a={provider:'claude' as const,accountId:'a',email:'a@example.test'},b={...a,accountId:'b',email:'b@example.test'};
@@ -62,7 +62,9 @@ it('retains Claude account and official classification when a log grows after re
   await writeFile(file,original);index.snapshot();await vi.waitFor(()=>{const state=index.snapshot();expect(state.scanning).toBe(false);expect(state.recent?.[0]).toMatchObject({nativeAccountId:nativeIdentity('claude','a'),channel:'official'});},{timeout:5000,interval:25});await index.close();
   await store.observe({codex:null,claude:b},now+10000);await store.observe({codex:null,claude:b},now+15000);
   const saved=JSON.parse(await readFile(join(root,'native-usage-logins.json'),'utf8'));saved.intervals=saved.intervals.filter((i:{account:string})=>i.account===nativeIdentity('claude','b'));await writeFile(join(root,'native-usage-logins.json'),JSON.stringify(saved));
-  await writeFile(file,original+'\n'+entry(now+12000));index=new LocalUsageIndex(root,paths);index.snapshot();
+  const cachePath=join(root,'local-usage-index.json'),cached=JSON.parse(await readFile(cachePath,'utf8'));cached.version=version;await writeFile(cachePath,JSON.stringify(cached));
+  index=new LocalUsageIndex(root,paths);index.snapshot();await vi.waitFor(()=>{const state=index.snapshot();expect(state.scanning).toBe(false);expect(state.recent?.[0]).toMatchObject({nativeAccountId:nativeIdentity('claude','a'),channel:'official'});},{timeout:5000,interval:25});
+  await writeFile(file,original+'\n'+entry(now+12000));index.refresh();
   await vi.waitFor(()=>{const state=index.snapshot();expect(state.scanning).toBe(false);expect(state.rows.map(r=>[r.nativeAccountId,r.channel,r.requests]).sort()).toEqual([['a','official',1],['b','official',1]].map(([id,channel,requests])=>[nativeIdentity('claude',String(id)),channel,requests]).sort());expect(state.recent).toHaveLength(2);},{timeout:5000,interval:25});
  }finally{await index.close();await rm(root,{recursive:true,force:true});}
 });
