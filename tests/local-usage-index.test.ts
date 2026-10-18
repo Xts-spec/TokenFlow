@@ -6,6 +6,7 @@ import {agentPaths} from '../packages/core/src/agent-connections.js';
 import {LocalUsageIndex} from '../packages/core/src/local-usage-index.js';
 import {NativeUsageLogins} from '../packages/core/src/native-usage-logins.js';
 import {nativeIdentity} from '../packages/core/src/local-usage.js';
+import {claudeDesktopDirectory} from '../packages/core/src/claude-desktop.js';
 
 it.each(['cordis.patch.yml','profiles/desktop/cordis.patch.yml'])('indexes shared DeepSeek sessions with settings at %s',async config=>{
  const root=await mkdtemp(join(tmpdir(),'tf-deepseek-usage-')),home=join(root,'.dsh');
@@ -22,6 +23,33 @@ it.each(['cordis.patch.yml','profiles/desktop/cordis.patch.yml'])('indexes share
    expect(state.coverage.find(item=>item.target==='deepseek')).toMatchObject({files:1,indexed:1,status:'ready'});
    expect(state.rows).toHaveLength(1);expect(state.rows[0]).toMatchObject({target:'deepseek',inputTokens:10,outputTokens:5});
   },{timeout:5000,interval:25});
+ }finally{await index.close();await rm(root,{recursive:true,force:true});}
+});
+
+it('keeps historical Desktop API usage stable when the current profile changes, including after restart',async()=>{
+ const root=await mkdtemp(join(await realpath(tmpdir()),'tf-desktop-history-')),paths=agentPaths(root),directory=join(root,'.claude','projects'),desktop=claudeDesktopDirectory(process.platform,root,{}),id='11111111-2222-3333-4444-555555555555';let index=new LocalUsageIndex(root,paths,()=>[9527]);
+ try{
+  await mkdir(directory,{recursive:true});await mkdir(join(desktop,'configLibrary'),{recursive:true});
+  const profile=async(url:string)=>{await writeFile(join(desktop,'claude_desktop_config.json'),JSON.stringify({deploymentMode:'3p'}));await writeFile(join(desktop,'configLibrary','_meta.json'),JSON.stringify({appliedId:id}));await writeFile(join(desktop,'configLibrary',`${id}.json`),JSON.stringify({inferenceProvider:'gateway',inferenceGatewayBaseUrl:url}));};
+  const entry=(id:string)=>JSON.stringify({type:'assistant',timestamp:'2026-10-17T08:00:00Z',entrypoint:'claude-desktop-3p',accountId:'not-the-payer',requestedModel:'claude-sonnet-4-6',message:{id,model:'claude-sonnet-4-6',usage:{input_tokens:100,output_tokens:10}}});
+  await writeFile(join(directory,'history.jsonl'),[entry('external-response'),entry('gateway-response')].join('\n'));
+  const settled=async(requests=1)=>{await vi.waitFor(()=>{const state=index.snapshot();expect(state.scanning).toBe(false);expect(state.warning).toBeUndefined();expect(state.rows).toHaveLength(1);expect(state.rows[0]).toMatchObject({target:'claude-desktop',channel:'api',requests,inputTokens:100*requests,outputTokens:10*requests});expect(state.rows[0].nativeAccountId).toBeUndefined();},{timeout:5000,interval:25});};
+  await profile('https://external.example.test');index.snapshot();await settled(2);
+  await writeFile(join(root,'gateway-traces.json'),JSON.stringify({salt:'a'.repeat(64),records:[{responseHash:nativeIdentity('response','gateway-response')}]}));index.refresh();await settled();
+  for(const url of ['http://127.0.0.1:9527','https://external.example.test']){await profile(url);index.refresh();await settled();}
+  await index.close();await rm(join(root,'gateway-traces.json'));await profile('http://127.0.0.1:9527');index=new LocalUsageIndex(root,paths,()=>[9527]);index.snapshot();await settled();
+  await writeFile(join(directory,'history.jsonl'),[entry('external-response'),entry('gateway-response'),entry('another-external-response')].join('\n'));index.refresh();await settled(2);
+  await index.close();await rm(join(root,'local-usage-index.json'));index=new LocalUsageIndex(root,paths,()=>[9527]);index.snapshot();await settled(2);
+ }finally{await index.close();await rm(root,{recursive:true,force:true});}
+});
+
+it('rebuilds v15 Claude cache to recover third-party history previously hidden by the current profile',async()=>{
+ const root=await mkdtemp(join(await realpath(tmpdir()),'tf-desktop-reindex-')),paths=agentPaths(root),directory=join(root,'.claude','projects');let index=new LocalUsageIndex(root,paths);
+ try{
+  await mkdir(directory,{recursive:true});await writeFile(join(directory,'history.jsonl'),JSON.stringify({type:'assistant',timestamp:'2026-10-17T08:00:00Z',entrypoint:'claude-desktop-3p',message:{id:'external-response',model:'claude-test',usage:{input_tokens:100,output_tokens:10}}}));
+  index.snapshot();await vi.waitFor(()=>{expect(index.snapshot().scanning).toBe(false);expect(index.snapshot().rows).toHaveLength(1);},{timeout:5000,interval:25});await index.close();
+  const path=join(root,'local-usage-index.json'),saved=JSON.parse(await readFile(path,'utf8'));saved.version=15;saved.claudeDesktopGateway=false;for(const entry of Object.values(saved.files) as Array<{target:string;rows:unknown[]}>){if(entry.target==='claude')entry.rows=[];}await writeFile(path,JSON.stringify(saved));
+  index=new LocalUsageIndex(root,paths);index.snapshot();await vi.waitFor(()=>{const state=index.snapshot();expect(state.scanning).toBe(false);expect(state.rows[0]).toMatchObject({target:'claude-desktop',channel:'api',inputTokens:100,outputTokens:10});},{timeout:5000,interval:25});
  }finally{await index.close();await rm(root,{recursive:true,force:true});}
 });
 
@@ -54,7 +82,7 @@ it('rebuilds v12 Codex cache so an unchanged parent log uses request-level child
   for(const e of Object.values(saved.files) as Array<{target:string;rows:any[]}>){if(e.target==='codex')for(const r of e.rows){r.nativeThreadId=nativeIdentity('thread','parent');delete r.nativeAccountId;delete r.nativeAccountEvidence;}}
   await writeFile(path,JSON.stringify(saved));index=new LocalUsageIndex(root,paths);index.snapshot();
   await vi.waitFor(()=>{const s=index.snapshot();expect(s.scanning).toBe(false);expect(s.rows[0]).toMatchObject({nativeAccountId:nativeIdentity('codex','payer'),nativeAccountEvidence:'otel',requests:1,inputTokens:100,outputTokens:20});},{timeout:5000,interval:25});
-  expect(JSON.parse(await readFile(path,'utf8')).version).toBe(15);
+  expect(JSON.parse(await readFile(path,'utf8')).version).toBe(16);
   await index.close();await writeFile(join(root,'usage-account-evidence.json'),JSON.stringify({version:1,records:[]}));
   const log=join(directory,'parent.jsonl');await writeFile(log,(await readFile(log,'utf8'))+'\n'+JSON.stringify({type:'token_usage_record',timestamp,payload:{response_id:'new-unconfirmed-response',thread_id:'child',usage:{input_tokens:10,output_tokens:2}}}));
   index=new LocalUsageIndex(root,paths);index.snapshot();

@@ -17,7 +17,7 @@ export function authChannel(meta:any):UsageChannel{
  if(['apikey','key'].includes(mode)||meta?.requires_openai_auth===false||typeof meta?.apiKey==='string'&&!!meta.apiKey||typeof meta?.apiKeyEnv==='string'&&!!meta.apiKeyEnv)return 'api';
  return 'unknown';
 }
-export type LocalUsageEvidence={matchesResponse?:(id:string)=>boolean;channelFor?:(threadId:string,time:string)=>UsageChannel|'gateway';claudeDesktopGateway?:boolean};
+export type LocalUsageEvidence={matchesResponse?:(id:string)=>boolean;channelFor?:(threadId:string,time:string)=>UsageChannel|'gateway'};
 /** Reads usage metadata only. Message content, arguments and credentials never enter the output. */
 export class LocalUsageParser{
  private samples=new Map<string,Sample>();private provider='';private model='';private account='';private explicit:UsageChannel='unknown';private cumulative=0;private previousUsage:any;private legacy:Sample[]=[];private hasCodexRecords=false;private threadId='';
@@ -73,7 +73,7 @@ export class LocalUsageParser{
   const sampleChannel:UsageChannel=thirdParty?'api':recordChannel!=='unknown'?recordChannel:this.explicit!=='unknown'?this.explicit:desktop?'official':this.target==='qoder'?(record.modelSource==='custom'?'api':record.modelSource==='builtin'||record.modelSource==='official'?'official':'unknown'):record.authType==='oauth'?'official':record.authType==='api-key'?'api':'unknown';
   this.add({id,timestamp,model,provider:this.target,channel:sampleChannel,responseId:m.id??record.responseId,account:thirdParty?undefined:record.accountId??this.account,input:number(u.input_tokens)+read+write,read,write,output:number(u.output_tokens),reasoning:number(u.output_tokens_details?.thinking_tokens),cacheKnown:u.cache_read_input_tokens!==undefined,...(desktop?{client:'claude-desktop'}:{}),
    // Qoder's built-in models bill credits and leave every token counter at zero.
-   ...(this.target==='qoder'&&!number(u.input_tokens)&&!number(u.output_tokens)&&(number(u.credits)>0||u.billable===true)?{unmeasured:true}:{})},routed||thirdParty&&!!this.evidence.claudeDesktopGateway);
+   ...(this.target==='qoder'&&!number(u.input_tokens)&&!number(u.output_tokens)&&(number(u.credits)>0||u.billable===true)?{unmeasured:true}:{})},routed);
  }
  /** Parent session context is not request-level model, account or route evidence for a child thread. */
  private codex(u:any,timestamp:string,id:string,responseId?:string,threadId=this.threadId){

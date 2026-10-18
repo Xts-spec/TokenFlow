@@ -57,11 +57,9 @@ describe('local program token accounting',()=>{
 });
 
 it('separates Claude Desktop from Claude CLI and never charges its third-party mode to the Claude account',()=>{
- const parse=(claudeDesktopGateway:boolean)=>{const p=new LocalUsageParser('claude','shared',{claudeDesktopGateway});
-  for(const [id,entrypoint]of [['cli','cli'],['desktop-official','claude-desktop'],['desktop-3p','claude-desktop-3p']])p.accept({type:'assistant',timestamp,entrypoint,accountId:'logged-in',requestedModel:'claude-sonnet-4-6[1m]',message:{id,model:'claude-opus-4-6-thinking',usage:{input_tokens:10,output_tokens:5}}});
-  return p.rows().map(r=>[r.target,r.provider,r.channel,!!r.nativeAccountId]);};
- expect(parse(true)).toEqual([['claude','claude','unknown',true],['claude-desktop','claude','official',true]]);
- expect(parse(false)).toEqual([['claude','claude','unknown',true],['claude-desktop','claude','official',true],['claude-desktop','claude','api',false]]);
+ const p=new LocalUsageParser('claude','shared',{matchesResponse:id=>id==='desktop-gateway'});
+ for(const [id,entrypoint]of [['cli','cli'],['desktop-official','claude-desktop'],['desktop-3p','claude-desktop-3p'],['desktop-gateway','claude-desktop-3p']])p.accept({type:'assistant',timestamp,entrypoint,accountId:'logged-in',requestedModel:'claude-sonnet-4-6[1m]',message:{id,model:'claude-opus-4-6-thinking',usage:{input_tokens:10,output_tokens:5}}});
+ expect(p.rows().map(r=>[r.target,r.provider,r.channel,!!r.nativeAccountId])).toEqual([['claude','claude','unknown',true],['claude-desktop','claude','official',true],['claude-desktop','claude','api',false]]);
 });
 
 it('uses the response thread for route exclusion and keeps sibling responses independent',()=>{

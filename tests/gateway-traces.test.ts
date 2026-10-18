@@ -1,11 +1,29 @@
 import {afterEach,beforeEach,expect,it} from 'vitest';
-import {mkdtemp,readFile,rm} from 'node:fs/promises';
+import {mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {GatewayTraces,requestTrace} from '../packages/core/src/gateway-traces';
 import {ResponseObserver,providerUsage} from '../packages/core/src/gateway-observation';
+import {gatewayResponseEvidence} from '../packages/core/src/local-usage-evidence';
 let root='';beforeEach(async()=>{root=await mkdtemp(join(tmpdir(),'trace-test-'));});afterEach(async()=>{await rm(root,{recursive:true,force:true});});
 const call=(keyId='key')=>({keyId,agent:'Pi',target:'pi',sourceId:'acct',model:'test/model',protocol:'chat/completions',startedAt:new Date().toISOString(),durationMs:100,status:200,inputTokens:30,cachedTokens:20,outputTokens:4});
+it('keeps exact gateway response evidence after trace retention, clearing and restart',async()=>{
+ const traces=await GatewayTraces.open(root);
+ try{
+  traces.record({...call(),target:'claude-desktop'},requestTrace({}),{tools:[],responseId:'desktop-response'});
+  for(let i=0;i<1000;i++)traces.record(call(),requestTrace({}));
+  await traces.flush();expect(traces.list({limit:1000})).toHaveLength(1000);
+  expect((await gatewayResponseEvidence(root)).matches('desktop-response')).toBe(true);
+  await traces.clear();expect((await gatewayResponseEvidence(root)).matches('desktop-response')).toBe(true);
+  const reopened=await GatewayTraces.open(root);await reopened.close();const evidence=await gatewayResponseEvidence(root);expect(evidence.matches('desktop-response')).toBe(true);expect(evidence.matches('unrelated-response')).toBe(false);
+  expect(await readFile(join(root,'gateway-response-evidence.jsonl'),'utf8')).not.toContain('desktop-response');
+ }finally{await traces.close();}
+});
+it('migrates response hashes from old traces before pruning them on open',async()=>{
+ const traces=await GatewayTraces.open(root);traces.record(call(),requestTrace({}),{tools:[],responseId:'old-response'});await traces.close();
+ await rm(join(root,'gateway-response-evidence.jsonl'));const path=join(root,'gateway-traces.json'),saved=JSON.parse(await readFile(path,'utf8'));saved.records[0].startedAt=new Date(Date.now()-31*86400_000).toISOString();await writeFile(path,JSON.stringify(saved));
+ const reopened=await GatewayTraces.open(root);try{expect(reopened.list()).toEqual([]);expect((await gatewayResponseEvidence(root)).matches('old-response')).toBe(true);}finally{await reopened.close();}
+});
 it('links actual tool calls to results, deduplicates replayed history, persists across restarts and omits full messages',async()=>{
  const traces=await GatewayTraces.open(root);const observer=new ResponseObserver();
  observer.inspect({choices:[{index:0,delta:{content:'PRIVATE_ASSISTANT',reasoning_content:'PRIVATE_REASONING',tool_calls:[{index:0,id:'tool1',function:{name:'read'}}]}}]});

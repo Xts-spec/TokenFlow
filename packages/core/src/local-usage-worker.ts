@@ -9,7 +9,7 @@ import {z} from 'zod';
 import {LocalUsageParser,mergeLocalUsageRows,recentLocalUsageRows,type LocalUsageRow,type UsageCoverage} from './local-usage.js';
 import {enrichAccountRows,readAccountEvidence,type AttributionRecord} from './usage-attribution.js';
 import {enrichNativeLoginRows,readNativeLoginIntervals,type NativeLoginInterval} from './native-usage-logins.js';
-import {claudeDesktopViaGateway,codexRouteEvidence,gatewayResponseEvidence,routeChannel,type RouteEvidence} from './local-usage-evidence.js';
+import {codexRouteEvidence,gatewayResponseEvidence,routeChannel,type RouteEvidence} from './local-usage-evidence.js';
 import {readAntigravityUsage} from './antigravity-usage.js';
 import {readZcodeUsage} from './zcode-usage.js';
 import {safePath} from './agent-connections.js';
@@ -24,7 +24,7 @@ const cursorConversations=z.array(z.object({hash:z.string().regex(/^[a-f0-9]{64}
 const cachedRow=z.object({day:z.string().regex(/^\d{4}-\d{2}-\d{2}$/),target:z.enum(['codex','claude','claude-desktop','pi','deepseek','workbuddy','workbuddy-ai','qoder','antigravity','zcode']),keyId:z.string().max(100),keyName:z.string().max(100),sourceId:z.literal(''),model:z.string().max(300),requests:count,failed:count,unmeasured:count,inputTokens:count,cachedTokens:count,cacheBaseTokens:count,outputTokens:count,durationMs:count,last:z.string().max(60),origin:z.literal('native'),channel:z.enum(['official','api','unknown']),provider:z.string().max(80),nativeModelUnconfirmed:z.boolean().optional(),nativeAccountEvidence:z.enum(['otel','conflict','login-snapshot']).optional(),nativeOrganizationId:z.string().regex(/^[a-f0-9]{64}$/).optional(),nativeEmailHash:z.string().regex(/^[a-f0-9]{64}$/).optional(),nativeThreadId:z.string().regex(/^[a-f0-9]{64}$/).optional(),nativeAccountId:z.string().regex(/^[a-f0-9]{64}$/).optional(),sampleId:z.string().regex(/^[a-f0-9]{64}$/).optional(),responseHash:z.string().regex(/^[a-f0-9]{64}$/).optional(),cacheWriteTokens:count.optional(),reasoningTokens:count.optional()});
 let accountEvidence:AttributionRecord[]=await readAccountEvidence(workerData.root);
 let loginIntervals:NativeLoginInterval[]=await readNativeLoginIntervals(workerData.root);
-let busy=false;let gatewayEvidence=await gatewayResponseEvidence(workerData.root);let routesByThread=new Map<string,RouteEvidence[]>();let claudeDesktopGateway=false;
+let busy=false;let gatewayEvidence=await gatewayResponseEvidence(workerData.root);let routesByThread=new Map<string,RouteEvidence[]>();
 async function fileStamp(path:string){const s=await lstat(path);const wal=/\.(?:db|vscdb|sqlite)$/.test(path)?await lstat(path+'-wal').catch(()=>undefined):undefined;return {path,stamp:`${s.mtimeMs}:${s.size}:${wal?.mtimeMs??0}:${wal?.size??0}`,size:s.size};}
 async function files(root:string,sqlite=false):Promise<{path:string;stamp:string;size:number}[]>{
  const result:{path:string;stamp:string;size:number}[]=[];
@@ -42,7 +42,7 @@ export function* zstdFrames(buffer:Buffer){
 async function parseFile(target:string,file:{path:string;size:number}){
  if(target==='antigravity')return readAntigravityUsage(file.path,id=>gatewayEvidence.matches(id));
  if(target==='zcode')return readZcodeUsage(file.path);
- const parser=new LocalUsageParser(target,digest(file.path),{matchesResponse:gatewayEvidence.matches,channelFor:(thread,time)=>routeChannel(routesByThread.get(thread)??[],thread,time),claudeDesktopGateway});if(file.size>256*1024*1024)throw Error('Large local log');
+ const parser=new LocalUsageParser(target,digest(file.path),{matchesResponse:gatewayEvidence.matches,channelFor:(thread,time)=>routeChannel(routesByThread.get(thread)??[],thread,time)});if(file.size>256*1024*1024)throw Error('Large local log');
  const accept=(line:string)=>{if(line.length>8*1024*1024)return;try{parser.accept(JSON.parse(line));}catch{/* Partial append or a non-usage line. */}};
  if(file.path.endsWith('.zstd')){if(file.size>32*1024*1024)throw Error('Large compressed log');for(const b of zstdFrames(await readFile(file.path)))for(const line of b.toString('utf8').split('\n'))accept(line);}
  else{const input=createReadStream(file.path);const lines=createInterface({input,crlfDelay:Infinity});try{for await(const line of lines)accept(line);}finally{lines.close();input.destroy();}}
@@ -53,8 +53,6 @@ async function scan(){
  if(busy)return;busy=true;const coverage:UsageCoverage[]=[];const seen=new Set<string>();
  try{
   accountEvidence=await readAccountEvidence(workerData.root);loginIntervals=await readNativeLoginIntervals(workerData.root);gatewayEvidence=await gatewayResponseEvidence(workerData.root);routesByThread=new Map();
-  const desktopGateway=workerData.claudeDesktop?await claudeDesktopViaGateway(workerData.claudeDesktop,workerData.gatewayPorts??[]):false;
-  if(desktopGateway!==claudeDesktopGateway){claudeDesktopGateway=desktopGateway;for(const[id,entry]of cache)if(entry.target==='claude')cache.delete(id);}
   const codexRoots=workerData.sources.codex as string[];for(const route of await codexRouteEvidence(dirname(codexRoots[0]),workerData.gatewayPorts??[])){const list=routesByThread.get(route.threadId)??[];list.push(route);routesByThread.set(route.threadId,list);}
   for(const entry of cache.values())entry.rows=entry.rows.filter(row=>!row.responseHash||!gatewayEvidence.hashes.has(row.responseHash));
   for(const[target,roots]of Object.entries(workerData.sources as Record<string,string[]>)){
@@ -73,9 +71,9 @@ async function scan(){
    xai:'Grok 本机只保存登录与后台状态，对话用量在服务端，没有可读取的逐请求 Token。',
   };
   for(const[target,note]of Object.entries(unsupported))if(!coverage.some(c=>c.target===target))coverage.push({target,files:0,indexed:0,skipped:0,status:'unsupported',note});
-  const tmp=`${path}.tmp`;await writeFile(tmp,JSON.stringify({version:15,claudeDesktopGateway,files:Object.fromEntries(cache)}),{mode:0o600});await rename(tmp,path);publish(coverage,false);
+  await gatewayEvidence.flush();const tmp=`${path}.tmp`;await writeFile(tmp,JSON.stringify({version:16,files:Object.fromEntries(cache)}),{mode:0o600});await rename(tmp,path);publish(coverage,false);
  }catch{parentPort?.postMessage({rows:mergeLocalUsageRows([...cache.values()].flatMap(e=>e.rows)),recent:recentLocalUsageRows([...cache.values()].flatMap(e=>e.rows)),coverage,scanning:false,warning:'部分本机用量暂时无法读取，已保留上次统计。'});}
  finally{busy=false;}
 }
-try{const stat=await lstat(path);if(stat.size<=64*1024*1024){const saved=JSON.parse(await readFile(path,'utf8'));if([7,8,9,10,11,12,13,14,15].includes(saved.version)){claudeDesktopGateway=saved.claudeDesktopGateway===true;for(const[id,e]of Object.entries(saved.files??{})){const v=e as Entry;if(saved.version<13&&v.target==='codex'||saved.version<14&&v.target==='claude'||saved.version<15&&(v.target==='deepseek'||v.target==='qoder'))continue;const parsed=z.array(cachedRow).safeParse(v.rows);if(parsed.success&&typeof v.stamp==='string'&&typeof v.target==='string'&&/^[a-f0-9]{64}$/.test(id)){const conversations=cursorConversations.safeParse(v.cursorConversations);if(v.target==='cursor'&&!conversations.success)continue;cache.set(id,{stamp:v.stamp,target:v.target,rows:parsed.data,...(v.target==='cursor'&&conversations.success?{cursorConversations:conversations.data}:{})});}}}}}catch{/* First scan rebuilds missing metadata. */}
+try{const stat=await lstat(path);if(stat.size<=64*1024*1024){const saved=JSON.parse(await readFile(path,'utf8'));if([7,8,9,10,11,12,13,14,15,16].includes(saved.version)){for(const[id,e]of Object.entries(saved.files??{})){const v=e as Entry;if(saved.version<13&&v.target==='codex'||saved.version<16&&v.target==='claude'||saved.version<15&&(v.target==='deepseek'||v.target==='qoder'))continue;const parsed=z.array(cachedRow).safeParse(v.rows);if(parsed.success&&typeof v.stamp==='string'&&typeof v.target==='string'&&/^[a-f0-9]{64}$/.test(id)){const conversations=cursorConversations.safeParse(v.cursorConversations);if(v.target==='cursor'&&!conversations.success)continue;cache.set(id,{stamp:v.stamp,target:v.target,rows:parsed.data,...(v.target==='cursor'&&conversations.success?{cursorConversations:conversations.data}:{})});}}}}}catch{/* First scan rebuilds missing metadata. */}
 publish([],true);parentPort?.on('message',()=>void scan());void scan();

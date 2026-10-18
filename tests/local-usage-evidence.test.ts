@@ -1,13 +1,22 @@
 import {describe,it,expect} from 'vitest';
-import {mkdtemp,writeFile,rm,mkdir,stat} from 'node:fs/promises';
+import {mkdtemp,writeFile,readFile,rm,stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHmac} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
-import {claudeDesktopViaGateway,codexRouteEvidence,gatewayResponseEvidence,routeChannel} from '../packages/core/src/local-usage-evidence.js';
+import {codexRouteEvidence,gatewayResponseEvidence,routeChannel} from '../packages/core/src/local-usage-evidence.js';
 import {LocalUsageParser} from '../packages/core/src/local-usage.js';
+import {nativeIdentity} from '../packages/core/src/local-usage.js';
+import {appendGatewayResponseHashes} from '../packages/core/src/gateway-response-evidence.js';
 const time='2026-10-13T08:00:00Z',ms=Date.parse(time);
 describe('historical usage evidence',()=>{
+ it('keeps complete response evidence when the previous append is torn',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'tf-response-append-'));try{
+   await writeFile(join(root,'gateway-response-evidence.jsonl'),'"interrupted');
+   await appendGatewayResponseHashes(root,[nativeIdentity('response','complete-response'),'invalid']);
+   const evidence=await gatewayResponseEvidence(root);expect(evidence.matches('complete-response')).toBe(true);expect(evidence.matches('other-response')).toBe(false);
+  }finally{await rm(root,{recursive:true,force:true});}
+ });
  it('requires the same thread and nearby unambiguous inference route',()=>{
   const routes=[{threadId:'one',time:ms-20_000,channel:'official' as const}];
   expect(routeChannel(routes,'one',time)).toBe('official');expect(routeChannel(routes,'other',time)).toBe('unknown');expect(routeChannel(routes,'one',new Date(ms+121_000).toISOString())).toBe('unknown');
@@ -27,21 +36,13 @@ describe('historical usage evidence',()=>{
    const parser=new LocalUsageParser('codex','proxy',{channelFor:(id,stamp)=>routeChannel(routes,id,stamp)});parser.accept({type:'session_meta',payload:{id:'proxy',model_provider:'openai'}});parser.accept({type:'token_usage_record',timestamp:time,payload:{response_id:'plain-response',usage:{input_tokens:10,output_tokens:5}}});expect(parser.rows()).toEqual([]);
   }finally{await rm(root,{recursive:true,force:true});}
  });
- it('treats Claude Desktop third-party logs as gateway usage only while its applied profile targets this gateway',async()=>{
-  const root=await mkdtemp(join(tmpdir(),'tf-desktop-route-'));try{
-   const id='11111111-2222-3333-4444-555555555555',library=join(root,'configLibrary');await mkdir(library,{recursive:true});
-   const write=async(mode:string,url:string,extra:object={})=>{await writeFile(join(root,'claude_desktop_config.json'),JSON.stringify({deploymentMode:mode}));await writeFile(join(library,'_meta.json'),JSON.stringify({appliedId:id,...extra}));await writeFile(join(library,`${id}.json`),JSON.stringify({inferenceProvider:'gateway',inferenceGatewayBaseUrl:url}));};
-   await write('3p','http://127.0.0.1:9527');expect(await claudeDesktopViaGateway(root,[9527])).toBe(true);expect(await claudeDesktopViaGateway(root,[8317])).toBe(false);
-   await write('1p','http://127.0.0.1:9527');expect(await claudeDesktopViaGateway(root,[9527])).toBe(false);
-   await write('3p','https://gateway.example.test');expect(await claudeDesktopViaGateway(root,[9527])).toBe(false);
-   await write('3p','http://127.0.0.1:9527',{hybridPointer:{bootstrapUrl:'https://example.test'}});expect(await claudeDesktopViaGateway(root,[9527])).toBe(false);
-   expect(await claudeDesktopViaGateway(join(root,'missing'),[9527])).toBe(false);
-  }finally{await rm(root,{recursive:true,force:true});}
- });
  it('matches the salted response identity in old gateway traces, independently of model aliases',async()=>{
   const root=await mkdtemp(join(tmpdir(),'tf-response-'));try{
    const salt='a'.repeat(64),keyId='gateway-key',responseId='msg-test';await writeFile(join(root,'gateway-traces.json'),JSON.stringify({salt,records:[{keyId,responseRef:createHmac('sha256',salt).update(`${keyId}\n${responseId}`).digest('hex')}]}));
-   const evidence=await gatewayResponseEvidence(root);expect(evidence.matches(responseId)).toBe(true);expect(evidence.matches('msg-other')).toBe(false);
+   const evidence=await gatewayResponseEvidence(root);expect(evidence.matches(responseId)).toBe(true);expect(evidence.matches('msg-other')).toBe(false);await evidence.flush();
+   const path=join(root,'gateway-response-evidence.jsonl'),saved=await readFile(path,'utf8');expect(saved).not.toContain(responseId);expect(saved).not.toContain(keyId);
+   for(const trace of [JSON.stringify({salt,records:[]}),'invalid JSON']){await writeFile(join(root,'gateway-traces.json'),trace);const restored=await gatewayResponseEvidence(root);expect(restored.matches(responseId)).toBe(true);expect(restored.matches('msg-other')).toBe(false);await restored.flush();}
+   expect(await readFile(path,'utf8')).toBe(saved);
   }finally{await rm(root,{recursive:true,force:true});}
  });
 });
