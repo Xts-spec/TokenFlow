@@ -198,3 +198,20 @@ it('returns a timeout when the SDK exhausts safe idle recovery without leaking t
  try{const response=await sdk.response('chosen','messages',{model:'workbuddy/test',messages:[{role:'user',content:'hello'}]},new AbortController().signal);expect(response.status).toBe(504);const body=await response.json();expect(body.error.code).toBe('workbuddy_timeout');expect(JSON.stringify(body)).not.toContain('private');}
  finally{await sdk.close();await rm(root,{recursive:true,force:true});}
 });
+
+it.each(['text_mismatch','missing_result','context_limit','tool_schema','sdk_execution'] as const)('keeps the safe SDK %s reason through buffered and streaming failures',async reason=>{
+ const root=await mkdtemp(join(tmpdir(),'sdk-diagnostic-'));
+ const sdk=new WorkBuddySDKProvider(root,async()=>({type:'workbuddy',access_token:'private-token'}),async input=>{
+  input.onDiagnostic?.({event:'failure',elapsedMs:1,reason,origin:'exception',fingerprint:'a'.repeat(64)});
+  throw new Error('PRIVATE_PROMPT Bearer private-token');
+ });
+ try{
+  for(const stream of [false,true]){
+   const response=await sdk.response('chosen','messages',{model:'workbuddy/test',messages:[{role:'user',content:'PRIVATE_PROMPT'}],stream},new AbortController().signal);
+   const wire=await response.text();
+   expect(wire).toContain(`workbuddy_${reason}`);
+   expect(wire).not.toMatch(/PRIVATE_PROMPT|private-token|fingerprint/);
+   if(!stream)expect(response.status).toBe(502);
+  }
+ }finally{await sdk.close();await rm(root,{recursive:true,force:true});}
+});

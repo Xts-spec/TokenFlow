@@ -16,6 +16,7 @@ import {PiTerminalLifecycle} from './pi-terminal-lifecycle.js';
 import {ClaudeTerminalLifecycle} from './claude-terminal-lifecycle.js';
 import {ClaudeDesktopConnections,type ClaudeDesktopOptions} from './claude-desktop.js';
 import {claudeDesktopModelLimit} from '../../../apps/shared/claude-desktop-models.js';
+import {removeKnownGatewayHelpNotice} from './gateway-help-notice.js';
 import { LocalMaintenance } from './local-maintenance.js';
 import { ApiSources, parseApiSourceInput, apiModelID } from './api-sources.js';
 import { detectProtocol, validateQuickSource, sourceNameFromURL } from './api-protocol.js';
@@ -965,11 +966,17 @@ export async function createDesktopService(options:ServiceOptions) {
     const bearer=clientCredential(req.headers).value;
     const client=gatewayKeys.authenticate(bearer);
     if(bearer && !same(bearer,options.token) && !client) return reply.code(401).send({error:{message:'Invalid or disabled API key',type:'authentication_error'}});
+    if(path!=='models'){
+      const compatible=removeKnownGatewayHelpNotice(req.body);
+      req.body=compatible.body;
+      if(compatible.changed)reply.header('X-Token-Flow-Compatibility','claude-code-help-v1');
+    }
     const fixed=client&&fixedRoutes.get(client.id);
     if(path!=='models'&&fixed?.modelAliases){
       const requested=z.object({model:z.string().min(1).max(300)}).parse(req.body).model;
       const alias=fixed.target==='workbuddy'||fixed.target==='workbuddy-ai'?requested.replace(/^custom-local:/,''):requested;
-      if(Object.hasOwn(fixed.modelAliases,alias))req.body={...(req.body as Record<string,unknown>),model:fixed.modelAliases[alias]};
+      const desktopAlias=fixed.target==='claude-desktop'&&!Object.hasOwn(fixed.modelAliases,alias)?alias.replace(/\[1m\]$/i,''):alias;
+      if(Object.hasOwn(fixed.modelAliases,desktopAlias))req.body={...(req.body as Record<string,unknown>),model:fixed.modelAliases[desktopAlias]};
     }
     if(path!=='models'&&fixed&&!fixed.selections&&client.sourceId===fixed.sourceId&&client.models.length===1&&client.models[0]===fixed.model){
       z.object({model:z.string().min(1).max(300)}).parse(req.body);

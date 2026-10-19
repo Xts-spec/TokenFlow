@@ -30,3 +30,8 @@ it.each(['workbuddy_sdk_failed','workbuddy_output_failed','workbuddy_timeout','a
  expect(upstreamError(502,JSON.stringify({error:{code,message:'private payload'}}))).toMatchObject({code});
  expect(upstreamError(502,JSON.stringify({error:{code,message:'private payload'}})).message).not.toContain('private');
 });
+
+it.each(['workbuddy_text_mismatch','workbuddy_model_mismatch','workbuddy_missing_result','workbuddy_context_limit','workbuddy_output_limit','workbuddy_tool_schema','workbuddy_tool_protocol','workbuddy_turn_limit','workbuddy_sdk_startup','workbuddy_sdk_execution','workbuddy_sdk_transport'])('retains diagnostic category %s without arbitrary error text',code=>{
+ const safe=upstreamError(502,JSON.stringify({error:{code,message:'PRIVATE_PROMPT Bearer private-token'}}));
+ expect(safe.code).toBe(code);expect(safe.message).not.toMatch(/PRIVATE_PROMPT|private-token/);
+});

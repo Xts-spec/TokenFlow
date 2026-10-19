@@ -1,3 +1,4 @@
+import {knownClaudeCodeHelpNotice as gatewayHelpNotice} from '../packages/core/src/gateway-help-notice.js';
 import {LocalMaintenance} from '../packages/core/src/local-maintenance.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
@@ -655,4 +656,26 @@ it('exports the saved API source name and platform model label through Agent men
  expect(config.modelPicker.options).toEqual([{model,label:'🍋 公司接口 · shared'}]);
  const listed=await service.app.inject({url:'/v1/models',headers:{...headers,authorization:`Bearer ${config.env.ANTHROPIC_AUTH_TOKEN}`}});
  expect(listed.statusCode,listed.body).toBe(200);expect(listed.json().data.find((m:{id:string})=>m.id===model)).toMatchObject({id:model,name:'🍋 公司接口 · shared',display_name:'🍋 公司接口 · shared'});
+});
+
+
+it.each(['messages','chat','responses'] as const)('removes the exact help notice at gateway ingress for a native %s API source',async protocol=>{
+ const {service,headers,add,calls}=await fixture();
+ const source=await add('Gateway notice normalization','notice-fixture-key',protocol);
+ const model=apiModelID(source.id,'shared');
+ const created=await service.app.inject({method:'POST',url:'/api/gateway-keys',headers,payload:{name:'ordinary gateway client',sourceId:source.id,models:[model]}});
+ expect(created.statusCode,created.body).toBe(200);
+ const client={...headers,authorization:`Bearer ${created.json().apiKey}`};
+ const user={role:'user',content:`User data ${gatewayHelpNotice}`};
+ const tools=protocol==='messages'?[{name:'read',description:gatewayHelpNotice,input_schema:{type:'object',properties:{}}}]:[{type:'function',...(protocol==='chat'?{function:{name:'read',description:gatewayHelpNotice,parameters:{type:'object',properties:{}}}}:{name:'read',description:gatewayHelpNotice,parameters:{type:'object',properties:{}}})}];
+ const payload=protocol==='messages'?{model,max_tokens:64,system:`RULES\n${gatewayHelpNotice}END`,messages:[user],tools}:protocol==='chat'?{model,messages:[{role:'system',content:`RULES\n${gatewayHelpNotice}END`},{role:'developer',content:`OTHER\n${gatewayHelpNotice}END`},user],tools}:{model,instructions:`RULES\n${gatewayHelpNotice}END`,input:[{role:'developer',content:[{type:'input_text',text:`OTHER\n${gatewayHelpNotice}END`}]},user],tools};
+ const result=await service.app.inject({method:'POST',url:`/v1/${protocol==='chat'?'chat/completions':protocol}`,headers:client,payload});
+ expect(result.statusCode,result.body).toBe(200);
+ expect(result.headers['x-token-flow-compatibility']).toBe('claude-code-help-v1');
+ const sent=calls.at(-1)!.body as any;
+ if(protocol==='messages')expect(sent.system).toBe('RULES\nEND');
+ else if(protocol==='chat'){expect(sent.messages[0].content).toBe('RULES\nEND');expect(sent.messages[1].content).toBe('OTHER\nEND');}
+ else {expect(sent.instructions).toBe('RULES\nEND');expect(sent.input[0].content[0].text).toBe('OTHER\nEND');}
+ expect((protocol==='responses'?sent.input:sent.messages).at(-1)).toEqual(user);
+ expect(sent.tools).toEqual(tools);
 });

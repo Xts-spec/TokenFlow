@@ -2,11 +2,13 @@ import {mkdtemp,mkdir,rm} from 'node:fs/promises';
 import {join} from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {z} from 'zod';
-import {runOfficialSDK,type SDKInput,type SDKResult} from '@token-flow/codebuddy-runtime';
+import {runOfficialSDK,type SDKInput,type SDKResult,type SDKFailureReason} from '@token-flow/codebuddy-runtime';
+import {upstreamError} from './upstream-errors.js';
 import {workbuddyStream} from './codebuddy-stream.js';
 import {parseCursorInput,cursorResponse} from './cursor-protocol.js';
 
 const credentialSchema=z.object({type:z.literal('workbuddy'),access_token:z.string().optional(),jwt:z.string().optional(),domain:z.string().optional(),disabled:z.boolean().optional()});
+const sdkFailureCodes:Partial<Record<SDKFailureReason,string>>={text_mismatch:'workbuddy_text_mismatch',model_mismatch:'workbuddy_model_mismatch',missing_result:'workbuddy_missing_result',context_limit:'workbuddy_context_limit',output_limit:'workbuddy_output_limit',tool_schema:'workbuddy_tool_schema',tool_protocol:'workbuddy_tool_protocol',turn_limit:'workbuddy_turn_limit',sdk_startup:'workbuddy_sdk_startup',sdk_execution:'workbuddy_sdk_execution',transport:'workbuddy_sdk_transport',timeout:'workbuddy_timeout'};
 export function workbuddySDKCredential(raw:unknown){
  const value=credentialSchema.parse(raw);const token=value.access_token||value.jwt;
  if(!token||value.disabled)throw new Error('WorkBuddy credential unavailable');
@@ -137,6 +139,7 @@ export class WorkBuddySDKProvider {
   const deadline=setTimeout(()=>{timedOut=true;controller.abort();},240000);
   let directory:string|undefined;
   let stage:'credential'|'setup'|'sdk'|'output'='credential';
+  let sdkFailureCode:string|undefined;
   try{
    const credential=workbuddySDKCredential(await this.credential(sourceId,input.model));
    if(controller.signal.aborted)throw new Error('Cancelled');
@@ -145,7 +148,7 @@ export class WorkBuddySDKProvider {
    const cwd=join(directory,'workspace'),configDir=join(directory,'config');await mkdir(cwd);await mkdir(configDir,{mode:0o700});
    const model=input.model.slice('workbuddy/'.length).toLowerCase();
    stage='sdk';
-   const result=await this.run({...credential,model,onText,prompt:input.prompt,systemPrompt:input.systemPrompt,images:input.images,tools:input.tools,parallelToolCalls:input.parallel_tool_calls,signal:controller.signal,cwd,configDir});
+   const result=await this.run({...credential,model,onText,prompt:input.prompt,systemPrompt:input.systemPrompt,images:input.images,tools:input.tools,parallelToolCalls:input.parallel_tool_calls,signal:controller.signal,cwd,configDir,onDiagnostic:event=>{if(event.event==='failure'&&event.reason)sdkFailureCode=sdkFailureCodes[event.reason];}});
    if(controller.signal.aborted)throw new Error('Cancelled');
    if(result.failed&&result.errorCode==='source_policy_blocked')return Response.json({error:{type:'invalid_request_error',code:'a2a_source_policy_blocked',message:'WorkBuddy SDK upstream rejected the invocation channel (11128).'}},{status:400});
    if(result.failed&&result.errorCode==='authentication_error')return Response.json({error:{type:'authentication_error',message:'WorkBuddy 登录已失效，请重新授权所选账号。'}},{status:401});
@@ -167,6 +170,7 @@ export class WorkBuddySDKProvider {
    // exposing tokens, filesystem paths, or arbitrary upstream exception text.
    if(!controller.signal.aborted&&stage==='sdk'&&error instanceof Error&&error.name==='SDKIdleError')return Response.json({error:{type:'timeout_error',code:'workbuddy_timeout',message:'WorkBuddy 模型响应长时间无进展，本次请求已停止，请稍后重试。'}},{status:504});
    if(timedOut)return Response.json({error:{type:'timeout_error',code:'workbuddy_timeout',message:'WorkBuddy 请求超过 240 秒等待时限，请稍后重试。'}},{status:504});
+   if(!controller.signal.aborted&&stage==='sdk'&&sdkFailureCode)return Response.json({error:upstreamError(502,JSON.stringify({error:{code:sdkFailureCode}}))},{status:sdkFailureCode==='workbuddy_timeout'?504:502});
    return Response.json({error:{type:controller.signal.aborted?'request_cancelled':'workbuddy_sdk_error',code:controller.signal.aborted?'request_cancelled':`workbuddy_${stage}_failed`,message:controller.signal.aborted?'请求已取消。':messages[stage]}},{status:controller.signal.aborted?499:502});
   }
   finally{clearTimeout(deadline);signal.removeEventListener('abort',abort);this.active.delete(controller);try{if(directory)await rm(directory,{recursive:true,force:true,maxRetries:5,retryDelay:100});}finally{this.pending.delete(pending);finish();}}

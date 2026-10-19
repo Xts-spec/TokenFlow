@@ -1,5 +1,6 @@
 import {createRequire} from 'node:module';
 import {resolve} from 'node:path';
+import {createHash} from 'node:crypto';
 import {query,createSdkMcpServer,tool} from '@tencent-ai/agent-sdk';
 import {fromJSONSchema,z} from 'zod';
 
@@ -18,6 +19,18 @@ function clientSchema(parameters){
 
 function sourceErrorCode(message){
  return /\b11128\b|unapproved channel/i.test(message)?'source_policy_blocked':/\b401\b|unauthorized|invalid.*token/i.test(message)?'authentication_error':/\b429\b|rate.limit/i.test(message)?'rate_limit_error':undefined;
+}
+
+// Inspect errors in memory; diagnostic events contain only known labels,
+// counters and a fingerprint, never arbitrary exception/request text.
+function failureDiagnostic(value,origin){
+ const details=[...new Set([value?.message,...(Array.isArray(value?.errors)?value.errors:[]),value?.error,value?.sdkCause].filter(v=>v!==undefined))];
+ const detail=details.slice(0,32).map(v=>typeof v==='string'?v:[v?.message,v?.type,v?.code].filter(v=>typeof v==='string'||typeof v==='number').join(' ')).join('\n').slice(0,65536);
+ const source=sourceErrorCode(detail);
+ const reason=source??(/text stream mismatch/.test(detail)?'text_mismatch':/model (?:mismatch|changed)/i.test(detail)?'model_mismatch':/context.{0,40}(?:length|window|limit|exceed)|(?:input|prompt).{0,30}(?:too long|too large)|too many tokens/i.test(detail)?'context_limit':/(?:max.?tokens|output.{0,20}(?:limit|budget)).{0,40}(?:exceed|invalid|maximum)/i.test(detail)?'output_limit':/(?:invalid|unsupported).{0,30}(?:tool|function).{0,20}schema|(?:tool|function).{0,20}schema.{0,30}(?:invalid|unsupported)/i.test(detail)?'tool_schema':/tool (?:delta|input|turn|proposal)|incomplete or unknown tool|single client tool limit/i.test(detail)?'tool_protocol':/max(?:imum)? turns|turns \(\d+\) exceeded/i.test(detail)?'turn_limit':/EOF|socket|ECONN|fetch failed|ENOTFOUND/i.test(detail)?'transport':/timeout|timed out/i.test(detail)?'timeout':value?.name==='CLIStartupError'?'sdk_startup':value?.name==='ExecutionError'?'sdk_execution':'unknown');
+ const mismatch=detail.match(/text stream mismatch: partial=(\d+), complete=(\d+)/);
+ const status=[value?.status,value?.statusCode].find(v=>Number.isInteger(v)&&v>=400&&v<=599)??(Number(detail.match(/\b(?:HTTP(?: status)?|status(?:Code)?|API Error)[: =]+(400|401|403|408|413|422|429|500|502|503|504)\b/i)?.[1])||undefined);
+ return {origin,reason,...(status?{status}:{}),...(details.length?{errorCount:details.length,fingerprint:createHash('sha256').update(detail).digest('hex')}:{}),...(mismatch?{partialChars:Number(mismatch[1]),completeChars:Number(mismatch[2])}:{}),...(['error_max_turns','error_during_execution','error_max_budget_usd'].includes(value?.subtype)?{subtype:value.subtype}:{})};
 }
 
 function reachedTurnLimit(value){
@@ -124,7 +137,7 @@ async function runSDKAttempt(input){
     }
     if(event.type==='content_block_stop'&&toolBlocks.has(event.index))toolBlocks.get(event.index).complete=true;
     if(event.type==='message_delta'){turnUsage=streamUsage(turnUsage,event.usage);if(['max_tokens','model_context_window_exceeded','refusal'].includes(event.delta?.stop_reason))turnTruncated=true;}
-    if(event.type==='error')throw new Error('SDK model stream reported an error');
+    if(event.type==='error')throw Object.assign(new Error('SDK model stream reported an error'),{sdkCause:event.error});
     // The CLI can continue inference after its deferred MCP callback and even
     // mislabel its one-turn limit as error_during_execution. The client owns
     // execution: hand off at the complete model turn, never at a partial block.
@@ -164,15 +177,18 @@ async function runSDKAttempt(input){
   const failed=!handedOff&&(!result||result.is_error&&!(calls.length&&reachedTurnLimit(result)));
   const errors=JSON.stringify(result?.errors??[]);
   const errorCode=sourceErrorCode(errors);
+  if(failed)diagnostic('failure',result?failureDiagnostic(result,'result'):{origin:'result',reason:'missing_result'});
   return {text,calls,usage,model:actualModel,failed,errorCode};
  }catch(error){
   if(stalled&&!input.signal.aborted)throw new SDKIdleError(!exposed&&!calls.length);
   const detail=String(error?.message??'');
-  diagnostic('exception',{toolCalls:calls.length,kind:['ExecutionError','CLIStartupError','AbortError','Error'].includes(error?.name)?error.name:'other',subtype:['error_max_turns','error_during_execution'].includes(error?.subtype)?error.subtype:undefined,status:Number(detail.match(/\b(400|401|403|408|429|500|502|503|504)\b/)?.[1])||undefined,category:/text stream mismatch/.test(detail)?'text_mismatch':/model mismatch/.test(detail)?'model_mismatch':/EOF|socket|ECONN|fetch failed/i.test(detail)?'transport':/timeout|timed out/i.test(detail)?'timeout':'other'});
+  const failure=failureDiagnostic(error,error?.sdkCause?'stream':'exception');
+  diagnostic('exception',{toolCalls:calls.length,kind:['ExecutionError','CLIStartupError','AbortError','Error'].includes(error?.name)?error.name:'other',subtype:['error_max_turns','error_during_execution'].includes(error?.subtype)?error.subtype:undefined,status:failure.status,category:/text stream mismatch/.test(detail)?'text_mismatch':/model mismatch/.test(detail)?'model_mismatch':/EOF|socket|ECONN|fetch failed/i.test(detail)?'transport':/timeout|timed out/i.test(detail)?'timeout':'other'});
   // The SDK throws ExecutionError for upstream HTTP failures instead of always
   // yielding a result.errors item. Both channels must retain source semantics.
   if(error?.name==='ExecutionError'&&reachedTurnLimit(error)&&calls.length&&!input.signal.aborted)return {text,calls,usage,model:actualModel,failed:false};
-  const errorCode=error?.name==='ExecutionError'?sourceErrorCode(String(error.message)):undefined;
+  if(!input.signal.aborted)diagnostic('failure',failure);
+  const errorCode=(error?.name==='ExecutionError'||error?.sdkCause)?['source_policy_blocked','authentication_error','rate_limit_error'].find(code=>code===failure.reason):undefined;
   if(!errorCode||input.signal.aborted)throw error;
   return {text,calls:[],usage,model:actualModel,failed:true,errorCode};
  }finally{

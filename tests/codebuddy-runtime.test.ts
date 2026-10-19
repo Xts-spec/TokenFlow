@@ -242,3 +242,51 @@ it('passes the account endpoint to CLI initialization instead of relying on the 
  // is required for the first remote config request, not just later inference.
  expect(JSON.parse(sdk.query.mock.calls[0]![0].options.env.ACC_PRODUCT_CONFIG_V3)).toEqual({endpoint:'https://www.workbuddy.ai'});
 });
+
+it('classifies policy rejection from the full SDK error list rather than its first message',async()=>{
+ sdk.query.mockImplementation(()=>(async function*(){throw Object.assign(new Error('Execution failed'),{name:'ExecutionError',errors:['Execution failed','403 unapproved channel (11128) Bearer private-token']});})());
+ const result=await runOfficialSDK({token:'fixture',region:'china',model:'test',prompt:'hello',tools:[],signal:new AbortController().signal,cwd:'/tmp',configDir:'/tmp'});
+ expect(result).toMatchObject({failed:true,errorCode:'source_policy_blocked'});
+ expect(JSON.stringify(result)).not.toContain('private-token');
+});
+it('retains source semantics and safe diagnostics for an error inside a model stream',async()=>{
+ const diagnostics:unknown[]=[];
+ sdk.query.mockImplementation(()=>(async function*(){yield {type:'stream_event',event:{type:'error',error:{type:'invalid_request_error',message:'403 unapproved channel (11128) Bearer private-token'}}};})());
+ const result=await runOfficialSDK({token:'fixture',region:'china',model:'test',prompt:'private-prompt',tools:[],onDiagnostic:event=>diagnostics.push(event),signal:new AbortController().signal,cwd:'/tmp',configDir:'/tmp'});
+ expect(result).toMatchObject({failed:true,errorCode:'source_policy_blocked'});
+ expect(diagnostics).toContainEqual(expect.objectContaining({event:'failure',reason:'source_policy_blocked',origin:'stream'}));
+ expect(JSON.stringify({result,diagnostics})).not.toMatch(/private-token|private-prompt/);
+});
+it('reports structural text-mismatch evidence without copying model text into diagnostics',async()=>{
+ const diagnostics:unknown[]=[];
+ sdk.query.mockImplementation(()=>(async function*(){
+  yield {type:'stream_event',event:{type:'message_start',message:{model:'test'}}};
+  yield {type:'stream_event',event:{type:'content_block_start',index:0,content_block:{type:'text'}}};
+  yield {type:'stream_event',event:{type:'content_block_delta',index:0,delta:{type:'text_delta',text:'private-partial'}}};
+  yield {type:'assistant',message:{model:'test',content:[{type:'text',text:'private-complete'}]}};
+ })());
+ await expect(runOfficialSDK({token:'fixture',region:'china',model:'test',prompt:'hello',tools:[],onDiagnostic:event=>diagnostics.push(event),signal:new AbortController().signal,cwd:'/tmp',configDir:'/tmp'})).rejects.toThrow('text stream mismatch');
+ expect(diagnostics).toContainEqual(expect.objectContaining({event:'failure',reason:'text_mismatch',origin:'exception',partialChars:15,completeChars:16}));
+ expect(JSON.stringify(diagnostics)).not.toMatch(/private-|hello/);
+});
+it('reports a missing SDK result separately from a generic failed result',async()=>{
+ const diagnostics:unknown[]=[];
+ sdk.query.mockImplementation(()=>(async function*(){})());
+ const result=await runOfficialSDK({token:'fixture',region:'china',model:'test',prompt:'hello',tools:[],onDiagnostic:event=>diagnostics.push(event),signal:new AbortController().signal,cwd:'/tmp',configDir:'/tmp'});
+ expect(result.failed).toBe(true);
+ expect(diagnostics).toContainEqual(expect.objectContaining({event:'failure',reason:'missing_result',origin:'result'}));
+});
+
+it('counts the real SDK errors array without duplicating its first-message alias',async()=>{
+ const diagnostics:unknown[]=[];
+ sdk.query.mockImplementation(()=>(async function*(){throw Object.assign(new Error('Execution failed'),{name:'ExecutionError',errors:['Execution failed','context_length_exceeded private-prompt']});})());
+ await expect(runOfficialSDK({token:'fixture',region:'china',model:'test',prompt:'private-prompt',tools:[],onDiagnostic:event=>diagnostics.push(event),signal:new AbortController().signal,cwd:'/tmp',configDir:'/tmp'})).rejects.toThrow();
+ expect(diagnostics).toContainEqual(expect.objectContaining({event:'failure',reason:'context_limit',errorCount:2}));
+ expect(JSON.stringify(diagnostics)).not.toContain('private-prompt');
+});
+it('does not diagnose an intentional SDK turn-limit handoff as a failed request',async()=>{
+ const diagnostics:unknown[]=[];
+ sdk.query.mockImplementation(()=>(async function*(){await sdk.callbacks[0]!({});throw Object.assign(new Error('Maximum turns reached'),{name:'ExecutionError',subtype:'error_max_turns',errors:['Maximum turns reached']});})());
+ const result=await runOfficialSDK({token:'fixture',region:'china',model:'test',prompt:'hello',tools:[{name:'read',parameters:{type:'object'}}],onDiagnostic:event=>diagnostics.push(event),signal:new AbortController().signal,cwd:'/tmp',configDir:'/tmp'});
+ expect(result.failed).toBe(false);expect(diagnostics).not.toContainEqual(expect.objectContaining({event:'failure'}));
+});
