@@ -339,3 +339,10 @@ it('retries Cursor quota and catalog reads twice without generating a model resp
  const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();
  expect(sdk.models).toHaveBeenCalledOnce();expect(fetcher).toHaveBeenCalledTimes(2);expect(sdk.quota).toHaveBeenCalledTimes(3);expect(provider.snapshot().models[0].id).toBe('cursor/recovered');expect(sdk.create).not.toHaveBeenCalled();
 },10000);
+
+it('reports the actual serialized SDK model-not-found failure without retryable 502 or raw details',async()=>{
+ const {root,secrets}=await setup();await secrets.set('cursor-account',JSON.stringify({apiKey:'fixture'}));const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();
+ sdk.create.mockResolvedValue({close:sdk.close,send:async()=>({cancel:sdk.cancel,wait:async()=>({status:'error',error:'model not found: private upstream model details'})})});
+ const response=await provider.response('messages',{model:'cursor/fixture-model',messages:[{role:'user',content:'hello'}]},new AbortController().signal);
+ expect(response.status).toBe(400);const raw=await response.text();expect(JSON.parse(raw).error.code).toBe('cursor_model_not_found');expect(raw).not.toContain('private');
+});

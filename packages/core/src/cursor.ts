@@ -160,7 +160,7 @@ class CursorAccount {
     const stopping=this.active.cancel();for(const release of releases.splice(0))release();await stopping;result=await wait;
    }else result=outcome;
    if(signal.aborted||this.closed||this.credential?.disabled||this.credential?.apiKey!==credential.apiKey)return errorResponse('请求已取消',499,'cursor_cancelled');
-   if(!calls.length&&result.status!=='finished'){const cause=cursorFailure(result.error);return errorResponse(cause.message,502,cause.code);}
+   if(!calls.length&&result.status!=='finished'){const cause=cursorFailure(result.error);return errorResponse(cause.message,cause.status,cause.code);}
    if(input.required&&!calls.length)return errorResponse('Cursor 未按要求生成工具调用，请重试或选择其他模型。',502,'cursor_tool_required');
    let tokens:TokenUsage|undefined=result.usage??this.active.usage;
    // Remember only the explicit unsupported-feature response, per credential.
@@ -181,7 +181,7 @@ class CursorAccount {
    const response=cursorResponse(path,input.model,calls.length?'':result.result??'',usage,input.stream,calls);
    if(input.limit)response.headers.set('X-Token-Flow-Output-Limit','advisory; Cursor SDK does not expose a hard output token limit');
    return response;
-  }catch(error){const cause=cursorFailure(error);return errorResponse(cause.message,signal.aborted?499:502,signal.aborted?'cursor_cancelled':cause.code);}
+  }catch(error){const cause=cursorFailure(error);return errorResponse(cause.message,signal.aborted?499:cause.status,signal.aborted?'cursor_cancelled':cause.code);}
   finally{signal.removeEventListener('abort',cancel);for(const release of releases)release();await cleanup();this.active=undefined;this.generating=false;}
  }
 }
@@ -260,12 +260,13 @@ async function bounded<T>(promise:Promise<T>,ms:number):Promise<T>{
 function cursorFailure(error:unknown){
  // RunError retains only code/message; SDK Error prototypes and HTTP status
  // are lost when a failed run crosses the SDK's event/storage boundary.
- const e=(error??{}) as {name?:string;status?:number;code?:string;message?:string};
+ const e=(typeof error==='string'?{message:error}:error??{}) as {name?:string;status?:number;code?:string;message?:string};
  const upstreamCode=e.code?.toLowerCase()??'';
  const auth=e.status===401||e.name==='AuthenticationError'||['unauthenticated','unauthorized','not_logged_in','invalid_auth_id','agent_requires_login','auth_token_not_found','auth_token_expired'].includes(upstreamCode);
  const blocked=auth||e.status===403||['plan_required','permission_denied','not_high_enough_permissions'].includes(upstreamCode);
  const network=safeFailure(error instanceof Error?error:e.message);
- const code=upstreamCode==='plan_required'?'cursor_plan_required':auth?'cursor_authentication_failed':blocked?'cursor_permission_denied':
+ const modelMissing=upstreamCode==='model_not_found'||/\bmodel (?:was |is )?not found\b/i.test(e.message??'');
+ const code=modelMissing?'cursor_model_not_found':upstreamCode==='plan_required'?'cursor_plan_required':auth?'cursor_authentication_failed':blocked?'cursor_permission_denied':
   e.status===429||e.name==='RateLimitError'||['resource_exhausted','rate_limited','rate_limited_changeable','openai_rate_limit_exceeded','generic_rate_limit_exceeded','api_key_rate_limit'].includes(upstreamCode)?'cursor_rate_limited':
   ['invalid_argument','bad_request','bad_model_name'].includes(upstreamCode)||e.name==='ConfigurationError'?'cursor_request_rejected':
   ['deadline_exceeded','timeout'].includes(upstreamCode)||network.code==='timeout'?'cursor_timeout':
@@ -273,7 +274,7 @@ function cursorFailure(error:unknown){
   ['connection_refused','connection_closed','proxy','proxy_auth'].includes(network.code)?'cursor_network_error':
   upstreamCode==='unavailable'?'cursor_upstream_unavailable':upstreamCode==='internal'?'cursor_upstream_internal':
   e.name==='TypeError'||e.name==='NetworkError'?'cursor_network_error':process.env.CURSOR_BACKEND_URL?'cursor_backend_override':'cursor_upstream_error';
- return {auth,blocked,code,message:upstreamError(502,JSON.stringify({error:{code}})).message};
+ return {auth,blocked,code,status:modelMissing?400:502,message:upstreamError(502,JSON.stringify({error:{code}})).message};
 }
 
 function containsTransportPath(value:unknown,root:string):boolean {

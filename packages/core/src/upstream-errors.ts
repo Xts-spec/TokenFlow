@@ -2,6 +2,7 @@ import {safeFailure} from './login/diagnostics.js';
 // Only known categories cross the gateway boundary. Never return raw provider
 // messages: they can contain request content or credentials.
 const known:Record<string,{message:string;type:string;wireMessage?:string}>={
+ cursor_model_not_found:{type:'invalid_request_error',message:'Cursor 上游找不到所选模型（model not found）。请刷新该来源的模型列表，或选择该账号实际可用的其他模型。'},
  cursor_plan_required:{type:'authentication_error',message:'Cursor 官方返回 plan_required：当前账号套餐不支持此 API，请在官方确认 Pro 或团队套餐后刷新。'},
  cursor_authentication_failed:{type:'authentication_error',message:'Cursor 授权已失效，请重新连接账号。'},
  cursor_permission_denied:{type:'authentication_error',message:'Cursor API 权限不足，请在官方账号或团队设置中确认权限。'},
