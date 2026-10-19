@@ -19,6 +19,14 @@ it('recovers an official opaque window from exact local history, encrypts its ca
  await expect(f.migration.recover({type:'compaction',encrypted_content:'unknown'},[])).rejects.toThrow('无法恢复');
  expect(await readFile(f.file,'utf8')).toBe(rollout('official-ciphertext'));
 });
+it('never merges a neighboring conversation when recovering an exact checkpoint',async()=>{
+ const f=await fixture();await writeFile(f.file,rollout('wanted'));
+ const neighbor=join(f.file.slice(0,f.file.lastIndexOf('/')),'rollout-other.jsonl');
+ const other=rollout('other-token').replaceAll('Preserve requirements','UNRELATED_CONVERSATION');
+ await writeFile(neighbor,other);
+ expect(await f.migration.recover({type:'compaction',encrypted_content:'wanted'},[])).toEqual(history);
+ expect(await readFile(neighbor,'utf8')).toBe(other);
+});
 it('blocks live rollout rewrites, migrates legacy gateway checkpoints with backups, and is idempotent',async()=>{
  const f=await fixture();const scope={owner:'old-key',source:'qoder-account',model:'qoder/m'};
  const token=f.context.encodeCheckpoint(history,scope);const original=rollout(token);await writeFile(f.file,original);

@@ -40,7 +40,7 @@ it('gateway authenticates and pins compaction, charges summary usage, resumes hi
   expect(next.statusCode).toBe(200);expect(calls.at(-1)?.body).not.toHaveProperty('previous_response_id');expect(JSON.stringify(calls.at(-1)?.body.input)).toContain('Inspect next.');
   const keys=await GatewayKeys.open(root);expect(keys.authenticate(apiKey)).toMatchObject({usedTokens:30,unmeteredRequests:0,pendingRequests:0});
   const count=calls.length;
-  const bad=await service.app.inject({method:'POST',url:'/v1/responses/compact',headers,payload:{model:'codex/model',input:transcript}});expect(bad.statusCode).toBe(403);expect(calls).toHaveLength(count);
+  const bad=await service.app.inject({method:'POST',url:'/v1/responses/compact',headers,payload:{model:'codex/model',input:transcript}});expect(bad.statusCode).toBe(403);expect(bad.json().error.message).toContain('codex/model');expect(calls).toHaveLength(count);
  }
  const native=await service.app.inject({method:'POST',url:'/v1/responses/compact',headers:admin,payload:{model:'codex/model',input:transcript}});expect(native.statusCode).toBe(200);expect(calls.at(-1)?.path).toBe('/v1/responses/compact');
 });

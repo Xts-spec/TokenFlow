@@ -124,10 +124,10 @@ it('fits JSON-escaped summaries into the retained-context budget before inferenc
  const input=[...Array.from({length:70},()=>({role:'assistant',content:'historical work '.repeat(1000)})),{role:'user',content:'Current constraint: '+'x'.repeat(118*1024)},...Array.from({length:7},()=>({role:'assistant',content:'recent'}))];
  const migration={scope:{owner:'portable',source:'portable',model:'portable'},recover:async()=>[]};
  const response=await context.response('responses',{model:'qoder/m',input,store:false},'a','s',async(_p,b)=>{
-  if(!b.instructions){expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThan(128*1024);return Response.json({status:'completed',output:[],usage});}
+  if(!b.instructions){expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThan(151*1024);return Response.json({status:'completed',output:[],usage});}
   return stream(++calls<4?'"quoted code"\n'.repeat(600):'Checkpoint: old work completed; preserve current constraint.');
  },migration);
- expect(response.ok).toBe(true);expect(calls).toBeGreaterThanOrEqual(4);
+ expect(response.ok).toBe(true);expect(calls).toBeGreaterThanOrEqual(3);
 });
 it('keeps store:false exported-key summaries off disk and prunes only derived caches',async()=>{
  const {root,context}=await setup();
@@ -140,4 +140,38 @@ it('keeps store:false exported-key summaries off disk and prunes only derived ca
  await GatewayContext.open(root);
  expect((await readdir(directory)).filter(name=>name.startsWith('summary-'))).toHaveLength(512);
  expect(await readFile(join(directory,'resp_tf_preserved'),'utf8')).toBe('original response');
+});
+
+it.each(['tools','instructions','developer','user'])('forwards a fresh managed Codex request with large %s without recovery or paid compaction',async field=>{
+ const {context}=await setup();const input:Record<string,unknown>[]=[{role:'user',content:'Hello'}];
+ const body:Record<string,unknown>={};const large='Static context '.repeat(12000);
+ if(field==='tools')body.tools=[{type:'function',name:'read',description:large,parameters:{type:'object'}}];
+ if(field==='instructions')body.instructions=large;
+ if(field==='developer')input.unshift({role:'developer',content:large});
+ if(field==='user')input[0].content=large;
+ let calls=0;let recoveries=0;let compactions=0;
+ const response=await context.response('responses',{model:'cursor/test',...body,input,store:false},'a','s',async(_p,b)=>{
+  calls++;expect(b.input).toEqual(input);for(const key of Object.keys(body))expect(b[key]).toEqual(body[key]);
+  return Response.json({status:'completed',output:[],usage});
+ },{scope:{owner:'portable',source:'portable',model:'portable'},recover:async()=>{recoveries++;throw Error('No checkpoint to recover');}},{onCompaction:()=>{compactions++;}});
+ expect(response.ok).toBe(true);expect(calls).toBe(1);expect(recoveries).toBe(0);expect(compactions).toBe(0);
+});
+
+it('compacts accumulated history with large fixed tools and preserves the new request',async()=>{
+ const {context}=await setup();const tools=[{type:'function',name:'read',description:'tool schema '.repeat(18000)}];
+ const input=[{role:'developer',content:'Keep instructions verbatim.'},...Array.from({length:30},()=>({role:'assistant',content:'Old completed work '.repeat(2000)})),{role:'user',content:'Continue current task.'}];
+ let summaries=0;let answers=0;
+ await context.response('responses',{model:'cursor/test',input,tools,store:false},'a','s',async(_p,b)=>{
+  if(b.instructions){summaries++;return stream('Old work finished. Check tests next.');}
+  answers++;expect(b.tools).toEqual(tools);expect(b.input).toContainEqual(input[0]);expect(b.input).toContainEqual(input.at(-1));expect(JSON.stringify(b.input).length).toBeLessThan(32*1024);
+  return Response.json({status:'completed',output:[],usage});
+ },{scope:{owner:'portable',source:'portable',model:'portable'},recover:async()=>{throw Error('Must not recover another conversation');}});
+ expect(summaries).toBeGreaterThan(0);expect(answers).toBe(1);
+});
+
+it('does not repeatedly compact a short checkpoint just because fixed context is large',async()=>{
+ const {context}=await setup();const input=[{role:'developer',content:'Fixed instructions '.repeat(10000)},{role:'assistant',content:'Historical task checkpoint: '+'x'.repeat(5000)},...Array.from({length:8},(_,i)=>({role:i%2?'assistant':'user',content:'short turn '+i}))];
+ let compactions=0;let calls=0;
+ await context.response('responses',{model:'cursor/test',input,store:false},'a','s',async(_p,b)=>{calls++;expect(b.input).toEqual(input);return Response.json({status:'completed',output:[],usage});},{scope:{owner:'portable',source:'portable',model:'portable'},recover:async()=>[]},{onCompaction:()=>compactions++});
+ expect(calls).toBe(1);expect(compactions).toBe(0);
 });

@@ -3,8 +3,8 @@
 type Item=Record<string,any>;
 export const SUMMARY_CHUNK_BYTES=48*1024;
 export const SUMMARY_MAX_CALLS=32;
-// Conservative gateway budget for providers without verified tokenizers/model
-// metadata. This is an input byte bound, not a claim about the model's capacity.
+// Baseline history-reduction target. GatewayContext expands it for fixed
+// instructions/tools and the current user request; this is not a model limit.
 export const CONTEXT_INPUT_BYTES=128*1024;
 export const CONTEXT_TRIGGER_BYTES=96*1024;
 const object=(v:unknown):v is Item=>!!v&&typeof v==='object'&&!Array.isArray(v);

@@ -17,6 +17,18 @@ const PREFIX = 'tfctx1.';
 const zeroUsage = {input_tokens:0, output_tokens:0, total_tokens:0,input_tokens_details:{cached_tokens:0,cache_write_tokens:0},output_tokens_details:{reasoning_tokens:0}};
 const object = (value:unknown):value is Item => !!value && typeof value==='object' && !Array.isArray(value);
 const size = (value:unknown) => Buffer.byteLength(JSON.stringify(value));
+// This is a history-reduction target, not the provider's context limit. Fixed
+// instructions/tools and the current user request cannot be summarized away.
+// Leave checkpoint room around them instead of rejecting a fresh conversation.
+function fixedContext(body:RequestBody,input:Item[]){
+ let lastUser:Item|undefined;for(let index=input.length-1;index>=0;index--)if(input[index]!.role==='user'){lastUser=input[index];break;}
+ const fixed=input.filter(item=>['system','developer'].includes(String(item.role))||item===lastUser);
+ return size({input:fixed,instructions:body.instructions,tools:body.tools});
+}
+function contextBudget(body:RequestBody,input:Item[]){
+ return Math.max(CONTEXT_INPUT_BYTES,fixedContext(body,input)+32*1024);
+}
+
 export class GatewayContextError extends Error {
  constructor(message:string, readonly statusCode=400, readonly usage?:unknown, readonly code='context_error',readonly unmetered=false) {super(message);}
 }
@@ -167,21 +179,27 @@ export class GatewayContext {
    // upper bound so we compact early rather than silently exceed the threshold.
    // Static tool definitions cannot be reduced by summarizing history. Avoid
    // compacting a tiny conversation every turn just because its tools are big.
-   const metadata=size({instructions:body.instructions,tools:body.tools});
-   const threshold=migration&&body.context_management==null?Math.max(16*1024,CONTEXT_TRIGGER_BYTES-metadata):Number(rules[0].compact_threshold);
+   const automatic=migration&&body.context_management==null;
+   const fixed=fixedContext(body,input);
+   const budget=contextBudget(body,input);
+   const historyBytes=size({input,instructions:body.instructions,tools:body.tools})-fixed;
+   const threshold=automatic?Math.max(16*1024,budget-(CONTEXT_INPUT_BYTES-CONTEXT_TRIGGER_BYTES)-fixed):Number(rules[0].compact_threshold);
    // A checkpoint plus a short recent tail may still exceed the soft trigger.
    // Wait for meaningful old work to accumulate instead of summarizing that
    // checkpoint to the same size on every subsequent tool turn.
    const oldWork=input.slice(0,Math.max(0,input.length-8)).filter(item=>!['user','system','developer'].includes(String(item.role)));
-   const worthwhile=body.context_management!=null||size(oldWork)>=4096||size({input,instructions:body.instructions,tools:body.tools})>CONTEXT_INPUT_BYTES;
-   if(size(input)>=threshold&&worthwhile){
+   const olderUsers=input.slice(0,Math.max(0,input.length-8)).filter(item=>item.role==='user');
+   const hasWork=input.some(item=>!['user','system','developer'].includes(String(item.role)));
+   const worthwhile=body.context_management!=null||size(oldWork)>=4096||(hasWork&&size(olderUsers)>16*1024);
+   if((automatic?historyBytes:size(input))>=threshold&&worthwhile){
     const compacted=await compact(input);if(!compacted.ok)return compacted;
     const result=await json(compacted);checkpoint=items(result.output).at(-1);summaryUsage=result.usage;
     input=this.unseal(checkpoint?.encrypted_content,scope);
    }
   }
-  if(migration&&size({input,instructions:body.instructions,tools:body.tools})>CONTEXT_INPUT_BYTES)throw new GatewayContextError('压缩后当前输入仍超过网关保守预算；请缩短本轮附件、工具定义或生成交接摘要。原会话未修改。',413,summaryUsage,'context_budget_exceeded');
+  if(migration&&checkpoint&&size({input,instructions:body.instructions,tools:body.tools})>contextBudget(body,input))throw new GatewayContextError('历史压缩后仍超过本次历史预算；请减少最近的工具输出或生成交接摘要。原会话未修改。',413,summaryUsage,'context_budget_exceeded');
   const upstream:RequestBody={...body,input};delete upstream.previous_response_id;delete upstream.context_management;
+  if(size(upstream)>LIMIT)throw new GatewayContextError('请求正文超过网关 16 MiB 安全上限；请缩短本轮附件或工具定义。',413,summaryUsage??zeroUsage,'context_request_too_large');
   let response:Response;
   try{response=await send('responses',upstream);}catch(error){
    if(!checkpoint)throw error;
@@ -253,6 +271,7 @@ export class GatewayContext {
  private async compact(body:RequestBody,input:Item[],scope:ContextScope,send:Send,cacheScope:ContextScope,report:CompactionReport,persistSummaries:boolean) {
   // Keep recent user turns; long tool loops may compact older exchanges within
   // a turn. Never cut across an unfinished tool call.
+  const budget=contextBudget(body,input);
   const pending=new Set<string>();const boundaries:number[]=[];const safeCuts:number[]=[];
   for(let i=0;i<input.length;i++){
    const item=input[i]!;
@@ -276,7 +295,7 @@ export class GatewayContext {
   let lastUser=-1;for(let index=input.length-1;index>=0;index--)if(input[index]!.role==='user'){lastUser=index;break;}
   const retainedBytes=(index:number)=>size({input:[...input.slice(0,index).filter(item=>['system','developer'].includes(String(item.role))),...input.slice(index)],instructions:body.instructions,tools:body.tools});
   for(const index of safeCuts.filter(index=>index>cut&&index<=lastUser)){
-   if(retainedBytes(cut)<=CONTEXT_INPUT_BYTES-24*1024)break;
+   if(retainedBytes(cut)<=budget-24*1024)break;
    cut=index;
   }
   const prefix=input.slice(0,cut);const tail=input.slice(cut);
@@ -290,7 +309,7 @@ export class GatewayContext {
   const keepUsers=size(users)<=16*1024;
   const preserved=prefix.filter(item=>instructionSet.has(item)||item===input[lastUser]||(keepUsers&&item.role==='user'));
   const retained=size({input:[...preserved,...tail],instructions:body.instructions,tools:body.tools});
-  const summaryLimit=Math.min(16*1024,CONTEXT_INPUT_BYTES-retained-1024);
+  const summaryLimit=Math.min(16*1024,budget-retained-1024);
   if(summaryLimit<4096&&prefix.length>preserved.length)throw new GatewayContextError('当前指令或最近消息超过网关保守预算，无法安全压缩；原会话未修改。',413,zeroUsage,'context_budget_exceeded');
   let compacted=input;let usage:unknown=zeroUsage;
   if(prefix.length>preserved.length){

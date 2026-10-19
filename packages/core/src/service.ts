@@ -50,7 +50,7 @@ import { z } from 'zod';
 import { createServer } from './server.js';
 import { ResponsesProvider, providerSchema, defaultProvider, type ProviderConfig, type ProbeResult } from './providers.js';
 import { GatewayActivity, observeUsage } from './gateway-activity.js';
-import {GatewayTraces,requestTrace} from './gateway-traces.js';
+import {GatewayTraces,requestTrace,redactTraceText} from './gateway-traces.js';
 import {nativeActivityTrace,nativeActivitySummary} from './activity-traces.js';
 import type {ResponseObservation} from './gateway-observation.js';
 import { UsageLedger } from './usage-ledger.js';
@@ -1031,7 +1031,11 @@ export async function createDesktopService(options:ServiceOptions) {
       }
       if(!allowsProtocol(client.agents,path)){record(403);return reply.code(403).send({error:{message:'This API key does not allow this agent protocol',type:'agent_not_allowed'}});}
       const model=z.object({model:z.string().min(1).max(300)}).parse(req.body).model;
-      if(!client.models.includes(model)){record(403);return reply.code(403).send({error:{message:`此 Key 未授权请求模型。请将主模型、辅助模型及项目级配置统一为已授权的模型 ID（含提供商前缀）：${client.models.slice(0,5).join('、')||'暂无授权模型'}。无需重新登录厂商账号。`,type:'model_not_allowed'}});}
+      if(!client.models.includes(model)){
+        const requested=redactTraceText(model).replace(/[\x00-\x1f\x7f]/g,'');
+        callError={code:'model_not_allowed',message:`此 Key 未授权请求模型「${requested}」。请在当前对话重新选择已授权模型；同时检查主模型、辅助模型及项目级配置。已授权模型 ID（含提供商前缀）：${client.models.join('、')||'暂无授权模型'}。无需重新登录厂商账号。`};
+        record(403);return reply.code(403).send({error:{message:callError.message,type:'model_not_allowed'}});
+      }
       if(!selectedAuth&&!available.some(item=>item.id===model)){record(503);return reply.code(503).send({error:{message:'Model is currently unavailable; check the provider account and gateway',type:'model_unavailable'}});}
       if(path!=='messages/count_tokens'){
         try{reservation=await gatewayKeys.reserve(client.id,model,path);}catch(error){const code=(error as {statusCode?:number}).statusCode??503;record(code);return reply.code(code).send({error:{message:error instanceof Error?error.message:'Quota check failed',type:'key_quota_error'}});}
