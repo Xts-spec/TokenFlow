@@ -321,3 +321,21 @@ it('replaces an expired Cursor SDK grant on explicit local import and retains it
  const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();await provider.importLocal();expect(sdk.localCreate).toHaveBeenCalledOnce();expect(provider.snapshot().accounts).toHaveLength(1);expect(provider.snapshot().models).toHaveLength(1);
  expect([...values.entries()].filter(([name])=>name.startsWith('grant-')).some(([,raw])=>raw.includes('expired-private'))).toBe(true);
 });
+
+it.each([
+ ['resource_exhausted','cursor_rate_limited'],['permission_denied','cursor_permission_denied'],
+ ['invalid_argument','cursor_request_rejected'],['unavailable','cursor_upstream_unavailable'],
+ ['internal','cursor_upstream_internal'],['deadline_exceeded','cursor_timeout'],['unauthenticated','cursor_authentication_failed'],
+])('classifies SDK RunError code %s after its name and status have been stripped',async(code,expected)=>{
+ const {root,secrets}=await setup();await secrets.set('cursor-account',JSON.stringify({apiKey:'fixture'}));const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();
+ sdk.create.mockResolvedValue({close:sdk.close,send:async()=>({cancel:sdk.cancel,wait:async()=>({status:'error',error:{code,message:'private upstream detail'}})})});
+ const response=await provider.response('responses',{model:'cursor/fixture-model',input:'hello'},new AbortController().signal);
+ const text=await response.text();expect(JSON.parse(text).error.code).toBe(expected);expect(text).not.toContain('private');
+});
+it('retries Cursor quota and catalog reads twice without generating a model response',async()=>{
+ const {root,secrets}=await setup();await secrets.set('cursor-account',JSON.stringify({apiKey:'fixture'}));
+ sdk.models.mockRejectedValue(new TypeError('fetch failed'));const fetcher=vi.spyOn(globalThis,'fetch').mockResolvedValueOnce(new Response(null,{status:503})).mockResolvedValueOnce(Response.json({items:[{id:'recovered',displayName:'Recovered'}]}));
+ sdk.quota.mockRejectedValueOnce(Object.assign(new Error('temporary'),{status:503})).mockRejectedValueOnce(new TypeError('fetch failed')).mockResolvedValue({plan:'Pro',windows:[]});
+ const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();
+ expect(sdk.models).toHaveBeenCalledOnce();expect(fetcher).toHaveBeenCalledTimes(2);expect(sdk.quota).toHaveBeenCalledTimes(3);expect(provider.snapshot().models[0].id).toBe('cursor/recovered');expect(sdk.create).not.toHaveBeenCalled();
+},10000);

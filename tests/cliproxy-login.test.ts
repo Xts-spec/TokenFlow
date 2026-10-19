@@ -454,3 +454,14 @@ it.each(['timeout','tls'])('distinguishes an authorization %s failure from a sto
  });
  try{const state=await manager.login('workbuddy-overseas');expect(state.state).toBe('running');expect(state.login?.status).toBe('failed');expect(state.login?.message).toContain(kind==='timeout'?'超时':'TLS');expect(state.login?.message).not.toContain('无法连接 Local Agent');expect(state.login?.message).not.toContain('secret-token');}finally{mock.mockRestore();}
 });
+
+it('retries an unavailable official catalog twice, forcing a fresh lookup after the cached failure',async()=>{
+ const {manager,root}=await setup();await mkdir(join(root,'cliproxy'),{recursive:true});
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'kimi.json',provider:'kimi',status:'active',models:['current']}]));
+ const original=(manager as any).request.bind(manager);const paths:string[]=[];
+ vi.spyOn(manager as any,'request').mockImplementation(async (...args:any[])=>{
+  const value=await original(...args);if(String(args[0]).startsWith('/auth-files/models')){paths.push(args[0]);return {...value,catalog:{status:paths.length<3?'unavailable':'live'}};}return value;
+ });
+ await manager.start();expect(paths).toHaveLength(3);expect(paths.slice(1).every(path=>path.endsWith('refresh=true'))).toBe(true);
+ expect(manager.snapshot().accounts[0].models).toEqual(['kimi/current']);expect(manager.snapshot().accounts[0].modelError).toBeUndefined();
+});

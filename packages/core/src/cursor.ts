@@ -1,3 +1,6 @@
+import {upstreamError} from './upstream-errors.js';
+import {safeFailure} from './login/diagnostics.js';
+import {retryOfficialRead,OfficialReadTransportError,refreshNetworkHint} from './official-refresh.js';
 import {CredentialHistory} from './credential-history.js';
 import {credentialEmail,credentialFingerprint,compareCredentials,credentialPreference} from './credential-identity.js';
 import { createHash,randomUUID } from 'node:crypto';
@@ -28,7 +31,7 @@ export const cursorCatalog={id:'cursor' as const,label:'Cursor',flow:'device' as
 class CursorAccount {
  private credential?:Credential;private loaded=false;private models:SDKModel[]=[];private login?:CursorLogin;
  private loginAbort?:AbortController;private loginTask?:Promise<void>;private refreshTask?:Promise<void>;
- private catalogCredential?:Credential;
+ private catalogCredential?:Credential;private refreshAbort=new AbortController();
  private sdkBillingUnavailable?:{key:string;until:number};
  private billing?:{key:string;client:CursorUsage};private quota?:AccountQuota;private quotaCheckedAt=0;
  private usageIdentity?:{key:string;email:string};
@@ -55,24 +58,26 @@ class CursorAccount {
   const credential=this.credential;if(!credential||credential.disabled)return;
   this.catalogCredential=credential;this.catalogStatus='loading';
   try{
-   const {Cursor}=await this.sdk();let models:SDKModel[];
-   try{models=await bounded(Cursor.models.list({apiKey:credential.apiKey}),20000);if(!Array.isArray(models))throw new Error('Invalid catalog');}
-   catch(error){
-    if(cursorFailure(error).blocked)throw error;
-    // The documented REST catalog also works when SDK bootstrap/catalog parsing
-    // fails. Never substitute a guessed model or broaden account permissions.
-    const response=await fetch('https://api.cursor.com/v1/models',{headers:{Authorization:`Bearer ${credential.apiKey}`},redirect:'error',signal:AbortSignal.timeout(15000)});
-    if(!response.ok)throw Object.assign(new Error('Catalog request failed'),{status:response.status});
-    models=z.object({items:z.array(z.object({id:z.string(),displayName:z.string().default('')}).passthrough())}).parse(await response.json()).items as SDKModel[];
-   }
+   const {Cursor}=await this.sdk();
+   const models=await retryOfficialRead(async attempt=>{
+    if(this.closed||this.credential!==credential)throw new DOMException('Refresh cancelled','AbortError');
+    if(attempt===1){
+     try{const models=await bounded(Cursor.models.list({apiKey:credential.apiKey}),20000);if(!Array.isArray(models))throw new Error('Invalid catalog');return models;}
+     catch(error){if(cursorFailure(error).blocked||['cursor_rate_limited','cursor_request_rejected'].includes(cursorFailure(error).code))throw error;throw new OfficialReadTransportError('SDK catalog unavailable');}
+    }
+    // Retry via the documented REST catalog when SDK bootstrap or discovery fails.
+    const response=await fetch('https://api.cursor.com/v1/models',{headers:{Authorization:`Bearer ${credential.apiKey}`},redirect:'error',signal:AbortSignal.any([this.refreshAbort.signal,AbortSignal.timeout(15000)])});
+    if(!response.ok){await response.body?.cancel();throw Object.assign(new Error('Catalog request failed'),{status:response.status});}
+    return z.object({items:z.array(z.object({id:z.string(),displayName:z.string().default('')}).passthrough())}).parse(await response.json()).items as SDKModel[];
+   },{signal:this.refreshAbort.signal});
    if(this.credential!==credential||this.closed)return;
    this.catalogVerifiedAt=Date.now();this.models=models.filter(m=>m.id&&m.id.length<280);this.error=this.models.length?undefined:'Cursor 未返回此账号可用的模型，请检查官方 API 权限后刷新。';this.catalogStatus=this.error?'error':'ready';
-  }catch(error){if(this.credential===credential&&!this.closed){const cause=cursorFailure(error);if(cause.blocked||Date.now()-this.catalogVerifiedAt>=15*60000)this.models=[];this.error=cause.message;this.catalogStatus='error';}}
+  }catch(error){if(this.credential===credential&&!this.closed){const cause=cursorFailure(error);if(cause.blocked||Date.now()-this.catalogVerifiedAt>=15*60000)this.models=[];this.error=`${cause.message} ${refreshNetworkHint}`;this.catalogStatus='error';}}
   finally{this.catalogCheckedAt=Date.now();this.observedAt=new Date().toISOString();}
   if(this.credential===credential&&!this.closed&&(forceQuota||Date.now()-this.quotaCheckedAt>=300000)){
    const previous=this.quota&&this.quota.accountId===this.id?this.quota:undefined;
-   try{const report=await this.usageClient(credential).quota();if(this.credential===credential&&!this.closed)this.quota={...report,accountId:this.id!,provider:'cursor',status:'ok',observedAt:new Date().toISOString(),lastSuccessfulAt:new Date().toISOString()};}
-   catch{if(this.credential===credential&&!this.closed)this.quota={...previous,accountId:this.id!,provider:'cursor',status:'error',observedAt:new Date().toISOString(),windows:previous?.windows??[],error:'Cursor 官方用量查询暂不可用，请稍后刷新。',note:'可在 Cursor 官方用量页核对；查询失败不代表额度为零。'};}
+   try{const report=await retryOfficialRead(()=>{if(this.closed||this.credential!==credential)throw new DOMException('Refresh cancelled','AbortError');return this.usageClient(credential).quota();},{signal:this.refreshAbort.signal});if(this.credential===credential&&!this.closed)this.quota={...report,accountId:this.id!,provider:'cursor',status:'ok',observedAt:new Date().toISOString(),lastSuccessfulAt:new Date().toISOString()};}
+   catch{if(this.credential===credential&&!this.closed)this.quota={...previous,accountId:this.id!,provider:'cursor',status:'error',observedAt:new Date().toISOString(),windows:previous?.windows??[],error:'Cursor 官方用量查询暂不可用，可以切换网络后刷新试试。',note:'可在 Cursor 官方用量页核对；查询失败不代表额度为零。'};}
    finally{this.quotaCheckedAt=Date.now();}
   }
  })().finally(()=>{this.refreshTask=undefined;});return this.refreshTask;}
@@ -106,7 +111,7 @@ class CursorAccount {
  cancelLogin(id:string){if(this.login?.id!==id)throw failure('授权会话已变更');this.login.status='cancelled';this.login.message='已取消 Cursor 授权。';this.loginAbort?.abort();}
  async setEnabled(enabled:boolean){if(this.loginTask)throw failure('请先结束 Cursor 授权',409);if(!this.credential)throw failure('Cursor 尚未连接');const next={...this.credential,disabled:!enabled};await this.secrets.set('cursor-account',JSON.stringify(next));this.credential=next;if(!enabled)await this.active?.cancel();await this.refresh();}
  async remove(){if(this.loginTask)throw failure('请先结束 Cursor 授权',409);await this.secrets.set('cursor-account','');this.credential=undefined;this.models=[];this.quota=undefined;this.billing=undefined;await this.active?.cancel();}
- async close(){this.closed=true;this.loginAbort?.abort();await this.active?.cancel().catch(()=>{});await this.loginTask;}
+ async close(){this.closed=true;this.refreshAbort.abort();this.loginAbort?.abort();await this.active?.cancel().catch(()=>{});await this.loginTask;await this.refreshTask?.catch(()=>{});}
  async response(path:string,body:unknown,signal:AbortSignal):Promise<Response>{
   let input:ReturnType<typeof parseCursorInput>;try{input=parseCursorInput(path,body);}catch(error){return Response.json({error:{type:'invalid_request_error',code:'cursor_invalid_request',fields:cursorInputFields(error),message:'Cursor 请求格式不支持：请使用文本、函数工具及工具结果；图片、服务端工具和严格 JSON 输出暂不可用。'}},{status:400});}
   if(!this.id)return errorResponse('Cursor 尚未授权',503,'cursor_unavailable');
@@ -253,12 +258,22 @@ async function bounded<T>(promise:Promise<T>,ms:number):Promise<T>{
  try{return await Promise.race([promise,new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(new Error('Timeout'),{code:'deadline_exceeded'})),ms);})]);}finally{clearTimeout(timer);}
 }
 function cursorFailure(error:unknown){
- const e=(error??{}) as {name?:string;status?:number;code?:string};
- const auth=e.status===401||e.name==='AuthenticationError'||['unauthenticated','unauthorized'].includes(e.code??'');
- const blocked=auth||e.status===403||e.code==='plan_required';
- const message=e.code==='plan_required'?'Cursor 官方返回 plan_required：当前账号套餐不支持此 API，请在官方确认 Pro 或团队套餐后刷新。':auth?'Cursor 授权已失效，请重新连接账号。':e.status===403?'Cursor API 权限不足，请在官方账号或团队设置中确认权限。':e.status===429||e.name==='RateLimitError'?'Cursor 请求受限，请检查官方额度或稍后重试。':e.code==='deadline_exceeded'?'Cursor 连接超时，请检查网络后刷新。':e.name==='TypeError'?'Cursor 网络连接失败，请检查网络后刷新。':process.env.CURSOR_BACKEND_URL?'检测到 CURSOR_BACKEND_URL 覆盖，请移除后重启；SDK 授权与模型目录使用不同的官方地址。':'Cursor 服务或模型目录暂不可用，请刷新重试。';
- const code=e.code==='plan_required'?'cursor_plan_required':auth?'cursor_authentication_failed':e.status===403?'cursor_permission_denied':e.status===429||e.name==='RateLimitError'?'cursor_rate_limited':e.code==='deadline_exceeded'?'cursor_timeout':e.name==='TypeError'?'cursor_network_error':process.env.CURSOR_BACKEND_URL?'cursor_backend_override':'cursor_upstream_error';
- return {auth,blocked,message,code};
+ // RunError retains only code/message; SDK Error prototypes and HTTP status
+ // are lost when a failed run crosses the SDK's event/storage boundary.
+ const e=(error??{}) as {name?:string;status?:number;code?:string;message?:string};
+ const upstreamCode=e.code?.toLowerCase()??'';
+ const auth=e.status===401||e.name==='AuthenticationError'||['unauthenticated','unauthorized','not_logged_in','invalid_auth_id','agent_requires_login','auth_token_not_found','auth_token_expired'].includes(upstreamCode);
+ const blocked=auth||e.status===403||['plan_required','permission_denied','not_high_enough_permissions'].includes(upstreamCode);
+ const network=safeFailure(error instanceof Error?error:e.message);
+ const code=upstreamCode==='plan_required'?'cursor_plan_required':auth?'cursor_authentication_failed':blocked?'cursor_permission_denied':
+  e.status===429||e.name==='RateLimitError'||['resource_exhausted','rate_limited','rate_limited_changeable','openai_rate_limit_exceeded','generic_rate_limit_exceeded','api_key_rate_limit'].includes(upstreamCode)?'cursor_rate_limited':
+  ['invalid_argument','bad_request','bad_model_name'].includes(upstreamCode)||e.name==='ConfigurationError'?'cursor_request_rejected':
+  ['deadline_exceeded','timeout'].includes(upstreamCode)||network.code==='timeout'?'cursor_timeout':
+  network.code==='tls'?'cursor_tls_error':network.code==='dns'?'cursor_dns_error':
+  ['connection_refused','connection_closed','proxy','proxy_auth'].includes(network.code)?'cursor_network_error':
+  upstreamCode==='unavailable'?'cursor_upstream_unavailable':upstreamCode==='internal'?'cursor_upstream_internal':
+  e.name==='TypeError'||e.name==='NetworkError'?'cursor_network_error':process.env.CURSOR_BACKEND_URL?'cursor_backend_override':'cursor_upstream_error';
+ return {auth,blocked,code,message:upstreamError(502,JSON.stringify({error:{code}})).message};
 }
 
 function containsTransportPath(value:unknown,root:string):boolean {
