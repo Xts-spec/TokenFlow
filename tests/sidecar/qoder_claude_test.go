@@ -313,7 +313,7 @@ func TestQoderWireKeepsHeaderAndSelectedModelConsistent(t *testing.T) {
 			t.Run(string(format)+model, func(t *testing.T) {
 				key := "kmodel_latest"
 				if model == "Qwen3.8-Max" {
-					key = "qmodel_preview"
+					key = "qmodel_38max"
 				}
 				checked := false
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
