@@ -22,7 +22,7 @@ export function agentConfig(kind:AgentKind,origin:string,model:string,powershell
  const quote=powershell?ps:shell;const baseURL=`${url.origin}/v1`;
  const assign=(key:string,value:string)=>powershell?`$env:${key} = ${quote(value)}`:`export ${key}=${quote(value)}`;
  if(kind==='codex')return [assign('TOKEN_FLOW_KEY','替换为此 Agent 的客户端 Key'),'codex '+[
-  ...(a2aCapabilities(model)?.serverTools===false?['web_search="disabled"']:[]),'model_provider="token_flow"','model_providers.token_flow.name="TokenFlow"',`model_providers.token_flow.base_url=${JSON.stringify(baseURL)}`,
+  ...(a2aCapabilities(model)?.serverTools===false?['web_search="disabled"']:[]),'model_auto_compact_token_limit_scope="body_after_prefix"','model_provider="token_flow"','model_providers.token_flow.name="TokenFlow"',`model_providers.token_flow.base_url=${JSON.stringify(baseURL)}`,
   'model_providers.token_flow.env_key="TOKEN_FLOW_KEY"','model_providers.token_flow.wire_api="responses"','model_providers.token_flow.requires_openai_auth=false','model_providers.token_flow.supports_websockets=false',
  ].map(value=>`-c ${quote(value)}`).join(' ')+` --model ${quote(model)}`].join('\n\n');
  if(kind==='claude')return [

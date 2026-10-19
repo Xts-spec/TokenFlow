@@ -10,7 +10,8 @@ export function codexModelCatalog(selection:string|string[],labels:Record<string
   supports_reasoning_summaries:false,support_verbosity:false,
   // A smaller context_window triggers Codex's pre-turn model-downshift compaction
   // with the PREVIOUS model, which this gateway key may not authorize. Keep an
-  // early threshold instead: normal compaction uses the newly selected model.
+  // early threshold for growth after the carried prefix instead (configured
+  // by AgentConnections): normal compaction uses the newly selected model.
   // GatewayContext separately bounds the actual upstream history payload.
   auto_compact_token_limit:65536,
   apply_patch_tool_type:'freeform',truncation_policy:{mode:'bytes',limit:10000},
