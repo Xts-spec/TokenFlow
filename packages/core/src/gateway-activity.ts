@@ -1,3 +1,4 @@
+import type {CompactionReport} from './gateway-context.js';
 import { Transform } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { randomUUID } from 'node:crypto';
@@ -11,7 +12,7 @@ export type GatewayCall={id:string;keyId:string;agent:string;model:string;protoc
  target?:string;
  /** Account or API source that served the call. */
  sourceId?:string;
- error?:{code:string;message:string}};
+ compaction?:CompactionReport;error?:{code:string;message:string}};
 const number=(value:unknown)=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=0?value:null;
 /** Observe usage without changing payloads or retaining prompts / completions. */
 export function observeUsage(sse:boolean,onEnd:(usage:{inputTokens:number|null;cachedTokens:number|null;outputTokens:number|null;failed:boolean;cacheWriteTokens?:number;reasoningTokens?:number})=>void|Promise<void>,onDetails?:(details:ResponseObservation)=>void) {

@@ -8,6 +8,9 @@ export function codexModelCatalog(selection:string|string[],labels:Record<string
   default_reasoning_level:'medium',supported_reasoning_levels:[{effort:'medium',description:'默认'}],
   shell_type:'shell_command',base_instructions:'You are a coding assistant. Help the user complete their coding tasks.',
   supports_reasoning_summaries:false,support_verbosity:false,
+  // Advertise our conservative gateway budget instead of inheriting a bundled
+  // OpenAI model's much larger window after switching providers.
+  context_window:131072,auto_compact_token_limit:65536,
   apply_patch_tool_type:'freeform',truncation_policy:{mode:'bytes',limit:10000},
   input_modalities:images[model]===true?['text','image']:['text'],experimental_supported_tools:[],
  }))};

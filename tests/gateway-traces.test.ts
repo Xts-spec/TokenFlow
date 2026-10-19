@@ -2,10 +2,13 @@ import {afterEach,beforeEach,expect,it} from 'vitest';
 import {mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {GatewayTraces,requestTrace} from '../packages/core/src/gateway-traces';
+import {GatewayTraces,requestTrace,redactTraceText} from '../packages/core/src/gateway-traces';
 import {ResponseObserver,providerUsage} from '../packages/core/src/gateway-observation';
 import {gatewayResponseEvidence} from '../packages/core/src/local-usage-evidence';
 let root='';beforeEach(async()=>{root=await mkdtemp(join(tmpdir(),'trace-test-'));});afterEach(async()=>{await rm(root,{recursive:true,force:true});});
+it.each(['password="alpha beta gamma"',"password='alpha beta gamma'",'"api_key": "alpha beta gamma"','password="alpha beta gamma'])('hides the entire quoted credential in %s',value=>{
+ const redacted=redactTraceText(value);expect(redacted).toContain('[已隐藏]');for(const part of ['alpha','beta','gamma'])expect(redacted).not.toContain(part);
+});
 const call=(keyId='key')=>({keyId,agent:'Pi',target:'pi',sourceId:'acct',model:'test/model',protocol:'chat/completions',startedAt:new Date().toISOString(),durationMs:100,status:200,inputTokens:30,cachedTokens:20,outputTokens:4});
 it('keeps exact gateway response evidence after trace retention, clearing and restart',async()=>{
  const traces=await GatewayTraces.open(root);

@@ -1,3 +1,4 @@
+import {providerUsage} from './gateway-observation.js';
 import {CursorLocalLogin} from './cursor-local.js';
 import { apiModelRoute } from '../../../apps/shared/api-endpoint.js';
 import {QoderIdeLogin,type QoderIdeOptions} from './qoder-ide-login.js';
@@ -21,8 +22,8 @@ import { detectProtocol, validateQuickSource, sourceNameFromURL } from './api-pr
 import { NativeAccounts, nativeCredentialSchema, nativeProviderSchema, type NativeProvider } from './native-accounts.js';
 import { ClaudeAccountStore, claudeSettingsState, type CredentialStore } from './claude-accounts.js';
 import { AntigravityAccountStore, antigravityDatabasePath } from './antigravity-accounts.js';
-import { upstreamIdle } from './upstream-idle.js';
-import { GatewayContext, GatewayContextError } from './gateway-context.js';
+import { upstreamIdle, UPSTREAM_IDLE_TIMEOUT_MS, UPSTREAM_TOTAL_TIMEOUT_MS } from './upstream-idle.js';
+import { GatewayContext, GatewayContextError, type CompactionReport } from './gateway-context.js';
 import {CodexContext,codexContextScope,portableCodexItem} from './codex-context.js';
 import { CodexAccounts } from './codex-accounts.js';
 import { AgentInstallationManager,detectAgent } from './agent-installation.js';
@@ -975,7 +976,7 @@ export async function createDesktopService(options:ServiceOptions) {
       req.body={...(req.body as Record<string,unknown>),model:fixed.model};
       reply.header('X-Token-Flow-Model',fixed.model);
     }
-    const started=Date.now();const traceRequest=requestTrace(req.body);let traceResponse:ResponseObservation={tools:[]};let recorded=false;let callError:{code:string;message:string}|undefined;
+    const started=Date.now();const traceRequest=requestTrace(req.body);let traceResponse:ResponseObservation={tools:[]};let compaction:CompactionReport|undefined;let contextUsageIncomplete=false;let recorded=false;let callError:{code:string;message:string}|undefined;
     const record=(status:number,usage:{inputTokens:number|null;outputTokens:number|null;cachedTokens?:number|null;cacheWriteTokens?:number|null;reasoningTokens?:number|null}={inputTokens:null,outputTokens:null})=>{
       if(recorded||path==='models')return;recorded=true;
       const rawModel=(req.body as {model?:unknown})?.model;
@@ -983,7 +984,7 @@ export async function createDesktopService(options:ServiceOptions) {
       // Statistics follow the Agent that owns a connection Key, and the account or API that served the call.
       const target=!client?'workspace':fixed?fixed.target:client.name.startsWith('内部 · ')?'internal':'key';
       const sourceId=client?.modelSources?.[model]??client?.sourceId??apiSources.sourceFor(model)?.id??'';
-      const call={keyId:client?.id??'workspace',agent:client?.name??'工作台调试',target,sourceId,model,protocol:path,startedAt:new Date(started).toISOString(),durationMs:Date.now()-started,status,inputTokens:usage.inputTokens,cachedTokens:usage.cachedTokens??null,cacheWriteTokens:usage.cacheWriteTokens??null,reasoningTokens:usage.reasoningTokens??null,outputTokens:usage.outputTokens,...(callError?{error:callError}:{})};
+      const call={keyId:client?.id??'workspace',agent:client?.name??'工作台调试',target,sourceId,model,protocol:path,startedAt:new Date(started).toISOString(),durationMs:Date.now()-started,status,inputTokens:usage.inputTokens,cachedTokens:usage.cachedTokens??null,cacheWriteTokens:usage.cacheWriteTokens??null,reasoningTokens:usage.reasoningTokens??null,outputTokens:usage.outputTokens,...(compaction?{compaction}:{}),...(callError?{error:callError}:{})};
       const tools=path==='messages/count_tokens'?{toolCalls:0,toolResults:0}:traces.record(call,traceRequest,traceResponse);
       activity.record({...call,...tools,...(traceResponse.generationMs&&usage.outputTokens!==null?{generationMs:traceResponse.generationMs,timedOutputTokens:usage.outputTokens}:{})});
     };
@@ -1042,6 +1043,7 @@ export async function createDesktopService(options:ServiceOptions) {
     const upstreamURL=client||apiSource?proxy.gateway().baseURL:config.baseURL;
     const upstreamKey=client||apiSource?proxy.gateway().apiKey:await key();
     const abort=upstreamIdle();
+    const timeoutMessage=()=>abort.timeoutKind==='total'?`本次请求已达到 ${UPSTREAM_TOTAL_TIMEOUT_MS/1000} 秒总时限，请检查来源后手动重试。`:`上游连续 ${UPSTREAM_IDLE_TIMEOUT_MS/1000} 秒未返回数据，请稍后重试或缩短对话。`;
     reply.raw.once('close',()=>abort.abort());
     try {
       const cursorModel=typeof (req.body as {model?:unknown})?.model==='string'&&(req.body as {model:string}).model.startsWith('cursor/');
@@ -1057,7 +1059,7 @@ export async function createDesktopService(options:ServiceOptions) {
       const workbuddyModel=!!model?.startsWith('workbuddy/')&&!apiSource;
       const sdkSourceId=client?.modelSources?.[model!]??client?.sourceId??proxy.snapshot().accounts.find(a=>a.provider==='workbuddy'&&!a.disabled&&a.models?.includes(model!))?.id;
       const dispatch=cursorModel?async(route:string,body:unknown)=>abort.watch(await proxy.cursor.response(route,body,abort.signal,client?.modelSources?.[model!]??client?.sourceId)):workbuddyModel&&path!=='messages/count_tokens'?async(route:string,body:unknown)=>{if(!sdkSourceId)throw new Error('WorkBuddy source unavailable');return abort.watch(await workbuddySDK.response(sdkSourceId,route,body,abort.signal));}:send;
-      const response=bridgeContext?await gatewayContext.response(path,req.body as {model:string},client?.id??'workspace',client?.modelSources?.[model]??client?.sourceId??apiSource?.id??upstreamURL,dispatch,fixed?.target==='codex'?{scope:codexContextScope,normalize:portableCodexItem,recover:async item=>codexContext.recover(item,await codexContextScopes())}:undefined):await dispatch(path,req.body);
+      const response=bridgeContext?await gatewayContext.response(path,req.body as {model:string},client?.id??'workspace',client?.modelSources?.[model]??client?.sourceId??apiSource?.id??upstreamURL,dispatch,fixed?.target==='codex'?{scope:codexContextScope,normalize:portableCodexItem,recover:async item=>codexContext.recover(item,await codexContextScopes())}:undefined,{onCompaction:report=>{compaction=report;},onUsageIncomplete:()=>{contextUsageIncomplete=true;if(compaction)compaction={...compaction,unmetered:true};}}):await dispatch(path,req.body);
       if(!response.ok){
         await settle({inputTokens:null,outputTokens:null},response.status>=500);
         if(cursorModel){record(response.status);abort.close();return reply.code(response.status).send(await response.json());}
@@ -1072,17 +1074,17 @@ export async function createDesktopService(options:ServiceOptions) {
       reply.code(response.status).header('Content-Type',response.headers.get('content-type')??'application/json').header('Cache-Control','no-store');
       if(!response.body){record(response.status);await settle({inputTokens:null,outputTokens:null},true);abort.close();return '';}
       const source=Readable.fromWeb(response.body as never);
-      const stream=observeUsage((response.headers.get('content-type')??'').includes('text/event-stream'),async usage=>{if(abort.timedOut)callError={code:'upstream_idle_timeout',message:'上游连续 120 秒未返回数据，请稍后重试或缩短对话。'};else if(usage.failed&&!callError)callError=traceResponse.error??{code:'upstream_incomplete_response',message:'上游响应未完整结束。'};record(abort.timedOut?504:callError?.code==='upstream_stream_error'||usage.failed?502:abort.signal.aborted?499:response.status,usage);await settle(usage,abort.signal.aborted||usage.failed||usage.inputTokens===null||usage.outputTokens===null);},details=>{traceResponse=details;});
+      const stream=observeUsage((response.headers.get('content-type')??'').includes('text/event-stream'),async usage=>{if(usage.failed&&compaction){usage={...usage,inputTokens:usage.inputTokens??compaction.inputTokens,outputTokens:usage.outputTokens??compaction.outputTokens,cachedTokens:usage.cachedTokens??compaction.cachedTokens};}if(abort.timedOut)callError={code:'upstream_idle_timeout',message:timeoutMessage()};else if(usage.failed&&!callError)callError=traceResponse.error??{code:'upstream_incomplete_response',message:'上游响应未完整结束。'};record(abort.timedOut?504:callError?.code==='upstream_stream_error'||usage.failed?502:abort.signal.aborted?499:response.status,usage);await settle(usage,contextUsageIncomplete||!!compaction?.unmetered||abort.signal.aborted||usage.failed||usage.inputTokens===null||usage.outputTokens===null);},details=>{traceResponse=details;});
       source.once('error',()=>{callError={code:'upstream_stream_error',message:'上游连接中断。'};abort.abort();stream.destroy();});stream.once('close',()=>{abort.close();source.destroy();});
       reply.raw.once('close',()=>stream.destroy());
       source.pipe(stream);return reply.send(stream);
     }catch(error){
       const status=error instanceof GatewayContextError?error.statusCode:abort.timedOut?504:abort.signal.aborted?499:502;
-      callError={code:abort.timedOut?'upstream_idle_timeout':status===499?'request_cancelled':error instanceof GatewayContextError?'context_error':'upstream_connection_error',message:abort.timedOut?'上游连续 120 秒未返回数据，请稍后重试或缩短对话。':status===499?'客户端已取消请求。':error instanceof GatewayContextError?error.message:'无法连接上游服务，或连接已中断。'};
-      const measured=error instanceof GatewayContextError?error.usage as {input_tokens?:number;output_tokens?:number}|undefined:undefined;
-      const tokens=(value:unknown)=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=0?value:null;
-      const usage={inputTokens:tokens(measured?.input_tokens),outputTokens:tokens(measured?.output_tokens)};
-      record(status,usage);await settle(usage,status>=500&&(usage.inputTokens===null||usage.outputTokens===null));abort.close();
+      callError={code:error instanceof GatewayContextError?error.code:abort.timedOut?(abort.timeoutKind==='total'?'upstream_total_timeout':'upstream_idle_timeout'):status===499?'request_cancelled':'upstream_connection_error',message:abort.timedOut?timeoutMessage():status===499?'客户端已取消请求。':error instanceof GatewayContextError?error.message:'无法连接上游服务，或连接已中断。'};
+      const measured=providerUsage(error instanceof GatewayContextError?error.usage:undefined);
+      const missingUsage=measured.inputTokens===null||measured.outputTokens===null;
+      const usage=compaction?{...measured,inputTokens:measured.inputTokens??compaction.inputTokens,outputTokens:measured.outputTokens??compaction.outputTokens,cachedTokens:measured.cachedTokens??compaction.cachedTokens,cacheWriteTokens:measured.cacheWriteTokens??compaction.cacheWriteTokens,reasoningTokens:measured.reasoningTokens??compaction.reasoningTokens}:measured;
+      record(status,usage);await settle(usage,!!compaction?.unmetered||(error instanceof GatewayContextError&&error.unmetered)||(status>=500||(compaction?.calls??0)>0)&&missingUsage);abort.close();
       return reply.code(status).send({error:{code:callError.code,message:callError.message,type:error instanceof GatewayContextError?'context_error':abort.timedOut?'timeout_error':'provider_error'}});
     }
   }});

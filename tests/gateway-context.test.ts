@@ -27,7 +27,7 @@ it.each(['qoder/model','workbuddy/model'])('compacts %s with the same model and 
  const original=structuredClone(longInput);
  const compact=await context.response('responses/compact',{model,input:longInput},'key-a','account-a',send);
  const result=await compact.json();expect(result.object).toBe('response.compaction');expect(result.usage).toEqual(usage);
- expect(requests[0]).toMatchObject({model,stream:false,store:false});expect(requests[0]).not.toHaveProperty('tools');
+ expect(requests[0]).toMatchObject({model,stream:true,store:false});expect(requests[0]).not.toHaveProperty('tools');
  expect(result.output.filter((item:{role?:string})=>item.role==='user')).toHaveLength(3);
  expect(result.output.at(-1)).toMatchObject({type:'compaction'});expect(result.output.at(-1).encrypted_content).not.toContain('main.ts');
  expect(longInput).toEqual(original);
@@ -38,7 +38,7 @@ it.each(['qoder/model','workbuddy/model'])('compacts %s with the same model and 
  expect(forwarded.slice(-5)).toEqual([...original.slice(5),{type:'function_call_output',call_id:'pending',output:'ready'}]);
  expect(forwarded.filter(item=>item.role==='user')).toHaveLength(3);
  expect(JSON.stringify(forwarded)).not.toContain('historical file content');
- expect(await readdir(join(root,'gateway-context'))).toEqual(['key']);
+ expect((await readdir(join(root,'gateway-context'))).filter(name=>!name.startsWith('summary-'))).toEqual(['key']);
 });
 it('persists encrypted previous responses, forks without mixing turns, scopes by key/source/model and honors store:false',async()=>{
  const {root,context}=await setup();let seen:Record<string,unknown>={};const send=async(_path:string,body:Record<string,unknown>)=>{seen=body;return Response.json(answer());};
