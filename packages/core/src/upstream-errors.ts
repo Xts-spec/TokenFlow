@@ -2,6 +2,12 @@ import {safeFailure} from './login/diagnostics.js';
 // Only known categories cross the gateway boundary. Never return raw provider
 // messages: they can contain request content or credentials.
 const known:Record<string,{message:string;type:string;wireMessage?:string}>={
+ qoder_resource_limit:{type:'rate_limit_error',message:'Qoder 返回资源限流（RESOURCE_LIMIT），当前模型容量暂不可用。请稍后重试；这不表示模型 ID 无效或登录失效。'},
+ qoder_rate_limited:{type:'rate_limit_error',message:'Qoder 请求受限，请稍后重试并检查官方额度。'},
+ qoder_authentication_failed:{type:'authentication_error',message:'Qoder 拒绝了当前授权，请检查所选账号的登录状态。'},
+ qoder_access_denied:{type:'permission_error',message:'Qoder 拒绝了本次访问，请检查所选账号对该模型的权限。'},
+ qoder_request_rejected:{type:'invalid_request_error',message:'Qoder 拒绝了请求参数，请保留调用记录用于排查兼容性。'},
+ qoder_upstream_error:{type:'provider_error',message:'Qoder 在响应流中返回服务错误，本次请求未完成，请稍后重试。'},
  cursor_model_not_found:{type:'invalid_request_error',message:'Cursor 上游找不到所选模型（model not found）。请刷新该来源的模型列表，或选择该账号实际可用的其他模型。'},
  cursor_plan_required:{type:'authentication_error',message:'Cursor 官方返回 plan_required：当前账号套餐不支持此 API，请在官方确认 Pro 或团队套餐后刷新。'},
  cursor_authentication_failed:{type:'authentication_error',message:'Cursor 授权已失效，请重新连接账号。'},

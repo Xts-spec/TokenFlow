@@ -5,6 +5,18 @@ const sse=(events:unknown[],chunk=7)=>{
  return new Response(new ReadableStream({pull(controller){if(offset>=bytes.length){controller.close();return;}controller.enqueue(bytes.subarray(offset,offset+=chunk));}}),{headers:{'content-type':'text/event-stream'}});
 };
 const message={type:'message',role:'assistant',content:[{type:'output_text',text:'约束与下一步🙂'}]};
+it.each(['flat','nested','failed'])('retains safe summary failure classification for %s SSE errors',async shape=>{
+ const error={code:'qoder_resource_limit',message:'PRIVATE_UPSTREAM_BODY',type:'rate_limit_error'};
+ const event=shape==='flat'?{...error,type:'error'}:shape==='nested'?{type:'error',error}:{type:'response.failed',response:{status:'failed',error,usage:{input_tokens:12,output_tokens:3}}};
+ const result=await readSummaryResponse(sse([event]));
+ expect(result.status).toBe('failed');expect(result.error).toMatchObject({code:'qoder_resource_limit',type:'rate_limit_error'});
+ expect(result.error.message).toContain('资源限流');expect(JSON.stringify(result)).not.toContain('PRIVATE');
+ if(shape==='failed')expect(result.usage).toEqual({input_tokens:12,output_tokens:3});
+});
+it('removes unrecognized provider error details from failed summaries',async()=>{
+ const result=await readSummaryResponse(sse([{type:'response.failed',response:{status:'failed',error:{code:'PRIVATE_CODE',message:'PRIVATE_UPSTREAM_BODY',extra:'PRIVATE_FIELD'}}}]));
+ expect(result.error).toMatchObject({type:'provider_error'});expect(JSON.stringify(result)).not.toContain('PRIVATE');
+});
 it('does not duplicate delta, done and terminal text and survives split UTF-8/events',async()=>{
  const result=await readSummaryResponse(sse([
   {type:'response.output_text.delta',delta:'约束与下一步🙂'},

@@ -1,5 +1,6 @@
 /** Provider-neutral summary transport. Only completed assistant text is usable;
  * reasoning deltas are progress, never a substitute for a checkpoint. */
+import {upstreamError} from './upstream-errors.js';
 type Item=Record<string,any>;
 export const SUMMARY_CHUNK_BYTES=48*1024;
 export const SUMMARY_MAX_CALLS=32;
@@ -46,6 +47,7 @@ export async function readSummaryResponse(response:Response):Promise<Item>{
  if(!response.body)throw new Error('Summary response has no body');
  const reader=response.body.getReader();const decoder=new TextDecoder();let bytes=0,buffer='';
  const done=new Map<number,Item>(),deltas=new Map<string,string>();let terminal:Item|undefined;
+ const safeTerminal=(value:Item):Item=>value.status==='failed'?{...value,error:upstreamError(502,JSON.stringify({error:value.error}))}:value;
  const frame=(text:string)=>{
   const data=text.split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5).trimStart()).join('\n');
   if(!data||data==='[DONE]')return;
@@ -54,8 +56,8 @@ export async function readSummaryResponse(response:Response):Promise<Item>{
    const key=`${event.output_index??0}:${event.content_index??0}`;deltas.set(key,(deltas.get(key)??'')+event.delta);
   }
   if(event.type==='response.output_item.done'&&object(event.item))done.set(event.output_index??done.size,event.item);
-  if(['response.completed','response.incomplete','response.failed'].includes(event.type)&&object(event.response))terminal=event.response;
-  if(event.type==='error')terminal={status:'failed',output:[],usage:null};
+  if(['response.completed','response.incomplete','response.failed'].includes(event.type)&&object(event.response))terminal=safeTerminal(event.response);
+  if(event.type==='error')terminal=safeTerminal({status:'failed',output:[],usage:null,error:event.error??event});
  };
  try{
   const sse=(response.headers.get('content-type')??'').includes('text/event-stream');
@@ -69,7 +71,7 @@ export async function readSummaryResponse(response:Response):Promise<Item>{
    }
   }
   buffer+=decoder.decode();
-  if(!sse){const result:unknown=JSON.parse(buffer);if(!object(result))throw new Error('Invalid summary JSON');return result;}
+  if(!sse){const result:unknown=JSON.parse(buffer);if(!object(result))throw new Error('Invalid summary JSON');return safeTerminal(result);}
   if(buffer.trim())frame(buffer);
   if(!terminal)throw new Error('Summary stream ended before completion');
   const output=Array.isArray(terminal.output)?terminal.output:[];

@@ -232,6 +232,120 @@ func TestQoderInvalidParameterIsRequestFault(t *testing.T) {
 	}
 }
 
+// An application-level denial can arrive in an HTTP 200 SSE stream which
+// remains open. Classify it before waiting for more events or transport EOF.
+func TestQoderResourceLimitFrameFailsBeforeOpenStreamEnds(t *testing.T) {
+	reader, writer := io.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	defer reader.Close()
+	defer writer.Close()
+	queue, _ := json.Marshal(map[string]any{"isQueued": true, "modelKey": "dfmodel", "queueCount": 0, "queueType": "p3", "retryAfterSeconds": 30, "serviceAvailable": false, "subCode": "RESOURCE_LIMIT"})
+	body, _ := json.Marshal(map[string]any{"code": "10605", "message": string(queue)})
+	envelope, _ := json.Marshal(map[string]any{"statusCode": "FORBIDDEN", "statusCodeValue": 403, "body": string(body)})
+	stream := readAgentChatStream(ctx, &http.Response{StatusCode: http.StatusOK, Body: reader, Header: http.Header{"Content-Type": []string{"text/event-stream"}}}, "qoder")
+	go func() {
+		// Do not close the pipe: the production denial frame leaves SSE open.
+		_, _ = fmt.Fprintf(writer, "data: %s\n\n", envelope)
+	}()
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case chunk, ok := <-stream.Chunks:
+			if !ok {
+				t.Fatal("resource-limited stream ended without a classified failure")
+			}
+			if chunk.Err == nil {
+				continue
+			}
+			typed, ok := chunk.Err.(interface{ StatusCode() int })
+			if !ok || typed.StatusCode() != http.StatusTooManyRequests {
+				t.Fatalf("resource limit must be retryable HTTP 429, got %v", chunk.Err)
+			}
+			if !strings.Contains(chunk.Err.Error(), "qoder_resource_limit") {
+				t.Fatal("resource limit lost its explicit safe category")
+			}
+			if _, ok := <-stream.Chunks; ok {
+				t.Fatal("resource-limited stream did not terminate")
+			}
+			if _, err := writer.Write([]byte("unexpected event")); err != io.ErrClosedPipe {
+				t.Fatal("resource-limited upstream body was not closed")
+			}
+			return
+		case <-deadline.C:
+			t.Fatal("RESOURCE_LIMIT frame was ignored while the upstream SSE connection remained open")
+		}
+	}
+}
+
+func TestQoderEnvelopeFailuresAreSafeAndBounded(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		status     int
+		body       any
+		wantStatus int
+		code       string
+		retry      time.Duration
+	}{
+		{"object resource", 403, map[string]any{"code": "10605", "message": map[string]any{"subCode": "RESOURCE_LIMIT", "retryAfterSeconds": 999999}}, 429, "qoder_resource_limit", 300 * time.Second},
+		{"string resource", 403, `{"code":"10605","message":"{\"subCode\":\"RESOURCE_LIMIT\",\"retryAfterSeconds\":-1}"}`, 429, "qoder_resource_limit", 30 * time.Second},
+		{"structured subcode", 403, map[string]any{"subCode": "RESOURCE_LIMIT", "retryAfterSeconds": 5}, 429, "qoder_resource_limit", 5 * time.Second},
+		{"authentication", 401, map[string]any{"message": "private-payload"}, 401, "qoder_authentication_failed", 0},
+		{"forbidden plain text", 403, map[string]any{"message": "private-payload RESOURCE_LIMIT"}, 403, "qoder_access_denied", 0},
+		{"server failure", 503, `{"message":"private-payload"}`, 503, "qoder_upstream_error", 0},
+		{"request failure", 422, map[string]any{"message": "private-payload"}, 422, "qoder_request_rejected", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			envelope, _ := json.Marshal(map[string]any{"statusCodeValue": tc.status, "body": tc.body})
+			stream := readAgentChatStream(context.Background(), &http.Response{Body: io.NopCloser(strings.NewReader("data: " + string(envelope) + "\n\n")), Header: http.Header{}}, "qoder")
+			chunk, ok := <-stream.Chunks
+			if !ok || chunk.Err == nil {
+				t.Fatal("error envelope became model output")
+			}
+			typed, ok := chunk.Err.(interface {
+				StatusCode() int
+				RetryAfter() *time.Duration
+			})
+			if !ok || typed.StatusCode() != tc.wantStatus {
+				t.Fatalf("wrong status: %v", chunk.Err)
+			}
+			if !strings.Contains(chunk.Err.Error(), tc.code) || strings.Contains(chunk.Err.Error(), "private-payload") {
+				t.Fatal("missing safe code or leaked message")
+			}
+			retry := typed.RetryAfter()
+			if tc.retry == 0 && retry != nil || tc.retry != 0 && (retry == nil || *retry != tc.retry) {
+				t.Fatal("wrong retry bound")
+			}
+			if _, ok := <-stream.Chunks; ok {
+				t.Fatal("error envelope did not terminate stream")
+			}
+		})
+	}
+}
+
+func TestQoderSuccessfulEnvelopeDoesNotClassifyOutputAsResourceLimit(t *testing.T) {
+	for _, wrapped := range []bool{false, true} {
+		body := `{"choices":[{"delta":{"content":"RESOURCE_LIMIT"},"finish_reason":"stop"}]}`
+		var value any = json.RawMessage(body)
+		if wrapped {
+			value = body
+		}
+		envelope, _ := json.Marshal(map[string]any{"statusCodeValue": 200, "body": value})
+		stream := readAgentChatStream(context.Background(), &http.Response{Body: io.NopCloser(strings.NewReader("data: " + string(envelope) + "\n\ndata: [DONE]\n\n")), Header: http.Header{}}, "qoder")
+		count := 0
+		for chunk := range stream.Chunks {
+			if chunk.Err != nil {
+				t.Fatal(chunk.Err)
+			}
+			count++
+		}
+		if count != 1 {
+			t.Fatalf("successful event lost: %d", count)
+		}
+	}
+}
+
 func TestQoderRejectsMissingAccountIdentity(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(http.StatusOK) }))

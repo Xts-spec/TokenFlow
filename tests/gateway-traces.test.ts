@@ -92,3 +92,12 @@ it('retains sanitized streaming failure codes in observed responses',()=>{
  const o=new ResponseObserver();o.inspect({type:'error',error:{code:'workbuddy_output_failed',message:'secret payload'}});
  expect(o.result().error).toMatchObject({code:'workbuddy_output_failed'});expect(JSON.stringify(o.result())).not.toContain('secret');
 });
+it.each([
+ {type:'error',code:'qoder_resource_limit',message:'PRIVATE_UPSTREAM'},
+ {type:'error',error:{code:'qoder_resource_limit',message:'PRIVATE_UPSTREAM'}},
+ {type:'response.failed',response:{error:{code:'qoder_resource_limit',message:'PRIVATE_UPSTREAM'}}},
+])('retains Qoder resource limit classification for each Responses error envelope',event=>{
+ const observer=new ResponseObserver();observer.inspect(event);
+ expect(observer.result().error?.code).toBe('qoder_resource_limit');
+ expect(JSON.stringify(observer.result())).not.toContain('PRIVATE_UPSTREAM');
+});

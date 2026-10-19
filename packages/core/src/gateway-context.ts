@@ -377,6 +377,10 @@ export class GatewayContext {
      usage=usage===zeroUsage&&object(result.usage)?result.usage:combinedUsage(usage,result.usage);
      Object.assign(report,providerUsage(usage));
      if(report.inputTokens===null||report.outputTokens===null||(object(usage)&&usage.token_flow_unmetered))report.unmetered=true;
+     if(result.status==='failed'){
+      const error=upstreamError(502,JSON.stringify({error:result.error}));
+      throw new GatewayContextError('摘要上游请求失败：'+error.message+' 原会话未修改。',422,usage,'compaction_upstream_failed',report.unmetered);
+     }
      if(result.status!=='completed'||!Array.isArray(result.output))throw new GatewayContextError('Context summary did not finish; original history is unchanged',422,usage,'compaction_incomplete');
      const output=result.output.filter(object);
      if(result.summary_requested_tools||output.some(item=>['function_call','custom_tool_call'].includes(String(item.type))))throw new GatewayContextError('Context summary unexpectedly requested tools; original history is unchanged',422,usage,'compaction_tool_call');

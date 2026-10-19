@@ -20,7 +20,7 @@ export class ResponseObserver{
  private tools=new Map<string,ObservedTool>();private indices=new Map<string,string>();private first?:number;private responseId?:string;
  constructor(private now=()=>Date.now()){}
  inspect(e:any){
-  if(e.type==='error'||e.type==='response.failed'||e.error){const safe=upstreamError(502,JSON.stringify({error:e.error??e.response?.error}));this.error={code:safe.code??safe.type,message:safe.message};}
+  if(e.type==='error'||e.type==='response.failed'||e.error){const safe=upstreamError(502,JSON.stringify({error:e.error??e.response?.error??(e.type==='error'?e:undefined)}));this.error={code:safe.code??safe.type,message:safe.message};}
   if(typeof e.response?.id==='string')this.responseId=e.response.id;
   if(e.type==='message_start'&&typeof e.message?.id==='string')this.responseId=e.message.id;
   if(e.type==='message'&&typeof e.id==='string')this.responseId=e.id;

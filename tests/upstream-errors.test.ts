@@ -1,5 +1,10 @@
 import {it,expect} from 'vitest';
 import {upstreamError} from '../packages/core/src/upstream-errors.js';
+it.each(['qoder_resource_limit','qoder_rate_limited','qoder_authentication_failed','qoder_access_denied','qoder_request_rejected','qoder_upstream_error'])('preserves Qoder envelope category %s without provider payloads',code=>{
+ const result=upstreamError(code.includes('limit')?429:502,JSON.stringify({error:{code,message:'PRIVATE_PROMPT Bearer private-token'}}));
+ expect(result.code).toBe(code);expect(result.message).not.toMatch(/PRIVATE_PROMPT|private-token/);
+ if(code.includes('limit'))expect(result.type).toBe('rate_limit_error');
+});
 it('reports safe parameter errors separately from source cooldown without leaking payloads',()=>{
  const result=upstreamError(400,JSON.stringify({error:{code:'a2a_invalid_request',message:'private request contents'}}));
  expect(result).toMatchObject({code:'a2a_invalid_request',type:'invalid_request_error'});

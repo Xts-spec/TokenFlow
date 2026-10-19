@@ -21,6 +21,29 @@ const longInput=[
  {role:'user',content:'Now inspect deployment.'},
  {type:'function_call',call_id:'pending',name:'inspect',arguments:'{}'}
 ] satisfies OpenAI.Responses.ResponseInputItem[];
+it('reports Qoder resource limits from summary calls without changing history or hiding them as generic failures',async()=>{
+ const {context}=await setup();const input=structuredClone(longInput);
+ const failure=await context.response('responses/compact',{model:'qoder/dfmodel',input},'a','s',async()=>Response.json({error:{code:'qoder_resource_limit',message:'PRIVATE_UPSTREAM_BODY'}},{status:429})).catch(error=>error);
+ expect(failure).toMatchObject({statusCode:422,code:'compaction_upstream_failed'});
+ expect(failure.message).toContain('资源限流');expect(failure.message).not.toContain('PRIVATE');expect(input).toEqual(longInput);
+});
+it.each(['flat','nested','failed'])('reports Qoder summary %s SSE errors safely without persisting failed summaries',async shape=>{
+ const {root,context}=await setup();const input=structuredClone(longInput);let report:any;
+ const error={code:'qoder_resource_limit',message:'PRIVATE_UPSTREAM_BODY',type:'rate_limit_error'};
+ const event=shape==='flat'?{...error,type:'error'}:shape==='nested'?{type:'error',error}:{type:'response.failed',response:{status:'failed',output:[],error}};
+ const failure=await context.response('responses/compact',{model:'qoder/dfmodel',input},'a','s',async()=>new Response('data: '+JSON.stringify(event)+'\n\n',{headers:{'content-type':'text/event-stream'}}),undefined,{onCompaction:value=>{report=value;}}).catch(error=>error);
+ expect(failure).toMatchObject({statusCode:422,code:'compaction_upstream_failed',unmetered:true});
+ expect(failure.message).toContain('资源限流');expect(failure.message).not.toContain('PRIVATE');expect(input).toEqual(longInput);
+ expect(report).toMatchObject({failed:true,unmetered:true});
+ expect((await readdir(join(root,'gateway-context'))).filter(name=>name.startsWith('summary-'))).toEqual([]);
+});
+it('preserves known usage on a classified failed summary',async()=>{
+ const {context}=await setup();let report:any;
+ const event={type:'response.failed',response:{status:'failed',output:[],usage,error:{code:'qoder_resource_limit',message:'PRIVATE_UPSTREAM_BODY'}}};
+ const failure=await context.response('responses/compact',{model:'qoder/dfmodel',input:longInput},'a','s',async()=>new Response('data: '+JSON.stringify(event)+'\n\n',{headers:{'content-type':'text/event-stream'}}),undefined,{onCompaction:value=>{report=value;}}).catch(error=>error);
+ expect(failure).toMatchObject({code:'compaction_upstream_failed',usage,unmetered:false});
+ expect(report).toMatchObject({failed:true,unmetered:false,inputTokens:30,outputTokens:10});
+});
 it.each(['qoder/model','workbuddy/model'])('compacts %s with the same model and resumes exact recent tool context after restart',async model=>{
  const {root,context}=await setup();const requests:Record<string,unknown>[]=[];
  const send=async(path:string,body:Record<string,unknown>)=>{expect(path).toBe('responses');requests.push(body);return Response.json(answer('Changed /app/main.ts; preserve API. Tests passed. Deployment inspection pending.'));};
