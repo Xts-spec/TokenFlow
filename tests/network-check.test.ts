@@ -16,11 +16,11 @@ it('checks app and real-gateway paths separately and never sends account credent
     return new Response(null,{status:url.includes('127.0.0.1')?200:401});
   };
   const report=await checkNetwork({port:8317,key:'internal-key',managementKey:'private-management-key',fetch:fetcher,log:line=>logs.push(line)});
-  expect(report.results).toHaveLength(7);expect(report.results.every(r=>r.reachable)).toBe(true);
+  expect(report.results).toHaveLength(1+2*networkTargets.length);expect(report.results.every(r=>r.reachable)).toBe(true);
   expect(report.results.filter(r=>r.via==='gateway').every(r=>r.httpStatus===403&&r.code==='http_response')).toBe(true);
   for(const {url,init} of calls.filter(c=>!c.url.includes('127.0.0.1'))){expect(init?.headers).toBeUndefined();expect(init?.method).toBe('HEAD');expect(init?.credentials).toBe('omit');expect(url).not.toContain('?');}
   expect(JSON.stringify({report,logs})).not.toMatch(/must-not-copy|private-management|internal-key/);
-  expect(logs).toHaveLength(9);
+  expect(logs).toHaveLength(3+2*networkTargets.length);
 });
 
 it('reports DNS, TLS and transport timeouts without reflecting raw upstream data',async()=>{
@@ -59,4 +59,9 @@ it('copies diagnostic state without account email, OAuth URLs or user codes',()=
   const copied=JSON.stringify(gatewayDiagnostics(local,'test','win32'));
   expect(copied).toContain('token_exchange');expect(copied).toContain('"codex":1');
   expect(copied).not.toMatch(/private-|private@|never-copy/);
+});
+
+it('includes separate domestic and international WorkBuddy login connectivity targets',()=>{
+ expect(networkTargets.map(t=>new URL(t.url).hostname)).toContain('www.workbuddy.ai');
+ expect(networkTargets.map(t=>new URL(t.url).hostname)).toContain('copilot.tencent.com');
 });

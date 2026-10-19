@@ -1,3 +1,4 @@
+import {safeFailure} from './login/diagnostics.js';
 // Only known categories cross the gateway boundary. Never return raw provider
 // messages: they can contain request content or credentials.
 const known:Record<string,{message:string;type:string;wireMessage?:string}>={
@@ -21,6 +22,8 @@ export function upstreamError(status:number,body:string):{code?:string;type:stri
  if(message.includes('User location is not supported for the API use'))return {code:'region_not_supported',type:'region_not_supported',message:'所选账号的上游服务不支持当前地区使用 API。请查看提供商的地区支持说明；重新登录不能解决此限制。'};
  if(status>=500&&/auth_unavailable|cooling down/.test(message))return {code:'source_cooldown',type:'source_unavailable',message:'所选来源因最近的上游错误暂时无法接收请求。网关会保留账号和模型配置；请稍后重试，持续失败时检查来源的实际调用错误。'};
  if(status>=500&&/^(qoder|workbuddy): (model response reported an error|upstream reported an error)/.test(message))return {code:'source_model_error',type:'provider_error',message:'来源服务在模型响应中返回错误，本次调用未完成。接口配置不代表调用成功；请缩短对话后重试或选择其他模型。'};
+ const network=safeFailure(message);
+ if(status>=500&&['tls','dns','timeout','connection_refused','connection_closed','proxy_auth','proxy'].includes(network.code))return {code:'upstream_'+network.code,type:'provider_error',message:`上游连接失败：${network.reason}。请检查系统代理、分流和 DNS；尚不能据此判断账号授权失效。`};
  return {type:'provider_error',message:`上游模型请求失败（HTTP ${status}）。请检查该来源的调用记录；重写客户端配置不一定能解决。`};
 }
 export async function readUpstreamError(response:Response){

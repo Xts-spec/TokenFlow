@@ -175,3 +175,8 @@ it('does not repeatedly compact a short checkpoint just because fixed context is
  await context.response('responses',{model:'cursor/test',input,store:false},'a','s',async(_p,b)=>{calls++;expect(b.input).toEqual(input);return Response.json({status:'completed',output:[],usage});},{scope:{owner:'portable',source:'portable',model:'portable'},recover:async()=>[]},{onCompaction:()=>compactions++});
  expect(calls).toBe(1);expect(compactions).toBe(0);
 });
+
+it('preserves a safe upstream network category when summary creation fails',async()=>{
+ const {context}=await setup();
+ await expect(context.response('responses/compact',{model:'codex/model',input:history},'a','s',async()=>Response.json({error:{message:'TLS handshake failed: secret-token'}},{status:500}))).rejects.toMatchObject({statusCode:422,code:'compaction_upstream_failed',message:expect.stringContaining('TLS')});
+});

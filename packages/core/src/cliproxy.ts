@@ -21,6 +21,7 @@ import { safeEnvironment } from './process-environment.js';
 import {createNetworkProxy,type NetworkSnapshot} from './network-proxy.js';
 import {checkNetwork,type NetworkCheckReport} from './network-check.js';
 import {safeFailure} from './login/diagnostics.js';
+import {readUpstreamError} from './upstream-errors.js';
 import { LoginController, loginProviderCatalog, isLoginProvider, routeModelToProvider, type LoginOptions, type LoginProviderId } from './login/index.js';
 import { quotaProviders, QuotaHTTPError, type AccountQuota, type QuotaAccount, type QuotaRequest, type QuotaResponse } from './quota/index.js';
 
@@ -177,8 +178,19 @@ export class CLIProxyManager {
     const response = await fetch(`http://127.0.0.1:${this.port}${management ? '/v0/management' : '/v1'}${path}`, {
       method, headers: {Authorization: `Bearer ${management ? this.managementKey : this.key}`, ...(body === undefined ? {} : {'Content-Type': 'application/json'})},
       body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), this.requests.signal]), redirect: 'error',
-    }).catch(() => {throw path==='/api-call'?new QuotaTransportError('额度查询连接失败或超时。'):new Error('无法连接 Local Agent，请检查服务状态后重试。');});
+    }).catch(error => {
+      if(path==='/api-call')throw new QuotaTransportError('额度查询连接失败或超时。');
+      const failure=safeFailure(error);
+      if(path.includes('-auth-url')&&failure.code==='timeout')throw new Error('等待本机网关生成授权链接超时；网关可能仍在等待厂商服务。请检查网络与代理后重试，此错误不代表本机网关已停止。');
+      throw new Error(`无法完成本机网关请求：${failure.reason}。请检查服务状态后重试。`);
+    });
     if (!response.ok) {
+      if(path.includes('-auth-url')){
+        const body=await readUpstreamError(response);let message='';
+        try{const parsed=JSON.parse(body);message=typeof parsed.error==='string'?parsed.error:typeof parsed.error?.message==='string'?parsed.error.message:'';}catch{/* Only classify recognized error fields. */}
+        const failure=safeFailure(message);
+        throw new Error(`本机网关已响应，但生成授权链接失败（HTTP ${response.status}）：${failure.reason}。请检查对应厂商的网络与代理连接后重试。`);
+      }
       await response.body?.cancel();
       if(path==='/api-call'&&transientQuotaStatus(response.status))throw new QuotaTransportError(`额度上游连接失败（HTTP ${response.status}），网关已响应。`);
       if(path==='/api-call')throw new Error(response.status>=500?`额度上游连接失败（HTTP ${response.status}），网关已响应。请稍后重试或检查网络与代理；不代表账号授权丢失。`:`额度查询网关请求失败（HTTP ${response.status}），请刷新网关状态后重试。`);

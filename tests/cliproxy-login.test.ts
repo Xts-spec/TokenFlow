@@ -442,3 +442,15 @@ it('imports two members of one Codex workspace independently and keeps separate 
  expect(files).toHaveLength(3);expect(manager.snapshot().accounts.filter(a=>a.provider==='codex'&&!a.isDuplicate)).toHaveLength(2);
  await manager.importCredential('codex',first,true);expect((await names(join(root,'cliproxy/auth'))).filter(n=>n.startsWith('local-codex-'))).toHaveLength(3);
 });
+
+it.each(['timeout','tls'])('distinguishes an authorization %s failure from a stopped local agent',async kind=>{
+ const {manager}=await setup();await manager.start();const realFetch=globalThis.fetch;
+ const mock=vi.spyOn(globalThis,'fetch').mockImplementation(async(url,init)=>{
+  if(String(url).includes('/workbuddy-auth-url')){
+   if(kind==='timeout')throw new DOMException('The operation timed out','TimeoutError');
+   return Response.json({error:'Client network socket disconnected before secure TLS connection was established secret-token'},{status:502});
+  }
+  return realFetch(url,init);
+ });
+ try{const state=await manager.login('workbuddy-overseas');expect(state.state).toBe('running');expect(state.login?.status).toBe('failed');expect(state.login?.message).toContain(kind==='timeout'?'超时':'TLS');expect(state.login?.message).not.toContain('无法连接 Local Agent');expect(state.login?.message).not.toContain('secret-token');}finally{mock.mockRestore();}
+});
