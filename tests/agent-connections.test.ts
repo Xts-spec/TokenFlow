@@ -319,7 +319,7 @@ it('returns an in-place edited Codex gateway to the official model',async()=>{
  await writeFile(paths.codex,(await readFile(paths.codex,'utf8')).replace('model = "antigravity/old"','model = "hand-edited"'));
  await connections.restore(record.id);
  const doc=parse(await readFile(paths.codex,'utf8'));
- expect(doc.model).toBe('original');expect(doc.model_provider).toBeUndefined();expect(doc.model_providers?.token_flow).toBeUndefined();
+ expect(doc.model).toBe('original');expect(doc.model_provider).toBeUndefined();expect(doc).not.toHaveProperty('model_providers.token_flow');
 });
 it('restores a missing file without requiring a maintenance model',async()=>{
  const {paths,connections}=await setup();
