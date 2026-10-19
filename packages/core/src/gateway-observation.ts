@@ -4,7 +4,7 @@ const n=(v:unknown)=>typeof v==='number'&&Number.isSafeInteger(v)&&v>=0?v:null;
 export function providerUsage(raw:unknown){
  const u=(raw&&typeof raw==='object'?raw:{}) as Record<string,any>;
  const read=n(u.cache_read_input_tokens)??n(u.input_tokens_details?.cached_tokens)??n(u.prompt_tokens_details?.cached_tokens)??n(u.prompt_cache_hit_tokens);
- const write=n(u.cache_creation_input_tokens)??n(u.input_tokens_details?.cache_write_tokens)??n(u.prompt_tokens_details?.cache_write_tokens);
+ const write=n(u.cache_creation_input_tokens)??n(u.input_tokens_details?.cache_write_tokens)??n(u.prompt_tokens_details?.cache_write_tokens)??n(u.cache_write_tokens);
  const separateInput=n(u.input_tokens);let input=separateInput??n(u.prompt_tokens);
  // Chat Completions prompt_tokens already includes caches, even when a
  // compatible provider also returns Anthropic-style cache aliases.

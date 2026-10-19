@@ -3,6 +3,8 @@ import {safeFailure} from './login/diagnostics.js';
 export const networkTargets=[
   {id:'codex-auth',label:'Codex 授权服务',url:'https://auth.openai.com/.well-known/openid-configuration'},
   {id:'codex-api',label:'Codex 账号服务',url:'https://chatgpt.com/backend-api/wham/usage'},
+  {id:'cursor-api',label:'Cursor 模型服务',url:'https://api2.cursor.sh/'},
+  {id:'qoder-api',label:'Qoder 模型服务',url:'https://api2.qoder.sh/'},
   {id:'workbuddy-auth',label:'WorkBuddy 国内版授权服务',url:'https://copilot.tencent.com/login'},
   {id:'workbuddy-international-auth',label:'WorkBuddy 国际版授权服务',url:'https://www.workbuddy.ai/login'},
 ] as const;

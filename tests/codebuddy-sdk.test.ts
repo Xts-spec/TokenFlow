@@ -134,6 +134,28 @@ it('separates Messages system instructions from role-tagged tool history',()=>{
  const parsed=parseCodeBuddyInput('messages',{model:'workbuddy/test',system:[{type:'text',text:'CALLER_POLICY'}],messages:[{role:'user',content:'Read'},{role:'assistant',content:[{type:'tool_use',id:'call1',name:'read',input:{}}]},{role:'user',content:[{type:'tool_result',tool_use_id:'call1',content:'CLIENT_RESULT'}]}]});
  expect(parsed.systemPrompt).toBe('CALLER_POLICY');expect(parsed.prompt).not.toContain('CALLER_POLICY');expect(parsed.prompt).toContain('call1');expect(parsed.prompt).toContain('CLIENT_RESULT');
 });
+it('continues a long Claude history containing prior-provider thinking through the WorkBuddy SDK',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'sdk-claude-history-'));let called=0;
+ const thinkingAt=new Set([149,151,153,157,159]);
+ const messages=Array.from({length:161},(_,index)=>({role:index%2?'assistant':'user',content:thinkingAt.has(index)?[
+  {type:'thinking',thinking:`PRIOR_PROVIDER_THINKING_${index}`,signature:'OPAQUE_PROVIDER_SIGNATURE'},
+  {type:'text',text:`VISIBLE_HISTORY_${index}`},
+ ]:[{type:'text',text:`VISIBLE_HISTORY_${index}`}]}));
+ const body={model:'workbuddy/deepseek-v4.1-flash',messages,tools:[{name:'read',input_schema:{type:'object'}}]};
+ const before=JSON.stringify(body);
+ const sdk=new WorkBuddySDKProvider(root,async()=>({type:'workbuddy',access_token:'fixture'}),async input=>{
+  called++;for(const index of thinkingAt)expect(input.prompt).toContain(`VISIBLE_HISTORY_${index}`);
+  expect(input.prompt).not.toMatch(/PRIOR_PROVIDER_THINKING|OPAQUE_PROVIDER_SIGNATURE/);
+  expect(input.tools[0].name).toBe('read');
+  return {model:input.model,text:'continued',calls:[],failed:false};
+ });
+ try{
+  const response=await sdk.response('chosen','messages',body,new AbortController().signal);
+  const result=await response.json();
+  expect(response.status,JSON.stringify(result)).toBe(200);expect(called).toBe(1);
+  expect(result.content).toEqual([{type:'text',text:'continued'}]);expect(JSON.stringify(body)).toBe(before);
+ }finally{await sdk.close();await rm(root,{recursive:true,force:true});}
+});
 it.each(['responses','chat/completions','messages'])('delivers live %s text before SDK completion without replaying it',async path=>{
  const root=await mkdtemp(join(tmpdir(),'sdk-live-stream-'));let finish!:()=>void;
  const gate=new Promise<void>(resolve=>{finish=resolve;});

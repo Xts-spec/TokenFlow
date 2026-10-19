@@ -49,21 +49,45 @@ async function json(response:Response):Promise<Item> {
  try{const parsed:unknown=JSON.parse(Buffer.concat(chunks).toString());if(object(parsed))return parsed;}catch{/* Report a bounded, non-sensitive error. */}
  throw new GatewayContextError('Source returned invalid response JSON',502);
 }
+const validCounter=(value:unknown):value is number=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=0;
+function wireUsage(value:unknown):unknown {
+ if(!object(value))return value;
+ const result={...value};
+ const input=object(value.input_tokens_details)?value.input_tokens_details:{};
+ const cached=input.cached_tokens,write=input.cache_write_tokens??value.cache_write_tokens;
+ // Codex deserializes these counters as integers: null is not an unknown
+ // value on the wire. Keep unknown evidence absent, never manufacture zero.
+ if(validCounter(cached)){
+  const details={...input};
+  if(validCounter(write))details.cache_write_tokens=write;else delete details.cache_write_tokens;
+  result.input_tokens_details=details;
+ }
+ else {
+  delete result.input_tokens_details;
+  // The details object requires cached_tokens. Preserve separately known
+  // cache writes outside it when the source did not report cache reads.
+  if(validCounter(write))result.cache_write_tokens=write;
+ }
+ const output=object(value.output_tokens_details)?value.output_tokens_details:{};
+ if(validCounter(output.reasoning_tokens))result.output_tokens_details={...output};
+ else delete result.output_tokens_details;
+ if(!validCounter(result.total_tokens)&&validCounter(result.input_tokens)&&validCounter(result.output_tokens))result.total_tokens=result.input_tokens+result.output_tokens;
+ return result;
+}
 function combinedUsage(left:unknown,right:unknown):Item {
  const l=object(left)?left:{},r=object(right)?right:{};
- const valid=(value:unknown):value is number=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=0;
- const detail=(value:unknown,field:string)=>object(value)&&valid(value[field])?value[field] as number:null;
- const sumDetail=(a:unknown,b:unknown,field:string)=>{const x=detail(a,field),y=detail(b,field);return x===null||y===null?null:x+y;};
- const count=(value:unknown)=>valid(value)?value:0;
+ const lu=providerUsage(l),ru=providerUsage(r);
+ const sumDetail=(x:number|null,y:number|null)=>x===null||y===null?null:x+y;
+ const count=(value:unknown)=>validCounter(value)?value:0;
  const input=count(l.input_tokens)+count(r.input_tokens),output=count(l.output_tokens)+count(r.output_tokens);
- const incomplete=!!l.token_flow_unmetered||!!r.token_flow_unmetered||![l.input_tokens,l.output_tokens,r.input_tokens,r.output_tokens].every(valid);
- return {input_tokens:input,output_tokens:output,total_tokens:input+output,
-  input_tokens_details:{cached_tokens:sumDetail(l.input_tokens_details,r.input_tokens_details,'cached_tokens'),cache_write_tokens:sumDetail(l.input_tokens_details,r.input_tokens_details,'cache_write_tokens')},
-  output_tokens_details:{reasoning_tokens:sumDetail(l.output_tokens_details,r.output_tokens_details,'reasoning_tokens')},...(incomplete?{token_flow_unmetered:true}:{})};
+ const incomplete=!!l.token_flow_unmetered||!!r.token_flow_unmetered||![l.input_tokens,l.output_tokens,r.input_tokens,r.output_tokens].every(validCounter);
+ return wireUsage({input_tokens:input,output_tokens:output,total_tokens:input+output,
+  input_tokens_details:{cached_tokens:sumDetail(lu.cachedTokens,ru.cachedTokens),cache_write_tokens:sumDetail(lu.cacheWriteTokens,ru.cacheWriteTokens)},
+  output_tokens_details:{reasoning_tokens:sumDetail(lu.reasoningTokens,ru.reasoningTokens)},...(incomplete?{token_flow_unmetered:true}:{})}) as Item;
 }
 const reply = (body:Item, headers?:Headers) => {
  const h=new Headers(headers);h.set('content-type','application/json');h.delete('content-length');
- return new Response(JSON.stringify(body),{headers:h});
+ return new Response(JSON.stringify({...body,usage:wireUsage(body.usage)}),{headers:h});
 };
 
 /** Stateful continuation and compaction for bridged sources and managed Codex.
@@ -215,7 +239,7 @@ export class GatewayContext {
    if(!Array.isArray(value.output)||!value.output.every(object)||!['completed','incomplete'].includes(String(value.status)))throw new GatewayContextError('Source returned an invalid terminal response',502);
    if(body.store!==false)await this.save(id,[...input,...value.output],scope);
    const output=checkpoint?[checkpoint,...value.output]:value.output;
-   const usage=checkpoint?combinedUsage(summaryUsage,value.usage):value.usage;
+   const usage=checkpoint?combinedUsage(summaryUsage,value.usage):wireUsage(value.usage);
    if(object(usage)&&usage.token_flow_unmetered)options.onUsageIncomplete?.();
    return {...value,id,model:body.model,output,usage,previous_response_id:body.previous_response_id??null};
   };

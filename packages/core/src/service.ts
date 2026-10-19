@@ -1066,7 +1066,6 @@ export async function createDesktopService(options:ServiceOptions) {
       const response=bridgeContext?await gatewayContext.response(path,req.body as {model:string},client?.id??'workspace',client?.modelSources?.[model]??client?.sourceId??apiSource?.id??upstreamURL,dispatch,fixed?.target==='codex'?{scope:codexContextScope,normalize:portableCodexItem,recover:async item=>codexContext.recover(item,await codexContextScopes())}:undefined,{onCompaction:report=>{compaction=report;},onUsageIncomplete:()=>{contextUsageIncomplete=true;if(compaction)compaction={...compaction,unmetered:true};}}):await dispatch(path,req.body);
       if(!response.ok){
         await settle({inputTokens:null,outputTokens:null},response.status>=500);
-        if(cursorModel){record(response.status);abort.close();return reply.code(response.status).send(await response.json());}
         const error=upstreamError(response.status,await readUpstreamError(response));
         callError={code:error.type==='source_policy_blocked'?'source_policy_blocked':error.code??error.type,message:error.message};record(response.status);
         await response.body?.cancel().catch(()=>{});abort.close();

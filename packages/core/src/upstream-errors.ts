@@ -2,6 +2,18 @@ import {safeFailure} from './login/diagnostics.js';
 // Only known categories cross the gateway boundary. Never return raw provider
 // messages: they can contain request content or credentials.
 const known:Record<string,{message:string;type:string;wireMessage?:string}>={
+ cursor_plan_required:{type:'authentication_error',message:'Cursor 官方返回 plan_required：当前账号套餐不支持此 API，请在官方确认 Pro 或团队套餐后刷新。'},
+ cursor_authentication_failed:{type:'authentication_error',message:'Cursor 授权已失效，请重新连接账号。'},
+ cursor_permission_denied:{type:'authentication_error',message:'Cursor API 权限不足，请在官方账号或团队设置中确认权限。'},
+ cursor_rate_limited:{type:'rate_limit_error',message:'Cursor 请求受限，请检查官方额度或稍后重试。'},
+ cursor_timeout:{type:'timeout_error',message:'Cursor 连接超时，请检查网络后刷新。'},
+ cursor_network_error:{type:'provider_error',message:'Cursor 网络连接失败，请检查网络后刷新。'},
+ cursor_backend_override:{type:'configuration_error',message:'检测到 CURSOR_BACKEND_URL 覆盖，请移除后重启；SDK 授权与模型目录使用不同的官方地址。'},
+ cursor_upstream_error:{type:'provider_error',message:'Cursor 服务或模型目录暂不可用，请刷新重试。'},
+ cursor_unavailable:{type:'source_unavailable',message:'Cursor 尚未授权，或所选账号、模型暂不可用。'},
+ cursor_cancelled:{type:'request_cancelled',message:'请求已取消'},
+ cursor_busy:{type:'rate_limit_error',message:'Cursor 正在处理另一个请求，请稍后重试。'},
+ cursor_tool_required:{type:'upstream_protocol_error',message:'Cursor 未按要求生成工具调用，请重试或选择其他模型。'},
  workbuddy_sdk_failed:{type:'provider_error',message:'WorkBuddy 官方 SDK 或上游请求失败，请稍后重试。'},
  workbuddy_output_failed:{type:'upstream_protocol_error',message:'WorkBuddy 返回的模型或工具调用不符合本次请求。'},
  workbuddy_credential_failed:{type:'authentication_error',message:'无法读取 WorkBuddy 账号授权，请检查账号状态。'},
@@ -14,11 +26,23 @@ const known:Record<string,{message:string;type:string;wireMessage?:string}>={
  a2a_server_tool_unsupported:{type:'unsupported_feature',message:'该来源支持客户端函数工具，暂不支持服务端内置工具。请关闭内置网页搜索等服务端工具，或选择支持它们的来源。',wireMessage:'This source supports client function/custom tools only; server-side or unknown tool types are not supported.'},
 };
 export function upstreamError(status:number,body:string):{code?:string;type:string;message:string}{
- let parsed:{error?:{code?:string;message?:string;fields?:unknown}}|undefined;try{parsed=JSON.parse(body);}catch{/* Non-JSON provider response. */}
+ let parsed:{error?:{code?:string;type?:string;param?:unknown;message?:string;fields?:unknown}}|undefined;try{parsed=JSON.parse(body);}catch{/* Non-JSON provider response. */}
  const code=typeof parsed?.error?.code==='string'?parsed.error.code:undefined;const message=typeof parsed?.error?.message==='string'?parsed.error.message:'';
- if(code==='workbuddy_invalid_request'){const fields=Array.isArray(parsed?.error?.fields)?parsed.error.fields.filter((field:unknown)=>typeof field==='string'&&/^(?:tools|input|messages|reasoning|model|stream|instructions|system|tool_choice|parallel_tool_calls|max_tokens|max_output_tokens|max_completion_tokens|reasoning_effort)(?:\.(?:[0-9]+|name|type|content|parameters|summary|effort))*$/.test(field)).slice(0,5):[];return {code,type:'invalid_request_error',message:`WorkBuddy 请求格式不兼容${fields.length?`（字段：${fields.join('、')}）`:''}。请保留此错误用于排查；切换账号或重写配置不能修复请求格式。`};}
+ if(code==='workbuddy_invalid_request'||code==='cursor_invalid_request'){
+  const fields=Array.isArray(parsed?.error?.fields)?parsed.error.fields.filter((field:unknown)=>typeof field==='string'&&/^(?:tools|input|messages|reasoning|model|stream|instructions|system|tool_choice|parallel_tool_calls|max_tokens|max_output_tokens|max_completion_tokens|reasoning_effort)(?:\.(?:[0-9]+|name|type|content|parameters|summary|effort))*$/.test(field)).slice(0,5):[];
+  const detail=fields.length?`（字段：${fields.join('、')}）`:'';
+  return {code,type:'invalid_request_error',message:code==='workbuddy_invalid_request'?`WorkBuddy 请求格式不兼容${detail}。请保留此错误用于排查；切换账号或重写配置不能修复请求格式。`:`Cursor 请求格式不支持${detail}：请使用文本、函数工具及工具结果；图片、服务端工具和严格 JSON 输出暂不可用。`};
+ }
  const entry=code&&Object.hasOwn(known,code)?[code,known[code]] as const:Object.entries(known).find(([,value])=>message===value.wireMessage);
  if(entry)return {code:entry[0],type:entry[1].type,message:entry[1].message};
+ if(status===400){
+  if(code==='context_length_exceeded')return {code:'upstream_context_length',type:'invalid_request_error',message:'上游拒绝了超出模型上下文窗口的输入。请减少本轮附件或工具定义，或选择支持更长上下文的模型。'};
+  const param=typeof parsed?.error?.param==='string'?parsed.error.param:'';
+  // Retain only structural request paths; arbitrary parameter names can contain
+  // user data. Raw upstream messages never cross this boundary.
+  const safeParam=/^(?:input|messages|tools|model|instructions|reasoning|text|response_format|tool_choice|max_output_tokens)(?:\[\d+\]|\.(?:\d+|content|type|text|role|name|parameters|schema|format|strict|effort|summary|call_id|arguments|output|encrypted_content))*$/.test(param)?param:'';
+  if(safeParam||['invalid_request_error','invalid_type','invalid_value','missing_required_parameter','unsupported_parameter','unsupported_value','invalid_parameter'].includes(code??'')||parsed?.error?.type==='invalid_request_error')return {code:'upstream_invalid_request',type:'invalid_request_error',message:`上游拒绝了请求格式或参数${safeParam?`（字段：${safeParam}）`:''}。请保留此错误用于排查协议兼容性；切换账号或修改 DNS 不能修复参数错误。`};
+ }
  if(message.includes('User location is not supported for the API use'))return {code:'region_not_supported',type:'region_not_supported',message:'所选账号的上游服务不支持当前地区使用 API。请查看提供商的地区支持说明；重新登录不能解决此限制。'};
  if(status>=500&&/auth_unavailable|cooling down/.test(message))return {code:'source_cooldown',type:'source_unavailable',message:'所选来源因最近的上游错误暂时无法接收请求。网关会保留账号和模型配置；请稍后重试，持续失败时检查来源的实际调用错误。'};
  if(status>=500&&/^(qoder|workbuddy): (model response reported an error|upstream reported an error)/.test(message))return {code:'source_model_error',type:'provider_error',message:'来源服务在模型响应中返回错误，本次调用未完成。接口配置不代表调用成功；请缩短对话后重试或选择其他模型。'};
