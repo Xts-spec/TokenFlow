@@ -32,6 +32,9 @@ it('authenticates desktop changes, scopes and revokes keys, and retains a recove
   expect((await service.app.inject({url:'/v1/messages',method:'POST',headers:inferenceHeaders,payload:{...message,model:'claude-haiku-4-5'}})).statusCode).toBe(200);
   expect((await service.app.inject({url:'/v1/messages',method:'POST',headers:inferenceHeaders,payload:{...message,model:'claude/claude-opus-4-6'}})).statusCode).toBe(403);
   const usage=(await service.app.inject({url:'/api/gateway/usage?days=0',headers})).json().rows;expect(usage.length).toBeGreaterThan(0);expect(new Set(usage.map((row:{target:string})=>row.target))).toEqual(new Set(['claude-desktop']));
+  const billed=usage.filter((row:{inputTokens:number})=>row.inputTokens>0);
+  expect(billed).not.toHaveLength(0);
+  for(const row of billed)expect(row).toMatchObject({sourceId,model:selections[0].model});
   expect((await service.app.inject({url:`${url}/connect`,method:'POST',headers,payload})).statusCode).toBe(409);expect(change).toHaveBeenCalledOnce();
   payload={revision:(await status()).revision,selections:[{sourceId,model:'claude/claude-opus-4-6'}]};failOpen=true;
   const replaced=await service.app.inject({url:`${url}/connect`,method:'POST',headers,payload});expect(replaced.statusCode,replaced.body).toBe(409);expect(replaced.json().error).toContain('已保存');expect((await status()).connected).toBe(true);expect(await keys()).toHaveLength(1);expect((await keys())[0].id).not.toBe(first.id);

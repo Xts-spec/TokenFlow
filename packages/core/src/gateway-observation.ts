@@ -22,6 +22,8 @@ export class ResponseObserver{
  inspect(e:any){
   if(e.type==='error'||e.type==='response.failed'||e.error){const safe=upstreamError(502,JSON.stringify({error:e.error??e.response?.error}));this.error={code:safe.code??safe.type,message:safe.message};}
   if(typeof e.response?.id==='string')this.responseId=e.response.id;
+  if(e.type==='message_start'&&typeof e.message?.id==='string')this.responseId=e.message.id;
+  if(e.type==='message'&&typeof e.id==='string')this.responseId=e.id;
   if(typeof e.id==='string'&&(e.object==='chat.completion'||e.object==='response'))this.responseId=e.id;
   const tool=(id:unknown,name:unknown,key?:string)=>{
    if(typeof id!=='string'&&key)id=this.indices.get(key);

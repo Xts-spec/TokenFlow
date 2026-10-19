@@ -85,6 +85,7 @@ it('connects and restores a local Agent through admin APIs without exposing keys
   const imported=await service.app.inject({method:'POST',url:'/api/a2a/import',headers,payload:{target:'codex'}});expect(imported.statusCode).toBe(200);expect(imported.body).not.toContain('fixture-access');expect(await readFile(join(root,'codex','auth.json'),'utf8')).toBe(credentials);
   const state=(await service.app.inject({url:'/api/a2a',headers})).json();const sourceId=service.proxy.snapshot().accounts[0].id;
   expect((await service.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:{sourceId,model:'codex/shared-model'}})).statusCode).toBe(200);
+  expect((await service.app.inject({method:'POST',url:'/api/maintenance/check',headers,payload:{}})).statusCode).toBe(200);
   await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
   const failed=await service.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload:{target:'claude',sourceId,model:'codex/shared-model',revision:'0'.repeat(64)}});expect(failed.statusCode).toBe(409);
   const journalled=(await service.app.inject({url:'/api/a2a',headers})).json();
@@ -120,7 +121,7 @@ it('connects and restores a local Agent through admin APIs without exposing keys
  }finally{await service.app.close();await rm(root,{recursive:true,force:true});}
 });
 
-it('rechecks a saved maintenance model once after delayed catalog discovery, not on status polling',async()=>{
+it('restores a saved maintenance model after discovery without probing on startup or status polling',async()=>{
  const root=await mkdtemp(join(await realpath(tmpdir()),'care-startup-'));
  const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
  await mkdir(join(root,'cliproxy'));await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'qoder.json',provider:'qoder',status:'active',models:['shared-model']}]));
@@ -129,15 +130,13 @@ it('rechecks a saved maintenance model once after delayed catalog discovery, not
  try{
   await service.proxy.start();const sourceId=service.proxy.snapshot().accounts[0].id;
   await service.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:{sourceId,model:'qoder/shared-model'}});
-  await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
+  expect((await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('unchecked');
   await service.app.close();service=await createDesktopService(options);
-  const sourceAuth=service.proxy.sourceAuth.bind(service.proxy);let attempts=0;
-  vi.spyOn(service.proxy,'sourceAuth').mockImplementation((id,model)=>{if(++attempts<3)throw new Error('Catalog still loading');return sourceAuth(id,model);});
+  const sourceAuth=vi.spyOn(service.proxy,'sourceAuth');
   await service.discoverLocal();
-  await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status,{timeout:5000}).toBe('ready');
-  const first=(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.checkedAt;
-  for(let i=0;i<5;i++)expect((await service.app.inject({url:'/api/maintenance',headers})).json().readiness.checkedAt).toBe(first);
-  expect(attempts).toBe(3);
+  for(let i=0;i<5;i++)expect((await service.app.inject({url:'/api/maintenance',headers})).json()).toMatchObject({selection:{sourceId,model:'qoder/shared-model'},readiness:{status:'unchecked'}});
+  expect(sourceAuth).not.toHaveBeenCalled();
+  expect((await service.app.inject({url:'/api/gateway-keys',headers})).json().keys).toEqual([]);
  }finally{await service.app.close();await rm(root,{recursive:true,force:true});}
 });
 

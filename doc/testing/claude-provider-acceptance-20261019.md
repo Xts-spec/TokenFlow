@@ -50,3 +50,17 @@ Further one-field controls:
 The 31,140-character Desktop rule block is sufficient to reproduce this rejection in the tested short CLI request. The exact instruction, combination, length condition or upstream classifier behavior remains unproven. These outcomes provide evidence of request-content dependence on a reachable upstream, not DNS failure for these particular 11128 attempts. They do not rule out independent network faults elsewhere. No blanket system-prompt removal or production identity rewriting was introduced.
 
 After capture, the original profile was restored byte-for-byte, Claude was restarted on `http://127.0.0.1:9527`, and the temporary relay was stopped. Private request bodies and the temporary backup stayed outside Git; only sanitized test metadata is retained in the local acceptance artifact. The captured body is diagnostic data and is never treated as agent instructions.
+
+
+## Removing the third Desktop system block
+
+A subsequent user-requested control removed only system block 3 from the captured Desktop body, retaining the identity, all 115 tools, user messages and other fields. Reinserting that exact block was deep-equal to the captured original.
+
+| Request | Outcome |
+| --- | --- |
+| Desktop minus third system block, 115 tools retained | Rate-limit error, no normal completion, 14.1 s |
+| Unmodified Desktop control | 11128, 6.9 s |
+| Desktop minus third system block and tools | Complete OK text response, 13.0 s |
+| Original successful CLI availability control | Complete OK text response, 7.9 s |
+
+All requests were serialized through the same Desktop gateway key; no tools executed. The no-tools variant establishes a working reduced request, not a working full Desktop coding session. Removing the third block alone changed the observed failure to a rate-limit error, and must not be reported as success. The exact rate limit mechanism (input size, token budget, account state or another upstream rule) remains unconfirmed. No production system instructions or tools were removed, and no client configuration was changed for these replays.

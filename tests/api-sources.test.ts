@@ -52,6 +52,58 @@ async function fixture(real=false,configure?:(app:Awaited<ReturnType<typeof crea
  const add=async(name:string,apiKey:string,protocol='responses')=>{const r=await service.app.inject({method:'POST',url:'/api/sources',headers,payload:{name,apiKey,baseURL,protocol,models:['shared','forbidden']}});expect(r.statusCode,r.body).toBe(200);return r.json();};
  return {root,baseURL,secrets,calls,service,headers,add,options,holdResponses:()=>{let release!:()=>void;paused=new Promise<void>(r=>release=r);return()=>{paused=undefined;release();};}};
 }
+it('tests connectivity with the raw model name sent by the API card, using saved validation even when the gateway is stopped',async()=>{
+ const {service,headers,baseURL,calls}=await fixture(false,undefined,{'claude-b':'messages'});
+ const added=await service.app.inject({method:'POST',url:'/api/sources/quick',headers,payload:{baseURL,apiKey:'connectivity-fixture-key',model:'claude-b'}});
+ expect(added.statusCode,added.body).toBe(200);const source=added.json();calls.length=0;
+ await service.proxy.stop();
+ const checked=await service.app.inject({method:'POST',url:`/api/sources/${source.id}/check`,headers,payload:{model:'claude-b'}});
+ expect(checked.statusCode,checked.body).toBe(200);expect(checked.json().passed).toBe(true);
+ expect(calls.map(call=>call.path)).toEqual(['/v1/messages']);expect(calls[0].body.max_tokens).toBe(16);
+ const saved=(await service.app.inject({url:'/api/sources',headers})).json().sources[0];
+ expect(saved.checks['claude-b'].status).toBe('passed');expect(saved.modelRoutes).toEqual(source.modelRoutes);
+ const count=calls.length;
+ const invalid=await service.app.inject({method:'POST',url:`/api/sources/${source.id}/check`,headers,payload:{model:'not-saved'}});
+ expect(invalid.statusCode).toBe(409);expect(calls).toHaveLength(count);
+});
+it('does not send model probes when selecting or restoring a saved maintenance model',async()=>{
+ const {service,headers,add,calls,options}=await fixture();const source=await add('No background probes','background-fixture-key');
+ calls.length=0;
+ const selected=await service.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:{sourceId:source.id,model:apiModelID(source.id,'shared')}});
+ expect(selected.statusCode,selected.body).toBe(200);expect(selected.json().readiness.status).toBe('unchecked');
+ await new Promise(resolve=>setTimeout(resolve,100));expect(calls).toHaveLength(0);
+ await service.app.close();const restarted=await createDesktopService(options);cleanup.push(()=>restarted.app.close());
+ vi.spyOn(restarted.proxy,'importCredential').mockResolvedValue(undefined as never);
+ vi.spyOn(restarted.proxy,'importLocal').mockResolvedValue(undefined as never);
+ await restarted.discoverLocal();
+ await new Promise(resolve=>setTimeout(resolve,100));
+ expect((await restarted.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('unchecked');
+ expect(calls).toHaveLength(0);
+ const sent=await restarted.app.inject({method:'POST',url:'/api/maintenance/run',headers,payload:{prompt:'读取网关状态'}});
+ expect(sent.statusCode,sent.body).toBe(200);
+ await expect.poll(async()=>(await restarted.app.inject({url:'/api/maintenance',headers})).json().status).toBe('completed');
+ expect(calls).toHaveLength(1);
+});
+it.each(['responses','chat','messages'] as const)('tests a saved full %s endpoint without appending its protocol path twice',async protocol=>{
+ const path=protocol==='chat'?'chat/completions':protocol;
+ const {service,headers,baseURL,calls}=await fixture(false,undefined,{shared:path});
+ const added=await service.app.inject({method:'POST',url:'/api/sources',headers,payload:{name:'Full endpoint',baseURL:`${baseURL}/${path}`,protocol,apiKey:'full-endpoint-fixture-key',models:['shared']}});
+ expect(added.statusCode,added.body).toBe(200);const source=added.json();
+ const checked=await service.app.inject({method:'POST',url:`/api/sources/${source.id}/check`,headers,payload:{model:'shared'}});
+ expect(checked.statusCode,checked.body).toBe(200);expect(checked.json().passed,checked.body).toBe(true);
+ expect(calls.map(call=>call.path)).toEqual([`/v1/${path}`]);
+});
+it('does not send model probes when reading, refreshing, renaming or toggling API sources',async()=>{
+ const {service,headers,add,calls,baseURL}=await fixture();const source=await add('Quiet API','quiet-fixture-key');
+ expect(calls).toHaveLength(0);
+ const update=(name:string,enabled:boolean)=>service.app.inject({method:'PUT',url:`/api/sources/${source.id}`,headers,payload:{name,enabled,baseURL,protocol:source.protocol,models:source.models}});
+ for(const url of ['/api/sources','/api/local-agent','/api/maintenance'])expect((await service.app.inject({url,headers})).statusCode).toBe(200);
+ await service.proxy.refreshAccounts();
+ expect((await update('Renamed API',true)).statusCode).toBe(200);
+ expect((await update('Renamed API',false)).statusCode).toBe(200);
+ expect((await update('Renamed API',true)).statusCode).toBe(200);
+ expect(calls).toHaveLength(0);
+});
 it('drops the injected image tool and offers a retry body without include or cache key',()=>{
  const fn={type:'function',name:'get_weather'};
  expect(genericResponsesBodies({model:'m',input:'hi',tools:[{type:'image_generation',output_format:'png'}],tool_choice:'auto',include:['reasoning.encrypted_content'],prompt_cache_key:'k'}))
@@ -177,7 +229,7 @@ it('routes all three declared upstream protocols through the real sidecar, sourc
   const measured=(await service.app.inject({url:'/api/gateway-keys',headers})).json().keys.find((k:{id:string})=>k.id===key.json().key.id);expect(measured.usedTokens).toBe(30);
   expect((await request()).statusCode).toBe(429);
 
-  const check=await service.app.inject({method:'POST',url:`/api/sources/${source.id}/check`,headers,payload:{model}});expect(check.json().passed,check.body).toBe(true);if(protocol==='responses')expect(calls.at(-1)?.body.max_output_tokens).toBe(128);
+  const check=await service.app.inject({method:'POST',url:`/api/sources/${source.id}/check`,headers,payload:{model}});expect(check.json().passed,check.body).toBe(true);if(protocol==='responses')expect(calls.at(-1)?.body.max_output_tokens).toBe(16);
   const deny=await service.app.inject({method:'POST',url:`/api/sources/${source.id}/check`,headers,payload:{model:apiModelID(source.id,'forbidden')}});expect(deny.json().passed).toBe(false);expect(deny.body).not.toContain('DO-NOT-RETURN');
   const activity=await service.app.inject({url:'/api/gateway/activity',headers});expect(activity.json().recent.some((r:{keyId:string})=>r.keyId===key.json().key.id)).toBe(true);
   const update=await service.app.inject({method:'PUT',url:`/api/sources/${source.id}`,headers,payload:{...source,credentialRef:undefined,checks:undefined,hasKey:undefined,id:undefined,createdAt:undefined,enabled:false}});expect(update.statusCode).toBe(409);
@@ -225,7 +277,7 @@ it('keeps two identical API types separate across a service restart, A2A configu
  }
  const crossed=await restarted.app.inject({method:'POST',url:'/v1/responses',headers:{...headers,authorization:`Bearer ${keys[1].apiKey}`},payload:{model:mb,input:'continue',previous_response_id:previous}});expect(crossed.statusCode,crossed.body).toBe(400);
  const selected=await restarted.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:{sourceId:b.id,model:mb}});expect(selected.statusCode,selected.body).toBe(200);
- await expect.poll(async()=>(await restarted.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
+ expect((await restarted.app.inject({method:'POST',url:'/api/maintenance/check',headers,payload:{}})).statusCode).toBe(200);await expect.poll(async()=>(await restarted.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
  const repair=await restarted.app.inject({method:'POST',url:'/api/maintenance/run',headers,payload:{prompt:'检查网关'}});expect(repair.statusCode,repair.body).toBe(200);await expect.poll(async()=>(await restarted.app.inject({url:'/api/maintenance',headers})).json().status).toBe('completed');
  const activity=(await restarted.app.inject({url:'/api/gateway/activity',headers})).json();expect(activity.recent.some((r:{agent:string;model:string})=>r.agent==='内部 · 维修模型'&&r.model===mb)).toBe(true);
  expect(calls.filter(c=>c.key.includes('project-B')).length).toBeGreaterThan(1);
@@ -293,7 +345,7 @@ it('uses an explicitly selected bounded repair source while sidecar is offline, 
  const normal=(await service.app.inject({method:'POST',url:'/api/gateway-keys',headers,payload:{name:'normal',models:[model],sourceId:source.id}})).json();
  await service.proxy.stop();
  const direct=await service.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:{sourceId:source.id,model,channel:'direct'}});expect(direct.statusCode,direct.body).toBe(200);
- await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
+ expect((await service.app.inject({method:'POST',url:'/api/maintenance/check',headers,payload:{}})).statusCode).toBe(200);await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
  expect((await service.app.inject({method:'POST',url:'/v1/responses',headers:{...headers,authorization:`Bearer ${normal.apiKey}`},payload:{model,input:'Hi'}})).statusCode).toBe(503);
  const repair=await service.app.inject({method:'POST',url:'/api/maintenance/run',headers,payload:{prompt:'只读检查'}});expect(repair.statusCode,repair.body).toBe(200);await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().status).toBe('completed');
  const key=(await service.app.inject({url:'/api/gateway-keys',headers})).json().keys.find((k:{name:string})=>k.name==='内部 · 维修模型');expect(key.tokenLimit).toBe(32000);expect(key.usedTokens).toBeGreaterThan(0);expect(calls.at(-1)?.key).toContain('offline-repair-key');
@@ -346,7 +398,7 @@ it('clears an idle repair selection durably, keeps history and user keys, and do
  const {service,headers,add,options,root}=await fixture();const source=await add('Repair selection','repair-key');const model=apiModelID(source.id,'shared');
  const user=(await service.app.inject({method:'POST',url:'/api/gateway-keys',headers,payload:{name:'内部 · 维修模型',sourceId:source.id,models:[model]}})).json();
  const select=()=>service.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:{sourceId:source.id,model,channel:'direct'}});
- expect((await select()).statusCode).toBe(200);await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
+ expect((await select()).statusCode).toBe(200);expect((await service.app.inject({method:'POST',url:'/api/maintenance/check',headers,payload:{}})).statusCode).toBe(200);await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
  await service.app.inject({method:'POST',url:'/api/maintenance/run',headers,payload:{prompt:'保留这条维修记录',chain:{target:'codex',sourceId:source.id,model}}});await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().status).toBe('completed');
  await service.app.inject({method:'PUT',url:'/api/maintenance/approval-policy',headers,payload:{mode:'model'}});
  const before=(await service.app.inject({url:'/api/maintenance',headers})).json();const beforeKeys=(await service.app.inject({url:'/api/gateway-keys',headers})).json().keys;const internal=beforeKeys.find((k:{id:string})=>k.id!==user.key.id);expect(internal.usedTokens).toBeGreaterThan(0);
@@ -355,7 +407,7 @@ it('clears an idle repair selection durably, keeps history and user keys, and do
  expect((await service.app.inject({method:'DELETE',url:'/api/maintenance/selection',headers:{...headers,authorization:`Bearer ${user.apiKey}`}})).statusCode).toBe(401);
  const cleared=await clear();expect(cleared.statusCode,cleared.body).toBe(200);expect(cleared.json()).toMatchObject({status:before.status,messages:before.messages,chain:before.chain,policy:{mode:'manual'}});expect(cleared.json().selection).toBeUndefined();
  expect((await service.app.inject({url:'/api/gateway-keys',headers})).json().keys.map((k:{id:string})=>k.id)).toEqual([user.key.id]);
- expect((await select()).statusCode).toBe(200);await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
+ expect((await select()).statusCode).toBe(200);expect((await service.app.inject({method:'POST',url:'/api/maintenance/check',headers,payload:{}})).statusCode).toBe(200);await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
  const renewed=(await service.app.inject({url:'/api/gateway-keys',headers})).json().keys.find((k:{id:string})=>k.id!==user.key.id);expect(renewed.tokenLimit).toBe(32000-internal.usedTokens);
  expect((await clear()).statusCode).toBe(200);expect((await clear()).statusCode).toBe(200);
  await expect(readFile(join(root,'maintenance-model.json'))).rejects.toMatchObject({code:'ENOENT'});await expect(readFile(join(root,'maintenance-channel.json'))).rejects.toMatchObject({code:'ENOENT'});
@@ -364,7 +416,7 @@ it('clears an idle repair selection durably, keeps history and user keys, and do
 });
 it('keeps an explicit approval-model reference when clearing only the repair selection',async()=>{
  const {service,headers,add}=await fixture();const source=await add('Separate approval','approval-key');const selection={sourceId:source.id,model:apiModelID(source.id,'shared')};
- await service.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:selection});await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
+ await service.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:selection});expect((await service.app.inject({method:'POST',url:'/api/maintenance/check',headers,payload:{}})).statusCode).toBe(200);await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
  await service.app.inject({method:'PUT',url:'/api/maintenance/approval-policy',headers,payload:{mode:'model',reviewer:selection}});
  await service.app.inject({method:'POST',url:'/api/maintenance/propose',headers,payload:{chain:{target:'codex',...selection}}});await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().proposal?.reason).toContain('人工审批');
  const reviewerKey=(await service.app.inject({url:'/api/gateway-keys',headers})).json().keys.find((k:{name:string})=>k.name==='内部 · 审批模型');expect(reviewerKey).toBeDefined();
@@ -379,7 +431,9 @@ it('refuses selection removal during model checks, repairs and model approval wi
  const clear=()=>service.app.inject({method:'DELETE',url:'/api/maintenance/selection',headers});
  const unchanged=async()=>expect((await service.app.inject({url:'/api/maintenance',headers})).json().selection).toEqual(selection);
  try{
-  await service.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:selection});expect((await clear()).statusCode).toBe(409);await unchanged();release();
+  await service.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:selection});
+  expect((await service.app.inject({method:'POST',url:'/api/maintenance/check',headers,payload:{}})).statusCode).toBe(200);
+  expect((await clear()).statusCode).toBe(409);await unchanged();release();
   await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
   release=holdResponses();await service.app.inject({method:'POST',url:'/api/maintenance/run',headers,payload:{prompt:'只读检查'}});expect((await clear()).statusCode).toBe(409);await unchanged();release();
   await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().status).toBe('completed');
@@ -417,7 +471,7 @@ it('serializes the full offline key update so a concurrent stale edit cannot res
 });
 it('clears the restored repair selection after a normal restart without retaining the prior internal key',async()=>{
  const {service,headers,add,options,root}=await fixture();const source=await add('Restarted repair','restart-key');const selection={sourceId:source.id,model:apiModelID(source.id,'shared')};
- await service.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:selection});await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
+ await service.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:selection});expect((await service.app.inject({method:'POST',url:'/api/maintenance/check',headers,payload:{}})).statusCode).toBe(200);await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
  const oldKey=(await service.app.inject({url:'/api/gateway-keys',headers})).json().keys[0];expect(oldKey).toBeDefined();
  await service.app.close();expect(JSON.parse(await readFile(join(root,'gateway-keys.json'),'utf8'))).toEqual([]);
  const restarted=await createDesktopService(options);cleanup.push(()=>restarted.app.close());await restarted.proxy.start();
@@ -606,7 +660,7 @@ it('revalidates unchanged models on explicit verification and uses each route fo
  expect(rejected.statusCode,rejected.body).toBe(409);
  const accepted=await service.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:{sourceId:source.id,model:apiModelID(source.id,'gpt-a'),channel:'direct'}});
  expect(accepted.statusCode,accepted.body).toBe(200);
- await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
+ expect((await service.app.inject({method:'POST',url:'/api/maintenance/check',headers,payload:{}})).statusCode).toBe(200);await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
  expect(calls.at(-1)).toMatchObject({path:'/v1/responses',key:'Bearer mixed-repair-key',body:{model:'gpt-a'}});
 });
 

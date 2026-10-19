@@ -158,6 +158,8 @@ it('connects Cursor to all local Agent targets and routes maintenance through th
   const written=await readFile(paths[target as keyof typeof paths],'utf8');if(target==='workbuddy')expect(JSON.parse(written)).toMatchObject([{id:'cursor/Fixture-model',name:'cursor/Fixture-model'}]);else expect(written).toContain(model);
  }
  const selected=await service.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:{sourceId,model}});expect(selected.statusCode,selected.body).toBe(200);
+ expect(selected.json().readiness.status).toBe('unchecked');
+ expect((await service.app.inject({method:'POST',url:'/api/maintenance/check',headers,payload:{}})).statusCode).toBe(200);
  await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
  expect(sdk.create).toHaveBeenCalled();
 });
