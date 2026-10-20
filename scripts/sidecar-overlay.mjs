@@ -20,6 +20,18 @@ const replacements={
  [resolve('upstream/CLIProxyAPI/internal/runtime/executor/qoder_executor.go')]:resolve('patches/cliproxy/qoder_executor.go'),
  [resolve('upstream/CLIProxyAPI/internal/runtime/executor/helps/qoder_protocol.go')]:resolve('patches/cliproxy/qoder_protocol.go'),
 };
+// The Claude codec cannot deliver native image_generation_call results. Do not
+// advertise an extra server-side tool that silently becomes an empty end_turn.
+// Keep caller-supplied tools and native Responses image support unchanged.
+for(const file of ['codex_executor_execute.go','codex_executor_stream.go','codex_websockets_execute.go','codex_websockets_stream.go']){
+ const codexSource=resolve('upstream/CLIProxyAPI/internal/runtime/executor',file);
+ const codexOriginal=readFileSync(codexSource,'utf8');
+ const imageGuard='if e.cfg == nil || e.cfg.DisableImageGeneration == config.DisableImageGenerationOff {';
+ if(codexOriginal.split(imageGuard).length!==2)throw new Error('Codex image injection boundary changed: '+file);
+ const codexPatched=join(patchDir,file);
+ writeFileSync(codexPatched,codexOriginal.replace(imageGuard,'if responseFormat != sdktranslator.FormatClaude && (e.cfg == nil || e.cfg.DisableImageGeneration == config.DisableImageGenerationOff) {'));
+ replacements[codexSource]=codexPatched;
+}
 // Keep bounded pre-header recovery scoped to Antigravity inference only.
 for(const [file,count] of [['antigravity_executor_execute.go',2],['antigravity_executor_stream.go',1]]){
  const agSource=resolve('upstream/CLIProxyAPI/internal/runtime/executor',file);
@@ -52,6 +64,7 @@ replacements[responseSource]=responsePatched;
 // Test files in a developer's checkout may already exist. Use the same destination
 // names so the overlay replaces them rather than registering duplicate tests.
 if(test){
+ replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/token_flow_codex_claude_imagegen_test.go')]=resolve('tests/sidecar/codex_claude_imagegen_test.go');
  replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/token_flow_trae_web_pages_test.go')]=resolve('tests/sidecar/trae_web_pages_test.go');
  replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/token_flow_trae_web_search_test.go')]=resolve('tests/sidecar/trae_web_search_test.go');
  replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/token_flow_trae_live_test.go')]=resolve('tests/sidecar/trae_native_live_test.go');
