@@ -137,12 +137,26 @@ export class GatewayContext {
   const encrypted=Buffer.concat([cipher.update(JSON.stringify(value),'utf8'),cipher.final()]);
   return PREFIX+Buffer.concat([nonce,cipher.getAuthTag(),encrypted]).toString('base64url');
  }
- private unseal(value:unknown,scope:ContextScope):Item[] {
+ private userFingerprint(item:Item){
+  const content=typeof item.content==='string'?[{type:'input_text',text:item.content}]:item.content;
+  return createHmac('sha256',this.secret).update(JSON.stringify({role:item.role,content})).digest('hex');
+ }
+ private sealHistory(input:Item[],scope:ContextScope,coveredUsers:Set<string>){
+  const value=coveredUsers.size?{format:'history-v1',input,coveredUsers:[...coveredUsers]}:input;
+  bounded(value);return this.seal(value,scope);
+ }
+ private unseal(value:unknown,scope:ContextScope):Item[] {return this.unsealHistory(value,scope).input;}
+ private unsealHistory(value:unknown,scope:ContextScope):{input:Item[];coveredUsers:Set<string>} {
   try{
    if(typeof value!=='string'||!value.startsWith(PREFIX)||value.length>LIMIT*2)throw new Error();
    const data=Buffer.from(value.slice(PREFIX.length),'base64url');const decipher=createDecipheriv('aes-256-gcm',this.secret,data.subarray(0,12));
    decipher.setAAD(Buffer.from(JSON.stringify(scope)));decipher.setAuthTag(data.subarray(12,28));
-   return items(JSON.parse(Buffer.concat([decipher.update(data.subarray(28)),decipher.final()]).toString()));
+   const decoded:unknown=JSON.parse(Buffer.concat([decipher.update(data.subarray(28)),decipher.final()]).toString());
+   if(object(decoded)&&decoded.format==='history-v1'){
+    if(!Array.isArray(decoded.coveredUsers)||!decoded.coveredUsers.every(value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value)))throw new Error();
+    return {input:items(decoded.input),coveredUsers:new Set(decoded.coveredUsers as string[])};
+   }
+   return {input:items(decoded),coveredUsers:new Set()};
   }catch{throw new GatewayContextError('Context is invalid or belongs to another API key, source or model; resend the original history');}
  }
  encodeCheckpoint(value:Item[],scope:ContextScope){bounded(value);return this.seal(value,scope);}
@@ -157,17 +171,17 @@ export class GatewayContext {
  }
  private async history(id:unknown,scope:ContextScope) {
   if(typeof id!=='string'||!/^resp_tf_[a-f0-9]{32}$/.test(id))throw new GatewayContextError('Unknown previous_response_id; resend the original history');
-  try{return this.unseal(await readFile(join(this.directory,id),'utf8'),scope);}
+  try{return this.unsealHistory(await readFile(join(this.directory,id),'utf8'),scope);}
   catch(error){if(error instanceof GatewayContextError)throw error;throw new GatewayContextError('Previous response is unavailable or was not stored; resend the original history');}
  }
- private async save(id:string,input:Item[],scope:ContextScope) {
+ private async save(id:string,input:Item[],scope:ContextScope,coveredUsers=new Set<string>()) {
   bounded(input);const path=join(this.directory,id);const temp=path+'.'+randomUUID();
-  try{await writeFile(temp,this.seal(input,scope),{mode:0o600,flag:'wx'});await rename(temp,path);}finally{await rm(temp,{force:true});}
+  try{await writeFile(temp,this.sealHistory(input,scope,coveredUsers),{mode:0o600,flag:'wx'});await rename(temp,path);}finally{await rm(temp,{force:true});}
  }
  private async expand(body:RequestBody,scope:ContextScope,migration?:ContextMigration) {
-  let input=items(body.input);
+  let input=items(body.input);const coveredUsers=new Set<string>();
   if(body.previous_response_id!=null){
-   let history:Item[];try{history=await this.history(body.previous_response_id,scope);}catch(error){if(!migration)throw error;history=await migration.recover({type:'previous_response',id:body.previous_response_id});}
+   let history:Item[];try{const saved=await this.history(body.previous_response_id,scope);history=saved.input;for(const hash of saved.coveredUsers)coveredUsers.add(hash);}catch(error){if(!migration)throw error;history=await migration.recover({type:'previous_response',id:body.previous_response_id});}
    input=[...history,...input];
   }
   const expanded:Item[]=[];
@@ -175,20 +189,20 @@ export class GatewayContext {
    if(item.type==='compaction'){
     // The checkpoint replaces its covered window. Preserve fresh user or
     // instruction messages a client prepends when rebuilding that window.
-    let restored:Item[];try{restored=this.unseal(item.encrypted_content,scope);}catch(error){if(!migration)throw error;restored=await migration.recover(item);}
-    const fresh=expanded.filter(entry=>['user','system','developer'].includes(String(entry.role))&&!restored.some(saved=>saved.role===entry.role&&JSON.stringify(saved.content)===JSON.stringify(entry.content)));
+    let restored:Item[];try{const saved=this.unsealHistory(item.encrypted_content,scope);restored=saved.input;for(const hash of saved.coveredUsers)coveredUsers.add(hash);}catch(error){if(!migration)throw error;restored=await migration.recover(item);}
+    const fresh=expanded.filter(entry=>['user','system','developer'].includes(String(entry.role))&&!(entry.role==='user'&&coveredUsers.has(this.userFingerprint(entry)))&&!restored.some(saved=>saved.role===entry.role&&JSON.stringify(saved.content)===JSON.stringify(entry.content)));
     expanded.length=0;expanded.push(...restored,...fresh);
    }
    else if(item.type==='item_reference')throw new GatewayContextError('This source requires full conversation items, not item_reference');
    else expanded.push(item);
   }
-  const portable=migration?.normalize?expanded.flatMap(migration.normalize):expanded;bounded(portable);return portable;
+  const portable=migration?.normalize?expanded.flatMap(migration.normalize):expanded;bounded(portable);return {input:portable,coveredUsers};
  }
  async response(path:string,body:RequestBody,owner:string,source:string,send:Send,migration?:ContextMigration,options:ContextOptions={}):Promise<Response> {
-  const scope=migration?.scope??{owner,model:body.model,source};let input=await this.expand(body,scope,migration);
+  const scope=migration?.scope??{owner,model:body.model,source};const expanded=await this.expand(body,scope,migration);let input=expanded.input;const coveredUsers=expanded.coveredUsers;
   const compact=async(history:Item[])=>{
    const started=Date.now();const report:CompactionReport={inputBytes:size(history),outputBytes:0,calls:0,reused:0,durationMs:0,inputTokens:0,outputTokens:0,cachedTokens:0,cacheWriteTokens:0,reasoningTokens:0,failed:true,unmetered:false};
-   try{const response=await this.compact(body,history,scope,send,{owner,model:body.model,source},report,body.store!==false||!!migration);report.failed=false;return response;}
+   try{const response=await this.compact(body,history,scope,send,{owner,model:body.model,source},report,body.store!==false||!!migration,coveredUsers);report.failed=false;return response;}
    finally{report.durationMs=Date.now()-started;options.onCompaction?.({...report});}
   };
   for(const field of ['store','stream'])if(body[field]!=null&&typeof body[field]!=='boolean')throw new GatewayContextError(field+' must be boolean');
@@ -230,7 +244,7 @@ export class GatewayContext {
    if((automatic?historyBytes:size(input))>=threshold&&worthwhile){
     const compacted=await compact(input);if(!compacted.ok)return compacted;
     const result=await json(compacted);checkpoint=items(result.output).at(-1);summaryUsage=result.usage;
-    const restored=this.unseal(checkpoint?.encrypted_content,scope);
+    const saved=this.unsealHistory(checkpoint?.encrypted_content,scope);const restored=saved.input;for(const hash of saved.coveredUsers)coveredUsers.add(hash);
     input=migration?.normalize?restored.flatMap(migration.normalize):restored;
    }
   }
@@ -250,7 +264,7 @@ export class GatewayContext {
   const id='resp_tf_'+randomBytes(16).toString('hex');
   const finish=async (value:Item) => {
    if(!Array.isArray(value.output)||!value.output.every(object)||!['completed','incomplete'].includes(String(value.status)))throw new GatewayContextError('Source returned an invalid terminal response',502);
-   if(body.store!==false)await this.save(id,[...input,...value.output],scope);
+   if(body.store!==false)await this.save(id,[...input,...value.output],scope,coveredUsers);
    const output=checkpoint?[checkpoint,...value.output]:value.output;
    const usage=checkpoint?combinedUsage(summaryUsage,value.usage):wireUsage(value.usage);
    if(object(usage)&&usage.token_flow_unmetered)options.onUsageIncomplete?.();
@@ -305,7 +319,7 @@ export class GatewayContext {
   }));
   const headers=new Headers(response.headers);headers.delete('content-length');if(checkpoint)headers.set('x-token-flow-compaction','model-summary-v1; threshold=utf8-upper-bound');return new Response(stream,{headers});
  }
- private async compact(body:RequestBody,input:Item[],scope:ContextScope,send:Send,cacheScope:ContextScope,report:CompactionReport,persistSummaries:boolean) {
+ private async compact(body:RequestBody,input:Item[],scope:ContextScope,send:Send,cacheScope:ContextScope,report:CompactionReport,persistSummaries:boolean,coveredUsers:Set<string>) {
   // Keep recent user turns; long tool loops may compact older exchanges within
   // a turn. Never cut across an unfinished tool call.
   const budget=contextBudget(body,input);
@@ -458,7 +472,12 @@ export class GatewayContext {
   bounded(compacted);report.outputBytes=size(compacted);
   // This token is our own authenticated context, not an OpenAI encrypted state.
   // It is expanded only by this gateway under the same key/source/model scope.
-  const item={id:'cmp_tf_'+randomBytes(16).toString('hex'),type:'compaction',encrypted_content:this.seal(compacted,scope)};
+  // Authenticated identities distinguish already summarized user messages from
+  // genuinely fresh messages prepended by a client during history reconstruction.
+  const retainedUsers=new Set(compacted.filter(item=>item.role==='user').map(item=>this.userFingerprint(item)));
+  const covered=new Set(coveredUsers);
+  for(const user of input.filter(item=>item.role==='user')){const hash=this.userFingerprint(user);if(!retainedUsers.has(hash))covered.add(hash);}
+  const item={id:'cmp_tf_'+randomBytes(16).toString('hex'),type:'compaction',encrypted_content:this.sealHistory(compacted,scope,covered)};
   return reply({id:'resp_tf_compact_'+randomBytes(16).toString('hex'),object:'response.compaction',created_at:Math.floor(Date.now()/1000),output:[...compacted.filter(entry=>entry.role==='user').map(entry=>({type:'message',...entry})),item],usage},new Headers({'x-token-flow-compaction':'model-summary-v1'}));
  }
 }
