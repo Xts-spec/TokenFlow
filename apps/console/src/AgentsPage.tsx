@@ -22,7 +22,7 @@ import { compactTokens, formatTokens, percentText, rangeLabel, totalsOf } from '
 import type { UsageData } from './usage-data';
 import { UsageFold, modelManufacturer } from './UsagePanel';
 import {DragHandle,dropOrder,orderModels,useModelOrder} from './display-order';
-import { isSourceSelectionAvailable, sourceLabel, sourceOptions } from './source-options';
+import { isSourceSelectionAvailable, sourceSelectionState, sourceSelectionNotice, sourceLabel, sourceOptions } from './source-options';
 import { qualifiedModelLabel as modelLabel } from './model-label';
 import { useNativeLogin } from './native-login';
 import { FlowDialog } from './FlowDialog';
@@ -41,17 +41,17 @@ export function savedAgentTab(){try{return agentGroup(localStorage.getItem(tabKe
 const hiddenKey=(target:string)=>`token-flow.agent.${target}.hidden`;
 const post=(body:unknown)=>({method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
 const choiceId=(choice:Choice)=>`model:${choice.sourceId}/${choice.model}`;
-const unavailableSelectionMessage='部分模型暂未确认可用，可保留并应用，也可选择移除。';
+const unavailableSelectionMessage='部分所选来源已停用，或模型已不在当前列表中，可保留选择或移除。';
 
-function problemOf(target:AgentTarget,calls:GatewayCall[],available:ReturnType<typeof sourceOptions>){
+function problemOf(target:AgentTarget,calls:GatewayCall[],available:ReturnType<typeof sourceOptions>,local:LocalAgentSnapshot){
  const connection=target.connection;
  if(target.error)return target.error;
  if(!connection)return '';
- if(!(connection.selections??[connection]).every(item=>isSourceSelectionAvailable(available,item)))return unavailableSelectionMessage;
+ if((connection.selections??[connection]).some(item=>sourceSelectionState(local,item,available)==='unavailable'))return unavailableSelectionMessage;
  if(target.configurationState==='missing')return '网关配置已移除，可重新应用所选模型。';
  if(target.configurationState==='changed')return '配置已被其他应用或手动修改，可重新应用所选模型。';
  if(target.configurationState!=='configured')return '暂时无法确认接入配置，请打开维修检查。';
- const evidence=connectionEvidence(target,calls,available);
+ const evidence=connectionEvidence(target,calls,available,local);
  return evidence.tone==='attention'?evidence.label:'';
 }
 
@@ -82,7 +82,7 @@ export function AgentsPage({local,calls,usage,notify,onRepair,onAgent,localError
     const desktopView=item.id==='claude'&&claudeClient==='desktop';
     const connection=!desktopView&&source.connection&&isSourceSelectionAvailable(available,source.connection)?source.connection:undefined;
     const native=logins[client]?.nativeLabel;
-    const problem=!desktopView&&!!problemOf(source,calls,available);
+    const problem=!desktopView&&!!problemOf(source,calls,available,local);
     return <button key={item.id} role="tab" aria-selected={target?.id===item.id} tabIndex={target?.id===item.id?0:-1} className="tfTile" onClick={()=>choose(item.id)}>
      <ProviderIcon provider={item.id} size={30}/>
      <span className="tfTileText"><strong>{client==='workbuddy-ai'?'WorkBuddyAI':item.name}</strong><small>{desktopView?'Claude Desktop':`${item.id==='claude'?'Claude CLI · ':''}${connection?modelLabel(local,connection.model):native?`本机 · ${native}`:source.connection?'模型不可用':'未接入'}`}</small></span>
@@ -92,7 +92,7 @@ export function AgentsPage({local,calls,usage,notify,onRepair,onAgent,localError
   </ScrollRail>
   {(loadError||localError)&&<LoadError message="暂时无法读取本机 Agent，请检查连接后重试。" retry={()=>Promise.allSettled([reloadLocal(),refresh()])}/>}
   {!targets&&!loadError&&!localError&&<LoadingSkeleton label="正在读取本机 Agent" variant="cards"/>}
-  {(()=>{const panel=target?.id==='workbuddy'&&workbuddyClient==='workbuddy-ai'?targets?.find(item=>item.id==='workbuddy-ai')??target:target;return target?.id==='claude'&&claudeClient==='desktop'?<ClaudeDesktopPanel clientSwitch={clientSwitch} local={local} usage={usage} notify={notify} key="claude-desktop"/>:panel&&<AgentPanel onRefreshAccounts={()=>refreshOfficialAccounts(panel.id)} clientSwitch={clientSwitch} key={panel.id} target={panel} update={updates[panel.id]} login={logins[panel.id]} local={local} usage={usage} problem={problemOf(panel,calls,available)} notify={notify} onRepair={onRepair} onChanged={refresh} onProgramChanged={refreshUpdates}/>;})()}
+  {(()=>{const panel=target?.id==='workbuddy'&&workbuddyClient==='workbuddy-ai'?targets?.find(item=>item.id==='workbuddy-ai')??target:target;return target?.id==='claude'&&claudeClient==='desktop'?<ClaudeDesktopPanel clientSwitch={clientSwitch} local={local} usage={usage} notify={notify} key="claude-desktop"/>:panel&&<AgentPanel onRefreshAccounts={()=>refreshOfficialAccounts(panel.id)} clientSwitch={clientSwitch} key={panel.id} target={panel} update={updates[panel.id]} login={logins[panel.id]} local={local} usage={usage} problem={problemOf(panel,calls,available,local)} notify={notify} onRepair={onRepair} onChanged={refresh} onProgramChanged={refreshUpdates}/>;})()}
  </div>;
 }
 
@@ -133,7 +133,8 @@ function AgentPanel({onRefreshAccounts,clientSwitch,target,update,login,local,us
  const current=connection&&isSourceSelectionAvailable(available,connection)?{sourceId:connection.sourceId,model:connection.model}:undefined;
  const isCurrent=(choice:Choice)=>!!current&&current.sourceId===choice.sourceId&&current.model===choice.model;
  const models:Choice[]=draftDirty?draftModels:connection?.selections??(connection?[{sourceId:connection.sourceId,model:connection.model}]:draftModels.length?draftModels:target.backups.find(record=>record.selections)?.selections??[]);
- const unavailableModels=models.filter(choice=>!isSourceSelectionAvailable(available,choice));
+ const unavailableModels=models.filter(choice=>sourceSelectionState(local,choice,available)==='unavailable');
+ const selectionNotice=sourceSelectionNotice(local,models,available);
  const visibleProblem=problem===unavailableSelectionMessage&&!unavailableModels.length?'':problem;
  const shownModels=orderModels(models,choice=>modelLabel(local,choice.model),modelOrder==='manual'?'manual':'name',modelRanks);const modelIds=shownModels.map(item=>item.model);
  const moveAgentModel=(from:string,to:string,items:readonly string[],after=false)=>{if(from===to||!items.includes(from)||!items.includes(to))return;moveModel(from,to,items,after);const ids=items.filter(id=>id!==from);ids.splice(ids.indexOf(to)+(after?1:0),0,from);saveDraft(ids.flatMap(id=>models.filter(choice=>choice.model===id)));};
@@ -261,7 +262,8 @@ function AgentPanel({onRefreshAccounts,clientSwitch,target,update,login,local,us
    {programError&&<p className="tfError" role="alert">{programError}</p>}
    <footer><button disabled={busy} onClick={()=>{setProgramOpen(false);pendingSelection.current=undefined;}}>稍后再说</button><button className="primary" disabled={busy} onClick={()=>void manageProgram()}>{busy?'正在处理…':target.installation.automatic?programAction==='install'?'下载安装':'更新到最新版本':'打开官方下载页面'}</button></footer>
   </FlowDialog>
-  {visibleProblem&&<p className="tfProblem" role="status">{visibleProblem}{configurationChanged&&<button type="button" className="textButton" disabled={busy||!running||!models.length} onClick={()=>void applySelected(shownModels)}>重新应用</button>}{problem===unavailableSelectionMessage&&<button type="button" className="textButton" disabled={busy} onClick={()=>{saveDraft(models.filter(choice=>isSourceSelectionAvailable(available,choice)));setOpen('');}}>移除不可用模型（{unavailableModels.length}）</button>}</p>}
+  {selectionNotice&&<p className="tfHint" role="status">{selectionNotice}</p>}
+  {visibleProblem&&<p className="tfProblem" role="status">{visibleProblem}{configurationChanged&&<button type="button" className="textButton" disabled={busy||!running||!models.length} onClick={()=>void applySelected(shownModels)}>重新应用</button>}{problem===unavailableSelectionMessage&&<button type="button" className="textButton" disabled={busy} onClick={()=>{saveDraft(models.filter(choice=>sourceSelectionState(local,choice,available)!=='unavailable'));setOpen('');}}>移除不可用模型（{unavailableModels.length}）</button>}</p>}
   <FlowDialog className="tfRestartDialog" open={!!historyOffer} title="旧对话可能需要恢复" busy={busy} onClose={()=>setHistoryOffer('')}>
    <p className="tfDialogLead">{historyOffer}</p>
    <p className="tfHint">这次切换没有按预期完成。可以先检查旧对话的模型来源是否和当前配置一致，再决定要不要恢复。</p>

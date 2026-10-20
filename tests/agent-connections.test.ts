@@ -296,13 +296,13 @@ it('exports the selected Codex model to its picker and allows model-only edits b
  await connections.restore(next.id);
  expect(parse(await readFile(paths.codex,'utf8'))).toEqual({model:'original',model_catalog_json:'/fixture/original-models.json',model_reasoning_effort:'high'});
 });
-it('exports confirmed image support without granting it to unknown or text-only models',async()=>{
+it('allows image attachments without a per-model capability registry on forwarding transports',async()=>{
  const {paths,connections}=await setup();
- const ids=['workbuddy/deepseek-v4.1-flash','qoder/text-only','api/unknown'];
- await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:ids[0]!,sourceId:'a'.repeat(24),keyId:randomUUID(),key:'fixture-key',selections:ids.map(model=>({model,sourceId:'a'.repeat(24)})),modelImages:{[ids[0]!]:true,[ids[1]!]:false}});
+ const ids=['workbuddy/new-model','qoder/new-model',`api-${'a'.repeat(24)}/unknown`,'codex/new-model','cursor/text-adapter'];
+ await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:ids[0]!,sourceId:'a'.repeat(24),keyId:randomUUID(),key:'fixture-key',selections:ids.map(model=>({model,sourceId:'a'.repeat(24)}))});
  const config=parse(await readFile(paths.codex,'utf8'));
  const catalog=JSON.parse(await readFile(String(config.model_catalog_json),'utf8'));
- expect(catalog.models.map((m:any)=>m.input_modalities)).toEqual([['text','image'],['text'],['text']]);
+ expect(catalog.models.map((m:any)=>m.input_modalities)).toEqual([['text','image'],['text','image'],['text','image'],['text','image'],['text']]);
 });
 it('deletes stale records after reinstall without touching the new config, and keeps history selectable',async()=>{
  const {root,paths,connections}=await setup();await writeFile(paths.codex,'model = "original"\n');

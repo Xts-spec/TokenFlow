@@ -50,8 +50,8 @@ export type LocalAccount = {id: string; provider: string; label: string; nativeC
 function modelImageCapabilities(model:z.infer<typeof modelSchema>,provider:string){
  const modalities=model.supportedInputModalities;
  if(!modalities?.length)return {};
- // These adapters currently drop image payloads, even for a multimodal base model.
- return {capabilities:{text:true,tools:true,images:!['qoder','cursor'].includes(provider)&&modalities.some(value=>value.toLowerCase()==='image')}};
+ // Preserve the upstream declaration; Qoder forwards images in message content.
+ return {capabilities:{text:true,tools:true,images:provider!=='cursor'&&modalities.some(value=>value.toLowerCase()==='image')}};
 }
 export type LocalModel = {id: string; displayName?: string; provider?: LoginProviderId | 'cursor' | 'api';textOnly?:boolean;capabilities?:{text:boolean;tools:boolean;images:boolean}};
 export type CLIProxyOptions = LoginOptions & {outboundProxyURL?:string;networkSnapshot?:()=>NetworkSnapshot;secrets?:{get:(name:string)=>Promise<string>;set:(name:string,value:string)=>Promise<void>};apiConfig?:()=>string;apiModelIDs?:()=>string[]};
