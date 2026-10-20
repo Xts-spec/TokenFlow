@@ -1,12 +1,30 @@
 import { it,expect } from 'vitest';
 import { observeUsage } from '../packages/core/src/gateway-activity.js';
 import { agentConfig } from '../apps/console/src/agent-config.js';
-async function inspect(payload:string,sse:boolean){
+async function inspect(payload:string,sse:boolean,chunkSize=7){
  let usage:unknown;const output:Buffer[]=[];const observer=observeUsage(sse,u=>{usage=u;});observer.on('data',chunk=>output.push(chunk));
  const finished=new Promise<void>((r,j)=>{observer.once('end',r);observer.once('error',j);});
- const bytes=Buffer.from(payload);for(let i=0;i<bytes.length;i+=7)observer.write(bytes.subarray(i,i+7));observer.end();await finished;
+ const bytes=Buffer.from(payload);for(let i=0;i<bytes.length;i+=chunkSize)observer.write(bytes.subarray(i,i+chunkSize));observer.end();await finished;
  expect(Buffer.concat(output).toString()).toBe(payload);return usage;
 }
+it('settles large Responses completion frames with echoed tools without changing the stream',async()=>{
+ const response={status:'completed',tools:[{type:'function',name:'read',description:'工具'.repeat(300_000)}],usage:{input_tokens:140_000,input_tokens_details:{cached_tokens:120_000},output_tokens:42}};
+ const frame=`data: ${JSON.stringify({type:'response.completed',response})}\n\n`;
+ expect(Buffer.byteLength(frame)).toBeGreaterThan(524288);
+ expect(await inspect(frame,true,4093)).toMatchObject({failed:false,inputTokens:140_000,cachedTokens:120_000,outputTokens:42});
+ expect(await inspect(JSON.stringify(response),false,4093)).toMatchObject({failed:false,inputTokens:140_000,outputTokens:42});
+ expect(await inspect(frame.trimEnd(),true,4093)).toMatchObject({failed:false,outputTokens:42});
+});
+it('still detects large failure frames and truncated completions',async()=>{
+ const padding='x'.repeat(600_000);
+ expect(await inspect(`data: ${JSON.stringify({type:'response.failed',response:{error:{message:padding}}})}\n\ndata: [DONE]\n\n`,true,4093)).toMatchObject({failed:true});
+ expect(await inspect(`data: ${JSON.stringify({type:'response.completed',response:{tools:[padding]}}).slice(0,-2)}`,true,4093)).toMatchObject({failed:true,inputTokens:null});
+});
+it('bounds observation of oversized lines and resumes at the next event',async()=>{
+ const oversized=`data: ${JSON.stringify({ignored:'x'.repeat(16*1024*1024)})}\n\n`;
+ expect(await inspect(oversized+'data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":2}}}\n\n',true,65537)).toMatchObject({failed:false,inputTokens:3,outputTokens:2});
+ expect(await inspect(oversized,true,65537)).toMatchObject({failed:true,inputTokens:null,outputTokens:null});
+});
 it('preserves byte-split UTF-8 streaming, accumulates Messages usage without double counting and handles SSE errors',async()=>{
  expect(await inspect('data: {"type":"message_start","message":{"usage":{"input_tokens":11,"output_tokens":0}}}\n\ndata: {"type":"content_block_delta","delta":{"text":"你好"}}\n\ndata: {"type":"message_delta","usage":{"output_tokens":9}}\n\ndata: {"type":"message_stop"}\n\n',true)).toEqual({inputTokens:11,cachedTokens:null,outputTokens:9,failed:false});
  expect(await inspect('data: {"type":"error","error":{"message":"private"}}\n\n',true)).toMatchObject({failed:true,inputTokens:null,outputTokens:null});
