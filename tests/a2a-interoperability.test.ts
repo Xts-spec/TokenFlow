@@ -1,5 +1,5 @@
 import {fakeWorkbuddySDK} from './fixtures/fake-workbuddy-sdk.js';
-import { it,expect } from 'vitest';
+import { it,expect,vi } from 'vitest';
 import { mkdtemp,mkdir,writeFile,readFile,rm,realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname,join,resolve } from 'node:path';
@@ -41,8 +41,16 @@ it('shares each source with every local target, preserving the source pool durin
    const key=target==='pi'?config.providers['token-flow'].apiKey:target==='deepseek'?config.find((e:{id:string})=>e.id==='llm-pi-ai').config.providers['token-flow'].headers.Authorization.replace(/^Bearer /,''):target==='qoder'?config.providers['token-flow'].apiKey:target==='codex'?config.model_providers.token_flow.experimental_bearer_token:target==='claude'?config.env.ANTHROPIC_AUTH_TOKEN:config.at(-1).apiKey;
    const protocol=['codex','qoder'].includes(target)?'responses':target==='claude'?'messages':'chat/completions';
    const payload=['codex','qoder'].includes(target)?{input:'reply provider name'}:{messages:[{role:'user',content:'reply provider name'}],max_tokens:16};
-   const call=()=>service.app.inject({method:'POST',url:`/v1/${protocol}`,headers:{host:headers.host,authorization:`Bearer ${key}`},payload:{...payload,model:`${provider}/shared-model`,stream:true}});
-   const response=await call();expect(response.statusCode,response.body).toBe(200);expect(response.body).toContain(provider);
+   const call=()=>service.app.inject({method:'POST',url:`/v1/${protocol}`,headers:{host:headers.host,authorization:`Bearer ${key}`,'x-token-flow-image-generation':target==='codex'?'deny':'allow'},payload:{...payload,model:`${provider}/shared-model`,stream:true}});
+   const fetchSpy=vi.spyOn(globalThis,'fetch');
+   try{
+    const response=await call();expect(response.statusCode,response.body).toBe(200);expect(response.body).toContain(provider);
+    if(provider==='codex'){
+     const upstream=fetchSpy.mock.calls.find(([url])=>String(url).endsWith(`/v1/${protocol}`));
+     expect(upstream).toBeDefined();
+     expect(new Headers(upstream![1]?.headers).get('X-Token-Flow-Image-Generation')).toBe(target==='codex'?'allow':'deny');
+    }
+   }finally{fetchSpy.mockRestore();}
    return {id:result.json().id,key,call};
   };
   // The exact reported case: WorkBuddy consumes Qoder while supplying Claude Code.

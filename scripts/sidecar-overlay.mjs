@@ -12,7 +12,7 @@ const original=readFileSync(source,'utf8');
 const anchor='meta := make(map[string]any)';
 if(!original.includes(anchor))throw new Error('Upstream routing hook changed; inspect before building.');
 const patched=join(patchDir,'handlers.go');
-writeFileSync(patched,original.replace(anchor,anchor+'\n\tif ginCtx != nil {\n\t\tif selected := strings.TrimSpace(ginCtx.GetHeader("X-Token-Flow-Auth")); selected != "" {\n\t\t\tmeta[coreexecutor.PinnedAuthMetadataKey] = selected\n\t\t}\n\t}'));
+writeFileSync(patched,original.replace(anchor,anchor+'\n\tif ginCtx != nil {\n\t\tif selected := strings.TrimSpace(ginCtx.GetHeader("X-Token-Flow-Auth")); selected != "" {\n\t\t\tmeta[coreexecutor.PinnedAuthMetadataKey] = selected\n\t\t}\n\t\tif ginCtx.GetHeader("X-Token-Flow-Image-Generation") == "deny" {\n\t\t\tmeta["token_flow_disable_image_generation"] = true\n\t\t}\n\t}'));
 const replacements={
  [resolve('upstream/CLIProxyAPI/internal/runtime/executor/agent_responses.go')]:resolve('patches/cliproxy/agent_responses.go'),
  [resolve('upstream/CLIProxyAPI/internal/runtime/executor/workbuddy_executor.go')]:resolve('patches/cliproxy/workbuddy_executor.go'),
@@ -20,16 +20,16 @@ const replacements={
  [resolve('upstream/CLIProxyAPI/internal/runtime/executor/qoder_executor.go')]:resolve('patches/cliproxy/qoder_executor.go'),
  [resolve('upstream/CLIProxyAPI/internal/runtime/executor/helps/qoder_protocol.go')]:resolve('patches/cliproxy/qoder_protocol.go'),
 };
-// The Claude codec cannot deliver native image_generation_call results. Do not
-// advertise an extra server-side tool that silently becomes an empty end_turn.
-// Keep caller-supplied tools and native Responses image support unchanged.
+// Only native Codex/Responses clients can receive auto-injected image tools.
+// The gateway additionally disables injection for other configured receivers,
+// including clients that also speak Responses. Keep caller-supplied tools intact.
 for(const file of ['codex_executor_execute.go','codex_executor_stream.go','codex_websockets_execute.go','codex_websockets_stream.go']){
  const codexSource=resolve('upstream/CLIProxyAPI/internal/runtime/executor',file);
  const codexOriginal=readFileSync(codexSource,'utf8');
  const imageGuard='if e.cfg == nil || e.cfg.DisableImageGeneration == config.DisableImageGenerationOff {';
  if(codexOriginal.split(imageGuard).length!==2)throw new Error('Codex image injection boundary changed: '+file);
  const codexPatched=join(patchDir,file);
- writeFileSync(codexPatched,codexOriginal.replace(imageGuard,'if responseFormat != sdktranslator.FormatClaude && (e.cfg == nil || e.cfg.DisableImageGeneration == config.DisableImageGenerationOff) {'));
+ writeFileSync(codexPatched,codexOriginal.replace(imageGuard,'if (responseFormat == sdktranslator.FormatOpenAIResponse || responseFormat == sdktranslator.FormatCodex) && opts.Metadata["token_flow_disable_image_generation"] != true && (e.cfg == nil || e.cfg.DisableImageGeneration == config.DisableImageGenerationOff) {'));
  replacements[codexSource]=codexPatched;
 }
 // Keep bounded pre-header recovery scoped to Antigravity inference only.

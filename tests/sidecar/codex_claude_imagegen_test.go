@@ -21,9 +21,17 @@ import (
 // deliver native Responses image_generation_call output. Advertising that extra
 // tool lets an otherwise successful response become an empty end_turn.
 func TestTokenFlowCodexClaudeDoesNotAdvertiseInvisibleImageTool(t *testing.T) {
-	for _, nativeResponses := range []bool{false, true} {
+	for _, scenario := range []struct {
+		name                        string
+		nativeResponses, chat, deny bool
+	}{
+		{name: "claude"},
+		{name: "workbuddy-chat", chat: true},
+		{name: "codex-responses", nativeResponses: true},
+		{name: "other-client-responses", nativeResponses: true, deny: true},
+	} {
 		for _, stream := range []bool{false, true} {
-			t.Run(fmt.Sprintf("nativeResponses=%t/stream=%t", nativeResponses, stream), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s/stream=%t", scenario.name, stream), func(t *testing.T) {
 				var advertisedImage bool
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					body, err := io.ReadAll(r.Body)
@@ -50,9 +58,16 @@ func TestTokenFlowCodexClaudeDoesNotAdvertiseInvisibleImageTool(t *testing.T) {
 				}}
 				request := cliproxyexecutor.Request{Model: "gpt-6.1-sol", Payload: []byte(`{"model":"gpt-6.1-sol","max_tokens":1024,"messages":[{"role":"user","content":"Draw a simple diagram"}],"tools":[{"name":"Write","description":"Write a file","input_schema":{"type":"object","properties":{"file_path":{"type":"string"},"content":{"type":"string"}},"required":["file_path","content"]}}]}`)}
 				opts := cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatClaude}
-				if nativeResponses {
-					request.Payload = []byte(`{"model":"gpt-6.1-sol","input":[{"role":"user","content":"Draw a simple diagram"}]}`)
+				if scenario.nativeResponses {
+					request.Payload = []byte(`{"model":"gpt-6.1-sol","input":[{"role":"user","content":"Draw a simple diagram"}],"tools":[{"type":"function","name":"Write","parameters":{"type":"object","properties":{"file_path":{"type":"string"},"content":{"type":"string"}}}}]}`)
 					opts.SourceFormat = sdktranslator.FormatOpenAIResponse
+				}
+				if scenario.chat {
+					request.Payload = []byte(`{"model":"gpt-6.1-sol","messages":[{"role":"user","content":"Draw a simple diagram"}],"tools":[{"type":"function","function":{"name":"Write","parameters":{"type":"object","properties":{"file_path":{"type":"string"},"content":{"type":"string"}}}}}]}`)
+					opts.SourceFormat = sdktranslator.FormatOpenAI
+				}
+				if scenario.deny {
+					opts.Metadata = map[string]any{"token_flow_disable_image_generation": true}
 				}
 				var output strings.Builder
 				if stream {
@@ -73,11 +88,11 @@ func TestTokenFlowCodexClaudeDoesNotAdvertiseInvisibleImageTool(t *testing.T) {
 					}
 					output.Write(response.Payload)
 				}
-				if nativeResponses {
+				if scenario.nativeResponses && !scenario.deny {
 					if !advertisedImage || !strings.Contains(output.String(), `"image_generation_call"`) || !strings.Contains(output.String(), "cG5nLWZpeHR1cmU=") {
 						t.Fatalf("native Responses image support lost: %s", output.String())
 					}
-				} else if advertisedImage || !strings.Contains(output.String(), `"name":"Write"`) || !strings.Contains(output.String(), `"stop_reason":"tool_use"`) {
+				} else if advertisedImage || !strings.Contains(output.String(), `"name":"Write"`) || (!scenario.chat && !scenario.nativeResponses && !strings.Contains(output.String(), `"stop_reason":"tool_use"`)) {
 					t.Fatalf("invisible native tool advertised=%t; expected an executable SVG tool call, got: %s", advertisedImage, output.String())
 				}
 			})
