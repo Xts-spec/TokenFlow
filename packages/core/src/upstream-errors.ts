@@ -2,7 +2,8 @@ import {safeFailure} from './login/diagnostics.js';
 // Only known categories cross the gateway boundary. Never return raw provider
 // messages: they can contain request content or credentials.
 const known:Record<string,{message:string;type:string;wireMessage?:string}>={
- qoder_resource_limit:{type:'rate_limit_error',message:'Qoder 返回资源限流（RESOURCE_LIMIT），当前模型容量暂不可用。请稍后重试；这不表示模型 ID 无效或登录失效。'},
+ qoder_resource_limit:{type:'rate_limit_error',message:'Qoder 返回资源限流（RESOURCE_LIMIT），当前模型容量不足。请求尚未完成，请稍后重试；这不表示模型 ID 无效或登录失效。'},
+ qoder_capacity_wait_exhausted:{type:'rate_limit_error',message:'Qoder 当前模型容量不足，本次自动等待重试已结束，或上游要求的等待时间超过本次等待预算。请稍后重试或选择其他模型；原账号和模型配置保留。'},
  qoder_rate_limited:{type:'rate_limit_error',message:'Qoder 请求受限，请稍后重试并检查官方额度。'},
  qoder_authentication_failed:{type:'authentication_error',message:'Qoder 拒绝了当前授权，请检查所选账号的登录状态。'},
  qoder_access_denied:{type:'permission_error',message:'Qoder 拒绝了本次访问，请检查所选账号对该模型的权限。'},

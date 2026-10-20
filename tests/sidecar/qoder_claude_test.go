@@ -569,3 +569,115 @@ func TestQoderPreHeaderEOFRetryIsBounded(t *testing.T) {
 		t.Fatalf("err=%v attempts=%d", err, attempts)
 	}
 }
+
+func TestQoderCapacityWait(t *testing.T) {
+	resource := func(delay time.Duration) error {
+		return statusErr{code: 429, msg: `{"error":{"code":"qoder_resource_limit"}}`, retryAfter: &delay}
+	}
+	cases := []struct {
+		name    string
+		failure error
+		output  bool
+		budget  time.Duration
+		want    int
+	}{
+		{"resource retries", resource(time.Millisecond), false, time.Second, 3},
+		{"generic 429", statusErr{code: 429, msg: `{"error":{"code":"qoder_rate_limited"}}`}, false, time.Second, 1},
+		{"quota", statusErr{code: 429, msg: `{"error":{"code":"quota_exceeded"}}`}, false, time.Second, 1},
+		{"retry after exceeds budget", resource(time.Second), false, time.Millisecond, 1},
+		{"never replay output", resource(time.Millisecond), true, time.Second, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			native := func(context.Context, *cliproxyauth.Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+				calls++
+				chunks := make(chan cliproxyexecutor.StreamChunk, 2)
+				if tc.output {
+					chunks <- cliproxyexecutor.StreamChunk{Payload: []byte("model event")}
+				}
+				chunks <- cliproxyexecutor.StreamChunk{Err: tc.failure}
+				close(chunks)
+				return &cliproxyexecutor.StreamResult{Chunks: chunks}, nil
+			}
+			stream, err := qoderWaitForCapacity(context.Background(), nil, cliproxyexecutor.Request{}, cliproxyexecutor.Options{}, native, tc.budget)
+			if tc.output {
+				if err != nil {
+					t.Fatal(err)
+				}
+				count := 0
+				for range stream.Chunks {
+					count++
+				}
+				if count != 2 {
+					t.Fatalf("got %d events", count)
+				}
+			} else if err == nil {
+				chunk := <-stream.Chunks
+				if chunk.Err == nil {
+					t.Fatal("expected error")
+				}
+			}
+			if calls != tc.want {
+				t.Fatalf("calls=%d want %d", calls, tc.want)
+			}
+		})
+	}
+	t.Run("cancel wait", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		native := func(context.Context, *cliproxyauth.Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+			cancel()
+			return nil, resource(time.Second)
+		}
+		_, err := qoderWaitForCapacity(ctx, nil, cliproxyexecutor.Request{}, cliproxyexecutor.Options{}, native, time.Minute)
+		if err != context.Canceled {
+			t.Fatalf("got %v", err)
+		}
+	})
+}
+
+func TestQoderCapacityWaitRecovers(t *testing.T) {
+	calls := 0
+	delay := time.Millisecond
+	native := func(context.Context, *cliproxyauth.Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+		calls++
+		chunks := make(chan cliproxyexecutor.StreamChunk, 1)
+		if calls == 1 {
+			chunks <- cliproxyexecutor.StreamChunk{Err: statusErr{code: 429, msg: `{"error":{"code":"qoder_resource_limit"}}`, retryAfter: &delay}}
+		} else {
+			chunks <- cliproxyexecutor.StreamChunk{Payload: []byte("recovered")}
+		}
+		close(chunks)
+		return &cliproxyexecutor.StreamResult{Chunks: chunks}, nil
+	}
+	started := time.Now()
+	stream, err := qoderWaitForCapacity(context.Background(), nil, cliproxyexecutor.Request{}, cliproxyexecutor.Options{}, native, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunk := <-stream.Chunks
+	if string(chunk.Payload) != "recovered" || calls != 2 || time.Since(started) < delay {
+		t.Fatalf("unexpected recovery calls=%d", calls)
+	}
+	for range stream.Chunks {
+	}
+}
+
+func TestQoderHTTPResourceLimit(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "120")
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprint(w, `{"code":"10605","subCode":"RESOURCE_LIMIT","retryAfterSeconds":1}`)
+	}))
+	defer server.Close()
+	executor := NewQoderExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{"chat_url": server.URL}, Metadata: map[string]any{"access_token": "synthetic", "uid": "fixture-user"}}
+	req := cliproxyexecutor.Request{Model: "kmodel_latest", Payload: []byte(`{"messages":[{"role":"user","content":"Hi"}]}`)}
+	_, err := executor.executeNativeStream(context.Background(), auth, req, cliproxyexecutor.Options{})
+	status, ok := err.(statusErr)
+	if !ok || status.code != 429 || !strings.Contains(status.msg, "qoder_capacity_wait_exhausted") || status.retryAfter == nil || *status.retryAfter != 120*time.Second || calls != 1 {
+		t.Fatalf("unexpected capacity result calls=%d", calls)
+	}
+}

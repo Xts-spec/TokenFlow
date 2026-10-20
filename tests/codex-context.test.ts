@@ -1,4 +1,5 @@
 import {DatabaseSync} from 'node:sqlite';
+import {createHash} from 'node:crypto';
 import {it,expect,afterEach} from 'vitest';
 import {mkdtemp,mkdir,writeFile,readFile,readdir,rm,realpath} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -11,6 +12,28 @@ async function fixture(){const root=await mkdtemp(join(await realpath(tmpdir()),
 const history=[{type:'message',role:'user',content:[{type:'input_text',text:'Preserve requirements'}]},{type:'function_call',call_id:'one',name:'read',arguments:'{}'},{type:'function_call_output',call_id:'one',output:'original tool result'}];
 const checkpoint=(token:string)=>({type:'compacted',payload:{message:'',replacement_history:[history[0],{type:'compaction',encrypted_content:token}],window_number:2}});
 const rollout=(token:string)=>[...history.map(payload=>({type:'response_item',payload})),checkpoint(token),{type:'response_item',payload:{type:'message',role:'user',content:'Future turn must not leak into a fork'}}].map(v=>JSON.stringify(v)).join('\n')+'\n';
+it('excludes historical tool declarations and their legacy malformed messages from recovered wire input',async()=>{
+ const f=await fixture();const tools=[{type:'function',name:'current_tool',parameters:{type:'object'}}];
+ const declarations=[{type:'additional_tools',role:'developer',tools:[{type:'function',name:'old_tool'}]},{type:'message',role:'developer',tools:[{type:'function',name:'legacy_tool'}]}];
+ const encrypted=f.context.encodeCheckpoint([...declarations,...history],codexContextScope);
+ let called=false;
+ const send=async(_path:string,body:any)=>{
+  called=true;expect(body.tools).toEqual(tools);expect(body.input).toEqual(history);
+  for(const item of body.input)if(item.type==='message')expect(Array.isArray(item.content)).toBe(true);
+  return Response.json({id:'wire-safe',status:'completed',output:[]});
+ };
+ await f.context.response('responses',{model:'codex/test',tools,input:[{type:'compaction',encrypted_content:encrypted}]},'key','source',send,{scope:codexContextScope,normalize:portableCodexItem,recover:item=>f.migration.recover(item,[])});
+ expect(called).toBe(true);
+});
+it('normalizes legacy assistant text from encrypted checkpoints and cached official windows',async()=>{
+ const f=await fixture();const legacy=[...history,{type:'message',role:'assistant',content:'saved task summary'}];
+ const expected=[...history,{type:'message',role:'assistant',content:[{type:'output_text',text:'saved task summary'}]}];
+ const encrypted=f.context.encodeCheckpoint(legacy,codexContextScope);
+ expect(await f.migration.recover({type:'compaction',encrypted_content:encrypted},[])).toEqual(expected);
+ const token='cached-official-window';await mkdir(join(f.root,'codex-context-cache'),{recursive:true});
+ await writeFile(join(f.root,'codex-context-cache',createHash('sha256').update(token).digest('hex')),encrypted);
+ expect(await f.migration.recover({type:'compaction',encrypted_content:token},[])).toEqual(expected);
+});
 it('recovers an official opaque window from exact local history, encrypts its cache and excludes future turns',async()=>{
  const f=await fixture();await writeFile(f.file,rollout('official-ciphertext'));
  const recovered=await f.migration.recover({type:'compaction',encrypted_content:'official-ciphertext'},[]);

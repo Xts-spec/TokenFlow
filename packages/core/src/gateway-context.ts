@@ -26,7 +26,19 @@ function fixedContext(body:RequestBody,input:Item[]){
  return size({input:fixed,instructions:body.instructions,tools:body.tools});
 }
 function contextBudget(body:RequestBody,input:Item[]){
- return Math.max(CONTEXT_INPUT_BYTES,fixedContext(body,input)+32*1024);
+ // The latest complete (or still pending) tool exchange is needed to continue
+ // execution. Its size is not a provider context limit and must not turn a
+ // soft history target into a local 413 after an otherwise valid tool result.
+ const pending=new Set<unknown>();let tailStart=0;
+ for(let index=0;index<input.length;index++){
+  if(!pending.size)tailStart=index;
+  const item=input[index]!;
+  if(['function_call','custom_tool_call'].includes(String(item.type)))pending.add(item.call_id);
+  if(['function_call_output','custom_tool_call_output'].includes(String(item.type)))pending.delete(item.call_id);
+ }
+ let lastUser=-1;for(let index=input.length-1;index>=0;index--)if(input[index]!.role==='user'){lastUser=index;break;}
+ const retained=input.filter((item,index)=>index>=tailStart||index===lastUser||['system','developer'].includes(String(item.role)));
+ return Math.max(CONTEXT_INPUT_BYTES,size({input:retained,instructions:body.instructions,tools:body.tools})+32*1024);
 }
 
 export class GatewayContextError extends Error {
@@ -218,7 +230,8 @@ export class GatewayContext {
    if((automatic?historyBytes:size(input))>=threshold&&worthwhile){
     const compacted=await compact(input);if(!compacted.ok)return compacted;
     const result=await json(compacted);checkpoint=items(result.output).at(-1);summaryUsage=result.usage;
-    input=this.unseal(checkpoint?.encrypted_content,scope);
+    const restored=this.unseal(checkpoint?.encrypted_content,scope);
+    input=migration?.normalize?restored.flatMap(migration.normalize):restored;
    }
   }
   if(migration&&checkpoint&&size({input,instructions:body.instructions,tools:body.tools})>contextBudget(body,input))throw new GatewayContextError('历史压缩后仍超过本次历史预算；请减少最近的工具输出或生成交接摘要。原会话未修改。',413,summaryUsage,'context_budget_exceeded');
@@ -317,21 +330,23 @@ export class GatewayContext {
   // recent items contain large completed results, move the cut forward across
   // complete exchanges, but always keep the newest user request verbatim.
   let lastUser=-1;for(let index=input.length-1;index>=0;index--)if(input[index]!.role==='user'){lastUser=index;break;}
-  const retainedBytes=(index:number)=>size({input:[...input.slice(0,index).filter(item=>['system','developer'].includes(String(item.role))),...input.slice(index)],instructions:body.instructions,tools:body.tools});
-  for(const index of safeCuts.filter(index=>index>cut&&index<=lastUser)){
+  const preservedAt=(index:number)=>{
+   const prefix=input.slice(0,index);const keepUsers=size(prefix.filter(item=>item.role==='user'))<=16*1024;
+   return prefix.filter(item=>['system','developer'].includes(String(item.role))||item===input[lastUser]||(keepUsers&&item.role==='user'));
+  };
+  const retainedBytes=(index:number)=>size({input:[...preservedAt(index),...input.slice(index)],instructions:body.instructions,tools:body.tools});
+  // The latest user item is separately preserved. Completed exchanges after
+  // it can therefore enter the checkpoint, retaining the newest exchange.
+  for(const index of safeCuts.filter(index=>index>cut)){
    if(retainedBytes(cut)<=budget-24*1024)break;
    cut=index;
   }
   const prefix=input.slice(0,cut);const tail=input.slice(cut);
   // Keep instructions and small user histories verbatim. Large user attachments
   // are represented by a factual checkpoint, with omissions stated explicitly.
-  const instructions=prefix.filter(item=>['system','developer'].includes(String(item.role)));
-  const instructionSet=new Set(instructions);
-  const users=prefix.filter(item=>item.role==='user');
   // Large old user messages (including attachments) are represented by the
   // checkpoint, not copied back verbatim after spending tokens summarizing them.
-  const keepUsers=size(users)<=16*1024;
-  const preserved=prefix.filter(item=>instructionSet.has(item)||item===input[lastUser]||(keepUsers&&item.role==='user'));
+  const preserved=preservedAt(cut);
   const retained=size({input:[...preserved,...tail],instructions:body.instructions,tools:body.tools});
   const summaryLimit=Math.min(16*1024,budget-retained-1024);
   if(summaryLimit<4096&&prefix.length>preserved.length)throw new GatewayContextError('当前指令或最近消息超过网关保守预算，无法安全压缩；原会话未修改。',413,zeroUsage,'context_budget_exceeded');
@@ -409,7 +424,10 @@ export class GatewayContext {
      if(persistSummaries)await rm(join(this.directory,'summary-'+key),{force:true}).catch(()=>{report.cacheWriteFailed=true;});
     }
    };
-   let transcript=summaryTranscript(prefix);let text='';let lastRoundKeys:string[]=[];
+   // Rules are carried verbatim in `preserved`; summarizing them again adds
+   // paid chunks without reducing the continuation, especially on IDE rollouts
+   // with many developer messages. User turns stay as factual task context.
+   let transcript=summaryTranscript(prefix.filter(item=>!['system','developer'].includes(String(item.role))));let text='';let lastRoundKeys:string[]=[];
    if(splitTranscript(transcript).length>SUMMARY_MAX_CALLS-1)throw new GatewayContextError('历史过大，预计摘要调用超过本次预算；尚未发送上游。请先在原来源生成交接摘要。',413,zeroUsage,'compaction_budget_exceeded');
    do {
     const parts=splitTranscript(transcript);
@@ -429,9 +447,9 @@ export class GatewayContext {
      throw new GatewayContextError(message,422,usage,'compaction_not_reduced');
     }
     transcript=text;
-   }while(size({role:'assistant',content:'Historical task checkpoint (summary of earlier work):\n'+text})>summaryLimit);
+   }while(size({type:'message',role:'assistant',content:[{type:'output_text',text:'Historical task checkpoint (summary of earlier work):\n'+text}]})>summaryLimit);
 
-   compacted=[...preserved,{role:'assistant',content:'Historical task checkpoint (summary of earlier work):\n'+text},...tail];
+   compacted=[...preserved,{type:'message',role:'assistant',content:[{type:'output_text',text:'Historical task checkpoint (summary of earlier work):\n'+text}]},...tail];
    if(size(compacted)>=size(input)){
     await invalidate(lastRoundKeys);
     throw new GatewayContextError('Context summary did not reduce history; original history is unchanged',422,usage,'compaction_not_reduced');

@@ -179,3 +179,22 @@ it('rejects orphaned tool results before summarization and preserves unfinished 
  await context.response('responses',{model:'qoder/m',input:compact.output,store:false},'a','s',async(_p,b)=>{seen=b.input;return Response.json(answer());});
  expect(seen).toContainEqual(input[2]);
 });
+it.each([20,100])('compacts a single tool loop with a %i KiB latest result without rejecting its fixed prefix',async kib=>{
+ const {context}=await setup();const model='codex/model';const scope={owner:'a',source:'s',model};
+ const input:Record<string,unknown>[]=[{role:'developer',content:'Project rules '.repeat(10000)},{role:'user',content:'Continue the task, preserve my constraints.'}];
+ for(let i=0;i<6;i++)input.push({type:'function_call',call_id:`call-${i}`,name:'read',arguments:'{}'},{type:'function_call_output',call_id:`call-${i}`,output:String(i).repeat(kib*1024)});
+ const original=structuredClone(input);let forwarded:Record<string,unknown>[]=[];let summaries=0;
+ const response=await context.response('responses',{model,input,tools:[{type:'function',name:'read',parameters:{type:'object'}}]},'a','s',async(_path,body)=>{
+  if(!body.tools){summaries++;expect(JSON.stringify(body.input)).not.toContain('Project rules');return Response.json(answer('Completed earlier reads; continue using the latest tool result.'));}
+  forwarded=body.input as Record<string,unknown>[];return Response.json(answer());
+ },{scope,recover:async()=>[]});
+ expect(response.ok).toBe(true);expect(summaries).toBeGreaterThan(0);
+ expect(forwarded).toContainEqual(original[0]);expect(forwarded).toContainEqual(original[1]);
+ expect(forwarded.slice(-2)).toEqual(original.slice(-2));
+ const checkpoint=forwarded.find(item=>item.role==='assistant');
+ expect(checkpoint).toMatchObject({type:'message',content:[{type:'output_text'}]});
+ expect(JSON.stringify(forwarded).length).toBeLessThan(JSON.stringify(original).length);
+ const calls=new Set(forwarded.filter(item=>item.type==='function_call').map(item=>item.call_id));
+ for(const item of forwarded.filter(item=>item.type==='function_call_output'))expect(calls.has(item.call_id)).toBe(true);
+ expect(input).toEqual(original);
+});

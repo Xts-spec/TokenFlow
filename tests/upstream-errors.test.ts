@@ -1,5 +1,11 @@
 import {it,expect} from 'vitest';
 import {upstreamError} from '../packages/core/src/upstream-errors.js';
+it('reports bounded Qoder capacity waiting without inventing a queue ETA',()=>{
+ const result=upstreamError(429,JSON.stringify({error:{code:'qoder_capacity_wait_exhausted',message:'PRIVATE_UPSTREAM'}}));
+ expect(result).toMatchObject({code:'qoder_capacity_wait_exhausted',type:'rate_limit_error'});
+ expect(result.message).toContain('容量不足');expect(result.message).toContain('等待预算');
+ expect(result.message).not.toMatch(/PRIVATE|60|预计|队列位置/);
+});
 it.each(['qoder_resource_limit','qoder_rate_limited','qoder_authentication_failed','qoder_access_denied','qoder_request_rejected','qoder_upstream_error'])('preserves Qoder envelope category %s without provider payloads',code=>{
  const result=upstreamError(code.includes('limit')?429:502,JSON.stringify({error:{code,message:'PRIVATE_PROMPT Bearer private-token'}}));
  expect(result.code).toBe(code);expect(result.message).not.toMatch(/PRIVATE_PROMPT|private-token/);

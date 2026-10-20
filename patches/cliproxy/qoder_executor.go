@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 	log "github.com/sirupsen/logrus"
+	"github.com/tidwall/gjson"
 )
 
 // QoderExecutor implements the executor for Alibaba Qoder API.
@@ -71,6 +73,87 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 }
 
 func (e *QoderExecutor) executeNativeStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+	return qoderWaitForCapacity(ctx, auth, req, opts, e.executeNativeAttempt, time.Minute)
+}
+
+// Delay exposing the stream until its first model event. Resource failures may
+// then be retried without replaying any event already delivered to the caller.
+func qoderWaitForCapacity(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, native nativeAgentStream, budget time.Duration) (*cliproxyexecutor.StreamResult, error) {
+	started := time.Now()
+	for attempt := 0; ; attempt++ {
+		attemptCtx, cancel := context.WithCancel(ctx)
+		stream, err := native(attemptCtx, auth, req, opts)
+		var first cliproxyexecutor.StreamChunk
+		var open bool
+		if err == nil {
+			select {
+			case first, open = <-stream.Chunks:
+				err = first.Err
+			case <-ctx.Done():
+				cancel()
+				return nil, ctx.Err()
+			}
+		}
+		if err == nil {
+			out := make(chan cliproxyexecutor.StreamChunk)
+			go func() {
+				defer close(out)
+				defer cancel()
+				send := func(chunk cliproxyexecutor.StreamChunk) bool {
+					select {
+					case out <- chunk:
+						return true
+					case <-ctx.Done():
+						return false
+					}
+				}
+				if open && !send(first) {
+					return
+				}
+				if open {
+					for chunk := range stream.Chunks {
+						if !send(chunk) {
+							return
+						}
+					}
+				}
+			}()
+			return &cliproxyexecutor.StreamResult{Headers: stream.Headers, Chunks: out}, nil
+		}
+		cancel()
+		var status statusErr
+		if !errors.As(err, &status) || status.code != 429 || gjson.Get(status.msg, "error.code").String() != "qoder_resource_limit" || attempt >= 2 {
+			if status.code == 429 && gjson.Get(status.msg, "error.code").String() == "qoder_resource_limit" && attempt >= 2 {
+				status.msg = strings.Replace(status.msg, "qoder_resource_limit", "qoder_capacity_wait_exhausted", 1)
+				first.Err, err = status, status
+			}
+			if stream != nil && open {
+				chunks := make(chan cliproxyexecutor.StreamChunk, 1)
+				chunks <- first
+				close(chunks)
+				return &cliproxyexecutor.StreamResult{Headers: stream.Headers, Chunks: chunks}, nil
+			}
+			return nil, err
+		}
+		delay := 30 * time.Second
+		if status.retryAfter != nil && *status.retryAfter > 0 {
+			delay = *status.retryAfter
+		}
+		if time.Since(started)+delay >= budget {
+			status.msg = strings.Replace(status.msg, "qoder_resource_limit", "qoder_capacity_wait_exhausted", 1)
+			return nil, status
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (e *QoderExecutor) executeNativeAttempt(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
 	modelKey, isReasoning := helps.NormalizeQoderModel(req.Model)
 
 	var accessToken, uid, email string
@@ -146,7 +229,26 @@ func (e *QoderExecutor) executeNativeStream(ctx context.Context, auth *cliproxya
 			if refreshedAuth, errRefresh := e.Refresh(ctx, auth); errRefresh == nil {
 				refreshedAuth = refreshedAuth.Clone()
 				delete(refreshedAuth.Metadata, "refresh_token")
-				return e.executeNativeStream(ctx, refreshedAuth, req, opts)
+				return e.executeNativeAttempt(ctx, refreshedAuth, req, opts)
+			}
+		}
+		if gjson.ValidBytes(bodyBytes) {
+			envelope := gjson.Parse(fmt.Sprintf(`{"statusCodeValue":%d,"body":%s}`, resp.StatusCode, bodyBytes))
+			envelopeErr := qoderEnvelopeError(envelope)
+			if status, ok := envelopeErr.(statusErr); ok && gjson.Get(status.msg, "error.code").String() == "qoder_resource_limit" {
+				var delay time.Duration
+				if seconds, parseErr := strconv.Atoi(resp.Header.Get("Retry-After")); parseErr == nil && seconds > 0 {
+					delay = time.Duration(seconds) * time.Second
+				} else if date, parseErr := http.ParseTime(resp.Header.Get("Retry-After")); parseErr == nil {
+					delay = time.Until(date)
+				}
+				if delay > 0 && (status.retryAfter == nil || delay > *status.retryAfter) {
+					status.retryAfter = &delay
+				}
+				envelopeErr = status
+			}
+			if envelopeErr != nil {
+				return nil, envelopeErr
 			}
 		}
 		return nil, statusErr{code: resp.StatusCode, msg: fmt.Sprintf("qoder upstream error: %d: %s", resp.StatusCode, string(bodyBytes))}
