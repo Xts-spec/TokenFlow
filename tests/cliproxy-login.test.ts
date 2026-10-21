@@ -342,6 +342,47 @@ it('keeps explicitly revoked credentials visible for confirmation without treati
  expect(await readFile(join(root,'cliproxy/auth/revoked.json'),'utf8')).toBe('{"refresh_token":"fixture-secret"}');expect(JSON.stringify(clean.snapshot())).not.toContain('fixture-secret');
 });
 
+it('recognizes explicit Codex quota revocation, preserves confirmation evidence across refresh and clears it for a new token',async()=>{
+ const {manager,root,fixture}=await setup();
+ await mkdir(join(root,'cliproxy/auth'),{recursive:true});
+ const path=join(root,'cliproxy/auth/codex.json');
+ const credential={access_token:'fixture-old-access',refresh_token:'fixture-refresh',expired:'2035-01-01T00:00:00Z',email:'revoked@example.test',account_id:'fixture-account'};
+ await writeFile(path,JSON.stringify(credential));
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'codex.json',provider:'codex',email:credential.email,auth_index:'codex',status:'active',models:['model']}]));
+ await manager.start();await manager.refreshQuota();
+ const id=manager.snapshot().accounts[0].id;
+ await fixture({mode:'quota-401'});await manager.refreshQuota('codex');
+ expect(manager.snapshot().accounts[0].authenticationRequired).not.toBe(true);
+ await fixture({mode:'quota-token-revoked'});await manager.refreshQuota('codex');
+ expect(manager.snapshot().accounts[0]).toMatchObject({authenticationRequired:true,unavailable:true,retryable:false,models:[]});
+ expect(manager.snapshot().quotas[id].error).toContain('登录授权已失效');
+ expect(JSON.stringify(manager.snapshot())).not.toMatch(/fixture-old-access|fixture-refresh|upstream-secret/);
+ await manager.refreshAccounts('codex',false);
+ expect(manager.snapshot().accounts[0].authenticationRequired).toBe(true);
+ expect(JSON.parse(await readFile(path,'utf8'))).toEqual(credential);
+ await writeFile(path,JSON.stringify({...credential,access_token:'fixture-new-access'}));
+ await manager.refreshAccounts('codex',false);
+ expect(manager.snapshot().accounts[0].authenticationRequired).toBe(false);
+ // An old in-flight response must not revoke a replacement saved during the query.
+ const originalFetch=globalThis.fetch;
+ let entered!:()=>void,release!:()=>void;
+ const ready=new Promise<void>(resolve=>{entered=resolve;}),blocked=new Promise<void>(resolve=>{release=resolve;});
+ const intercepted=vi.spyOn(globalThis,'fetch').mockImplementation(async(input,init)=>{
+  const response=await originalFetch(input,init);
+  if(String(input).endsWith('/api-call')){entered();await blocked;}
+  return response;
+ });
+ const pending=manager.refreshQuota('codex');
+ try{await ready;await writeFile(path,JSON.stringify({...credential,access_token:'fixture-replacement-access'}));}
+ finally{release();await pending;intercepted.mockRestore();}
+ expect(manager.snapshot().accounts[0].authenticationRequired).toBe(false);
+ await manager.refreshAccounts('codex',false);
+ await manager.refreshQuota('codex');
+ expect(manager.snapshot().accounts[0].authenticationRequired).toBe(true);
+ await manager.removeExpiredAccount(id);
+ expect(manager.snapshot().accounts).toEqual([]);
+});
+
 it('does not reimport a browser-authorized Codex account under a second filename on startup',async()=>{
  const {manager,root}=await setup();const {realpath}=await import('node:fs/promises');
  await mkdir(join(root,'cliproxy/auth'),{recursive:true});await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'browser-codex.json',provider:'codex',email:'same@example.test',status:'active',models:['model']}]));

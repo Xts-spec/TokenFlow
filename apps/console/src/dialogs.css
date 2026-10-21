@@ -13,7 +13,7 @@
 :root .tfDialog.tfKeyDetail{--tf-dialog-width:680px}
 :root .tfDialog.tfApiEditorDialog{--tf-dialog-width:640px}
 :root .tfDialog.tfKeyCreateDialog{--tf-dialog-width:720px}
-:root .tfDialog.tfAgentPicker{--tf-dialog-width:800px;height:min(640px,calc(100dvh - 64px));overflow:hidden}
+:root .tfDialog.tfAgentPicker{--tf-dialog-width:800px;height:min(860px,calc(100dvh - 64px));overflow:hidden}
 :root .tfDialog.tfAgentPicker .tfDialogContent{height:100%;padding:0;display:flex;flex-direction:column}
 :root .tfDialog.tfAgentPicker .tfDialogContent>header{padding:22px 24px 16px;margin:0}
 :root .tfDialog.tfAgentPicker .tfDialogContent>footer{padding:16px 24px}
@@ -35,3 +35,5 @@
  :root .tfDialog.tfAgentPicker,:root dialog.tfPicker,:root dialog.tfRepair{height:min(600px,calc(100dvh - 32px))}
  :root .tfDialog.tfAgentPicker .tfDialogContent>header{padding:20px 20px 12px}
 }
+
+:root :is(dialog.tfDialog,dialog.tfPicker,dialog.tfRepair):focus{outline:none}

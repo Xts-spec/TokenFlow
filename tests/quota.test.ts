@@ -14,6 +14,14 @@ const responder = (routes: Record<string, QuotaResponse | ((request: QuotaReques
 };
 
 describe('quota layer', () => {
+  it('keeps explicit revocation separate from an opaque quota rejection without exposing provider diagnostics',async()=>{
+    const request=async(body:unknown,status=401)=>quotaProviders.codex.fetch(async()=>json(body,status),{provider:'codex'});
+    await expect(request({error:{code:'token_revoked',message:'private-upstream-diagnostic'}})).rejects.toMatchObject({status:401,code:'token_revoked'});
+    for(const [body,status] of [[{error:{code:'token_revoked',message:'private-upstream-diagnostic'}},403],[{error:{code:'unknown',message:'token_revoked private-upstream-diagnostic'}},401],[{error:'token_revoked private-upstream-diagnostic'},401]] as const){
+      const error=await request(body,status).catch(error=>error);
+      expect(error.code).toBeUndefined();expect(error.message).not.toMatch(/private-upstream-diagnostic|token_revoked/);
+    }
+  });
   it('routes overseas WorkBuddy quota only to its verified region',async()=>{
     const calls:QuotaRequest[]=[];const call=async(r:QuotaRequest)=>{calls.push(r);return json({Packages:[]});};
     await quotaProviders.workbuddy.fetch(call,{provider:'workbuddy',domain:'www.workbuddy.ai'});

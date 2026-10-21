@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile, rename, rm, readdir, stat } from 'node:fs/p
 import { join } from 'node:path';
 import {providerUsage} from './gateway-observation.js';
 import {readUpstreamError,upstreamError} from './upstream-errors.js';
-import {readSummaryResponse,summaryTranscript,splitTranscript,SUMMARY_MAX_CALLS,SUMMARY_CHUNK_BYTES,CONTEXT_INPUT_BYTES,CONTEXT_TRIGGER_BYTES} from './context-summary.js';
+import {readSummaryResponse,summaryTranscript,splitTranscript,SUMMARY_CHUNK_BYTES,CONTEXT_INPUT_BYTES,CONTEXT_TRIGGER_BYTES} from './context-summary.js';
 
 type Item = Record<string, unknown>;
 type RequestBody = Item & {model:string};
@@ -12,7 +12,6 @@ export type CompactionReport={inputBytes:number;outputBytes:number;calls:number;
 export type ContextOptions={onCompaction?:(report:CompactionReport)=>void;onUsageIncomplete?:()=>void};
 export type ContextMigration = {scope:ContextScope;recover:(item:Item)=>Promise<Item[]>;normalize?:(item:Item)=>Item[]};
 type Send = (path:string, body:Item) => Promise<Response>;
-const LIMIT = 16 * 1024 * 1024;
 const PREFIX = 'tfctx1.';
 const zeroUsage = {input_tokens:0, output_tokens:0, total_tokens:0,input_tokens_details:{cached_tokens:0,cache_write_tokens:0},output_tokens_details:{reasoning_tokens:0}};
 const object = (value:unknown):value is Item => !!value && typeof value==='object' && !Array.isArray(value);
@@ -50,13 +49,10 @@ function items(value:unknown):Item[] {
  if(!Array.isArray(value)||!value.every(object))throw new GatewayContextError('input must be text or an array of conversation items');
  return structuredClone(value);
 }
-function bounded(value:unknown) {
- if(size(value)>LIMIT)throw new GatewayContextError('Conversation exceeds the gateway context limit; compact earlier',413);
-}
 async function json(response:Response):Promise<Item> {
  if(!response.body)throw new GatewayContextError('Source returned no response body',502);
- const reader=response.body.getReader();const chunks:Uint8Array[]=[];let bytes=0;
- try{for(;;){const {value,done}=await reader.read();if(done)break;bytes+=value.length;if(bytes>LIMIT)throw new GatewayContextError('Source response exceeds context limit',502);chunks.push(value);}}
+ const reader=response.body.getReader();const chunks:Uint8Array[]=[];
+ try{for(;;){const {value,done}=await reader.read();if(done)break;chunks.push(value);}}
  catch(error){await reader.cancel().catch(()=>{});throw error;}finally{reader.releaseLock();}
  try{const parsed:unknown=JSON.parse(Buffer.concat(chunks).toString());if(object(parsed))return parsed;}catch{/* Report a bounded, non-sensitive error. */}
  throw new GatewayContextError('Source returned invalid response JSON',502);
@@ -143,12 +139,12 @@ export class GatewayContext {
  }
  private sealHistory(input:Item[],scope:ContextScope,coveredUsers:Set<string>){
   const value=coveredUsers.size?{format:'history-v1',input,coveredUsers:[...coveredUsers]}:input;
-  bounded(value);return this.seal(value,scope);
+  return this.seal(value,scope);
  }
  private unseal(value:unknown,scope:ContextScope):Item[] {return this.unsealHistory(value,scope).input;}
  private unsealHistory(value:unknown,scope:ContextScope):{input:Item[];coveredUsers:Set<string>} {
   try{
-   if(typeof value!=='string'||!value.startsWith(PREFIX)||value.length>LIMIT*2)throw new Error();
+   if(typeof value!=='string'||!value.startsWith(PREFIX))throw new Error();
    const data=Buffer.from(value.slice(PREFIX.length),'base64url');const decipher=createDecipheriv('aes-256-gcm',this.secret,data.subarray(0,12));
    decipher.setAAD(Buffer.from(JSON.stringify(scope)));decipher.setAuthTag(data.subarray(12,28));
    const decoded:unknown=JSON.parse(Buffer.concat([decipher.update(data.subarray(28)),decipher.final()]).toString());
@@ -159,7 +155,7 @@ export class GatewayContext {
    return {input:items(decoded),coveredUsers:new Set()};
   }catch{throw new GatewayContextError('Context is invalid or belongs to another API key, source or model; resend the original history');}
  }
- encodeCheckpoint(value:Item[],scope:ContextScope){bounded(value);return this.seal(value,scope);}
+ encodeCheckpoint(value:Item[],scope:ContextScope){return this.seal(value,scope);}
  async readStoredHistory(id:unknown,scopes:ContextScope[]){
   if(typeof id!=='string'||!/^resp_tf_[a-f0-9]{32}$/.test(id))throw new GatewayContextError('旧响应 ID 不属于当前网关；请重新发送完整历史，不能仅凭 ID 跨来源续聊。');
   try{return this.decodeCheckpoint(await readFile(join(this.directory,id),'utf8'),scopes);}
@@ -175,7 +171,7 @@ export class GatewayContext {
   catch(error){if(error instanceof GatewayContextError)throw error;throw new GatewayContextError('Previous response is unavailable or was not stored; resend the original history');}
  }
  private async save(id:string,input:Item[],scope:ContextScope,coveredUsers=new Set<string>()) {
-  bounded(input);const path=join(this.directory,id);const temp=path+'.'+randomUUID();
+  const path=join(this.directory,id);const temp=path+'.'+randomUUID();
   try{await writeFile(temp,this.sealHistory(input,scope,coveredUsers),{mode:0o600,flag:'wx'});await rename(temp,path);}finally{await rm(temp,{force:true});}
  }
  private async expand(body:RequestBody,scope:ContextScope,migration?:ContextMigration) {
@@ -196,7 +192,8 @@ export class GatewayContext {
    else if(item.type==='item_reference')throw new GatewayContextError('This source requires full conversation items, not item_reference');
    else expanded.push(item);
   }
-  const portable=migration?.normalize?expanded.flatMap(migration.normalize):expanded;bounded(portable);return {input:portable,coveredUsers};
+  const portable=migration?.normalize?expanded.flatMap(migration.normalize):expanded;
+  return {input:portable,coveredUsers};
  }
  async response(path:string,body:RequestBody,owner:string,source:string,send:Send,migration?:ContextMigration,options:ContextOptions={}):Promise<Response> {
   const scope=migration?.scope??{owner,model:body.model,source};const expanded=await this.expand(body,scope,migration);let input=expanded.input;const coveredUsers=expanded.coveredUsers;
@@ -248,9 +245,7 @@ export class GatewayContext {
     input=migration?.normalize?restored.flatMap(migration.normalize):restored;
    }
   }
-  if(migration&&checkpoint&&size({input,instructions:body.instructions,tools:body.tools})>contextBudget(body,input))throw new GatewayContextError('历史压缩后仍超过本次历史预算；请减少最近的工具输出或生成交接摘要。原会话未修改。',413,summaryUsage,'context_budget_exceeded');
   const upstream:RequestBody={...body,input};delete upstream.previous_response_id;delete upstream.context_management;
-  if(size(upstream)>LIMIT)throw new GatewayContextError('请求正文超过网关 16 MiB 安全上限；请缩短本轮附件或工具定义。',413,summaryUsage??zeroUsage,'context_request_too_large');
   let response:Response;
   try{response=await send('responses',upstream);}catch(error){
    if(!checkpoint)throw error;
@@ -312,8 +307,7 @@ export class GatewayContext {
   const stream=response.body.pipeThrough(new TransformStream<Uint8Array,Uint8Array>({
    async transform(chunk,controller){
     buffer+=decoder.decode(chunk,{stream:true});buffer=buffer.replace(/\r\n/g,'\n');
-    let end:number;while((end=buffer.indexOf('\n\n'))!==-1){const frame=buffer.slice(0,end);buffer=buffer.slice(end+2);if(Buffer.byteLength(frame)>LIMIT)throw new GatewayContextError('Source event exceeds context limit',502);controller.enqueue(encoder.encode(await rewrite(frame)));}
-    if(Buffer.byteLength(buffer)>LIMIT)throw new GatewayContextError('Source event exceeds context limit',502);
+    let end:number;while((end=buffer.indexOf('\n\n'))!==-1){const frame=buffer.slice(0,end);buffer=buffer.slice(end+2);controller.enqueue(encoder.encode(await rewrite(frame)));}
    },
    async flush(controller){buffer+=decoder.decode();if(buffer.trim())controller.enqueue(encoder.encode(await rewrite(buffer)));if(!terminal)controller.enqueue(encoder.encode('event: error\ndata: '+JSON.stringify({type:'error',code:'incomplete_stream',message:'Source stream ended before completion',sequence_number:sequence++})+'\n\n'));}
   }));
@@ -345,8 +339,7 @@ export class GatewayContext {
   // complete exchanges, but always keep the newest user request verbatim.
   let lastUser=-1;for(let index=input.length-1;index>=0;index--)if(input[index]!.role==='user'){lastUser=index;break;}
   const preservedAt=(index:number)=>{
-   const prefix=input.slice(0,index);const keepUsers=size(prefix.filter(item=>item.role==='user'))<=16*1024;
-   return prefix.filter(item=>['system','developer'].includes(String(item.role))||item===input[lastUser]||(keepUsers&&item.role==='user'));
+   return input.slice(0,index).filter(item=>['system','developer'].includes(String(item.role))||item===input[lastUser]);
   };
   const retainedBytes=(index:number)=>size({input:[...preservedAt(index),...input.slice(index)],instructions:body.instructions,tools:body.tools});
   // The latest user item is separately preserved. Completed exchanges after
@@ -356,19 +349,16 @@ export class GatewayContext {
    cut=index;
   }
   const prefix=input.slice(0,cut);const tail=input.slice(cut);
-  // Keep instructions and small user histories verbatim. Large user attachments
-  // are represented by a factual checkpoint, with omissions stated explicitly.
-  // Large old user messages (including attachments) are represented by the
-  // checkpoint, not copied back verbatim after spending tokens summarizing them.
+  // Earlier user turns belong in the summary, even when individually short.
+  // Carry only instructions, the current request and the recent complete tail
+  // verbatim; do not accumulate a second copy of already summarized user turns.
   const preserved=preservedAt(cut);
   const retained=size({input:[...preserved,...tail],instructions:body.instructions,tools:body.tools});
-  const summaryLimit=Math.min(16*1024,budget-retained-1024);
-  if(summaryLimit<4096&&prefix.length>preserved.length)throw new GatewayContextError('当前指令或最近消息超过网关保守预算，无法安全压缩；原会话未修改。',413,zeroUsage,'context_budget_exceeded');
+  const summaryLimit=Math.max(4096,Math.min(16*1024,budget-retained-1024));
   let compacted=input;let usage:unknown=zeroUsage;
   if(prefix.length>preserved.length){
    // Bound each summarization call as well: an official opaque checkpoint can
    // expand to a transcript much larger than the new provider's context window.
-   let calls=0;
    const summaryCacheKey=(transcript:string)=>createHmac('sha256',this.secret).update(JSON.stringify({version:2,scope:cacheScope,transcript})).digest('hex');
    const summarize=async(transcript:string):Promise<string>=>{
     const cacheKey=summaryCacheKey(transcript);
@@ -393,7 +383,6 @@ export class GatewayContext {
     const task=(async()=>{
      let result:Item;let outputBudget=4096;
      for(;;){
-      if(++calls>SUMMARY_MAX_CALLS)throw new GatewayContextError('本次压缩达到调用上限；已完成摘要已保存。请缩小历史或稍后手动继续。',422,usage,'compaction_budget_exceeded');
       try{
        report.calls++;
        const response=await send('responses',{
@@ -411,7 +400,7 @@ export class GatewayContext {
       const exhausted=result.status==='incomplete'&&(reason==='max_output_tokens'||(reason==null&&(providerUsage(result.usage).reasoningTokens??0)>=outputBudget));
       if(!exhausted)break;
       // Reasoning and visible summary text share the output budget. Retry only
-      // proven exhaustion, once, within the existing call/deadline limits.
+      // proven exhaustion, once, using a larger output allowance.
       if(outputBudget>=8192)throw new GatewayContextError('摘要输出预算已耗尽，扩大预算重试后仍未完成；原会话未修改。请缩小历史或稍后重试。',422,usage,'compaction_output_limit',report.unmetered);
       outputBudget=8192;
      }
@@ -451,7 +440,6 @@ export class GatewayContext {
    // paid chunks without reducing the continuation, especially on IDE rollouts
    // with many developer messages. User turns stay as factual task context.
    let transcript=summaryTranscript(prefix.filter(item=>!['system','developer'].includes(String(item.role))));let text='';let lastRoundKeys:string[]=[];
-   if(splitTranscript(transcript).length>SUMMARY_MAX_CALLS-1)throw new GatewayContextError('历史过大，预计摘要调用超过本次预算；尚未发送上游。请先在原来源生成交接摘要。',413,zeroUsage,'compaction_budget_exceeded');
    do {
     const parts=splitTranscript(transcript);
     const summaries:string[]=[],expanded:string[]=[];
@@ -478,7 +466,7 @@ export class GatewayContext {
     throw new GatewayContextError('Context summary did not reduce history; original history is unchanged',422,usage,'compaction_not_reduced');
    }
   }
-  bounded(compacted);report.outputBytes=size(compacted);
+  report.outputBytes=size(compacted);
   // This token is our own authenticated context, not an OpenAI encrypted state.
   // It is expanded only by this gateway under the same key/source/model scope.
   // Authenticated identities distinguish already summarized user messages from

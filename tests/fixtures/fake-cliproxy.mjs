@@ -113,6 +113,7 @@ const server = createServer(async(req,res) => {
   function replyEmpty(){return send(200,{status_code:200,header:{},body:'{}'});}
   if(input.url.includes('openapi.qoder.sh/api/v2/quota/usage'))return send(200,{status_code:200,header:{},body:JSON.stringify({userQuota:{total:3000,used:1512,remaining:1488},orgResourcePackage:{cap:6000,used:0,remaining:6000,available:true}})});
   if(fixtureMode==='quota-401')return send(200,{status_code:401,header:{},body:'{}'});
+  if(fixtureMode==='quota-token-revoked')return send(200,{status_code:401,header:{},body:JSON.stringify({error:{code:'token_revoked',message:'Encountered invalidated oauth token for user, upstream-secret-never-expose'}})});
   if(!accounts.some(a=>a.auth_index===input.auth_index))return send(200,{status_code:401,header:{},body:'{"error":"upstream-secret-never-expose"}'});
   if(fixtureMode==='quota-error')return send(200,{status_code:429,header:{},body:'{"error":"rate limited upstream-secret-never-expose"}'});
   const u=input.url;const reply=(obj)=>send(200,{status_code:200,header:{'Content-Type':['application/json']},body:JSON.stringify(obj)});

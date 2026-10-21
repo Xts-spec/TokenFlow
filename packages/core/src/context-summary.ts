@@ -3,7 +3,6 @@
 import {upstreamError} from './upstream-errors.js';
 type Item=Record<string,any>;
 export const SUMMARY_CHUNK_BYTES=48*1024;
-export const SUMMARY_MAX_CALLS=32;
 // Baseline history-reduction target. GatewayContext expands it for fixed
 // instructions/tools and the current user request; this is not a model limit.
 export const CONTEXT_INPUT_BYTES=128*1024;
@@ -45,7 +44,7 @@ export function summaryTranscript(input:Item[]){
 }
 export async function readSummaryResponse(response:Response):Promise<Item>{
  if(!response.body)throw new Error('Summary response has no body');
- const reader=response.body.getReader();const decoder=new TextDecoder();let bytes=0,buffer='';
+ const reader=response.body.getReader();const decoder=new TextDecoder();let buffer='';
  const done=new Map<number,Item>(),deltas=new Map<string,string>();let terminal:Item|undefined;
  const safeTerminal=(value:Item):Item=>value.status==='failed'?{...value,error:upstreamError(502,JSON.stringify({error:value.error}))}:value;
  const frame=(text:string)=>{
@@ -61,7 +60,7 @@ export async function readSummaryResponse(response:Response):Promise<Item>{
  };
  try{
   const sse=(response.headers.get('content-type')??'').includes('text/event-stream');
-  for(;;){const {done:ended,value}=await reader.read();if(ended)break;bytes+=value.length;if(bytes>4*1024*1024)throw new Error('Summary response exceeds limit');
+  for(;;){const {done:ended,value}=await reader.read();if(ended)break;
    buffer+=decoder.decode(value,{stream:true});
    if(sse){buffer=buffer.replace(/\r\n/g,'\n');let end;while((end=buffer.indexOf('\n\n'))>=0){frame(buffer.slice(0,end));buffer=buffer.slice(end+2);if(terminal)break;}
     // A terminal Responses event ends the operation. Some bridges keep SSE

@@ -11,10 +11,11 @@ import type { LocalAgentSnapshot } from '../../../packages/core/src/cliproxy';
 import { QuotaDetails } from './QuotaDetails';
 import { qualifiedModelLabel as modelLabel } from './model-label';
 import type { UsageData } from './usage-data';
+import {localDay} from './usage-model';
 import {officialLoginHeld} from '../../shared/native-login-identity';
 import { clientOptions, loginNames, useNativeLogin, type LoginProvider } from './native-login';
 import { Icon } from './Icons';
-import {modelManufacturer} from './UsagePanel';
+import {UsageFold,modelManufacturer} from './UsagePanel';
 import {DragHandle,dropOrder,orderModels,useModelOrder} from './display-order';
 import { ProviderIcon } from './ProviderIcon';
 import type { Notify } from './notify';
@@ -111,6 +112,7 @@ export function AccountsPage({local,usage,disabled,actions,notify,onContext}:{lo
    </NativeLoginStatus>;
 
  return <div className="tfPage tfAccountsPage">{officialConfirm.dialog}
+  <UsageFold title="今日总用量" rows={usage.allRows.filter(row=>row.day===localDay(new Date()))} range="today" loaded={usage.loaded} error={usage.error} onRetry={usage.reload}/>
   <div className="tfProviderTabs" role="tablist" aria-label="授权平台" onKeyDown={navigateTabs}>
    {providers.map(item=><button key={item.id} id={`provider-tab-${item.id}`} role="tab" aria-selected={provider?.id===item.id} aria-controls={`provider-panel-${item.id}`} tabIndex={provider?.id===item.id?0:-1} onClick={()=>chooseProvider(item.id)}>
     <ProviderIcon provider={item.id} size={28}/><span>{item.label}</span>

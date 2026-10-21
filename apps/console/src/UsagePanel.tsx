@@ -42,11 +42,11 @@ export function UsageFold({title='用量统计',subtitle,rows,range,loaded=true,
 }
 
 /** Total, cache hit rate and the uncached / cached / output split, the way the official apps report usage. */
-export function UsageSummary({ title = 'Token 用量', rows, range, onRange, loaded = true, hint }: { title?: string; rows: readonly UsageRow[]; range: RangeId; onRange: (range: RangeId) => void; loaded?: boolean; hint?: ReactNode }) {
+export function UsageSummary({ title = 'Token 用量', rows, range, onRange, loaded = true, hint }: { title?: string; rows: readonly UsageRow[]; range: RangeId; onRange?: (range: RangeId) => void; loaded?: boolean; hint?: ReactNode }) {
   const totals = totalsOf(rows);
   const parts = totals.totalTokens;
   return <section className="tfUsageSummary" aria-label={title}>
-    <header><div><h3>{title}</h3></div><RangeTabs range={range} onChange={onRange} /></header>
+    <header><div><h3>{title}</h3></div>{onRange&&<RangeTabs range={range} onChange={onRange} />}</header>
     <div className="tfUsageHero">
       <div className="tfUsageTotal"><strong title={`${tokenTotalText(totals)} tokens`}>{tokenTotalText(totals)}</strong><span>Token</span></div>
       <div className="tfUsageHit" title={totals.hitRate === null ? '上游没有返回缓存数据' : `缓存读取 ${formatTokens(totals.cachedTokens)} tokens`}>

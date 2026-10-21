@@ -44,7 +44,8 @@ const accountSchema = z.object({
 const modelSchema = z.object({id: z.string(), display_name: z.string().optional(), type: z.string().optional(), owned_by: z.string().optional(), supportedInputModalities:z.array(z.string()).optional()});
 const qoderProfilesSchema=z.record(z.object({email:z.string().email().max(200),checkedAt:z.number().finite()}));
 const apiCallSchema = z.object({status_code: z.number().int(), header: z.record(z.array(z.string())).default({}), body: z.string().default('')});
-export function revokedCredential(file:{status?:string;status_message?:string}){return file.status==='error'&&/\b(?:invalid_grant|refresh_token_revoked|refresh_token_reused|refresh_token_expired)\b/i.test(file.status_message??'');}
+export function revokedCredential(file:{status?:string;status_message?:string}){return file.status==='error'&&/\b(?:invalid_grant|token_revoked|refresh_token_revoked|refresh_token_reused|refresh_token_expired)\b/i.test(file.status_message??'');}
+function credentialTokenRevision(raw:Record<string,unknown>){return typeof raw.access_token==='string'&&raw.access_token?createHash('sha256').update(JSON.stringify([raw.access_token,raw.refresh_token])).digest('hex'):undefined;}
 export type LocalAccount = {id: string; provider: string; label: string; nativeClients?:string[]; status: string; disabled: boolean; unavailable: boolean; retryable?:boolean; authenticationRequired?:boolean; isDuplicate?: boolean;preferredCredentialId?:string;credentialCount?:number; modelError?:string; models?: string[]};
 /** `provider` 为承接该模型的登录 Provider；未知类型（如 Gemini API Key）为空。 */
 // Unknown capabilities remain unknown; never infer vision from a model name.
@@ -83,9 +84,14 @@ export class CLIProxyManager {
   private state = 'stopped';
   private managementKey = randomBytes(32).toString('hex');
   private accounts: LocalAccount[] = [];
+  private revokedTokens=new Map<string,string>();
   private qoderProfileAttempts=new Map<string,number>();
   private names = new Map<string, string>();
   private quotaTargets = new Map<string, {authIndex: string; account: QuotaAccount}>();
+  private async credentialRevision(id:string){
+    const name=this.names.get(id);if(!name||name.includes('/')||name.includes('\\'))return undefined;
+    try{return credentialTokenRevision(JSON.parse(await readConfig(join(this.root,'cliproxy','auth',name))??'{}'));}catch{return undefined;}
+  }
   private quotas: Record<string, AccountQuota> = {};
   private get quotaBusy():boolean{return !!this.quotaTask||this.quotaProviderTasks.size>0;}
   private models: LocalModel[] = [];
@@ -371,7 +377,9 @@ export class CLIProxyManager {
         const identityKey=credentialIdentity(provider,identity,file);if(identityKey)identities.set(id,identityKey);
         credentials.set(id,{raw:identity,modified:file.modtime});
         const expired=typeof identity.access_token==='string'&&!!identity.access_token&&credentialPreference(identity)[0]===0;
-        const authenticationRequired=expired||revokedCredential(file);
+        const revision=credentialTokenRevision(identity);
+        if(this.revokedTokens.has(id)&&this.revokedTokens.get(id)!==revision)this.revokedTokens.delete(id);
+        const authenticationRequired=expired||revokedCredential(file)||!!revision&&this.revokedTokens.get(id)===revision;
         const uid=credentialSubject(identity)??file.uid;
         let profileEmail=provider==='qoder'&&uid?qoderProfiles[uid]?.email:undefined;
         if(provider==='qoder'&&uid&&!credentialEmail(file.email)&&!credentialEmail(identity.email)&&file.auth_index!==undefined&&!file.disabled&&!expired){
@@ -508,6 +516,7 @@ export class CLIProxyManager {
       // Publish the discovered accounts and confirmed routes in one synchronous step.
       // Polling must not see new account models while their namespace is still registering.
       this.credentialGroups=credentialGroups;this.accounts = accounts; this.names = names; this.authIDs = authIDs; this.quotaTargets = quotaTargets;
+      for(const id of this.revokedTokens.keys())if(!names.has(id))this.revokedTokens.delete(id);
       this.quotas = Object.fromEntries(Object.entries(this.quotas).filter(([id]) => names.has(id)));
       this.models = [...catalog.values()].filter(m => providerScope&&m.provider!==providerScope||available.has(m.id)).sort((a,b) => a.id.localeCompare(b.id));
       this.publishAPIModels(available);
@@ -713,6 +722,7 @@ export class CLIProxyManager {
       const quotaProvider = quotaProviders[provider];
       if (!quotaProvider) return;
       const {authIndex, account: info} = this.quotaTargets.get(account.id)!;
+      const checkedRevision=provider==='codex'?await this.credentialRevision(account.id):undefined;
       const signal=this.requests.signal;
       const call = (request: QuotaRequest): Promise<QuotaResponse> => retryQuotaCall(async()=>{
         if(!this.accounts.some(a=>a.id===account.id&&!a.disabled))throw new Error('账号已停用或移除，已停止额度查询。');
@@ -727,18 +737,25 @@ export class CLIProxyManager {
       } catch (error) {
         const is401 = error instanceof QuotaHTTPError && error.status === 401;
         const is403 = error instanceof QuotaHTTPError && error.status === 403;
+        const revoked=is401&&provider==='codex'&&error.code==='token_revoked'&&!!checkedRevision&&checkedRevision===await this.credentialRevision(account.id);
         const isMissingProject = error instanceof Error && error.message.includes('project_id');
-        // A quota endpoint rejection does not prove the model credential is revoked.
-        // Keep the independent source pool intact; upstream inference owns auth refresh/status.
-        const message = is401 ? '额度接口暂未通过认证（HTTP 401），已保留授权；可稍后重查或重新登录。'
+        // A bare 401 is ambiguous. Codex's explicit revocation code is evidence
+        // only for the exact token checked, never a replacement saved mid-request.
+        const message = revoked ? '登录授权已失效：官方已撤销此授权，请重新登录或确认移除。'
+          : is401 ? '额度接口暂未通过认证（HTTP 401），已保留授权；可稍后重查或重新登录。'
           : isMissingProject ? '账号缺少关联项目（project_id），无法调用 Google 模型。请重新连接。'
           : is403 ? '访问受限（HTTP 403），当前凭据权限不足或账号受限。'
           : error instanceof z.ZodError ? '上游 api-call 响应格式异常。'
           : error instanceof Error ? error.message : '额度查询失败。';
         if (signal.aborted||!this.accounts.some(a=>a.id===account.id&&!a.disabled)||!this.names.has(account.id)) return;
+        if(revoked){
+          this.revokedTokens.set(account.id,checkedRevision!);
+          const current=this.accounts.find(a=>a.id===account.id)!;
+          current.authenticationRequired=true;current.unavailable=true;current.retryable=false;current.models=[];
+        }
         const previous=this.quotas[account.id];
         const lastSuccessfulAt=previous?.status==='ok'?previous.observedAt:previous?.lastSuccessfulAt;
-        this.quotas[account.id] = {accountId: account.id, provider, status: 'error', observedAt, windows: lastSuccessfulAt?previous.windows:[], ...(lastSuccessfulAt?{lastSuccessfulAt,plan:previous.plan}:{}), error: `${message.slice(0, 260)}${message.includes(refreshNetworkHint)?'':` ${refreshNetworkHint}`}`};
+        this.quotas[account.id] = {accountId: account.id, provider, status: 'error', observedAt, windows: lastSuccessfulAt?previous.windows:[], ...(lastSuccessfulAt?{lastSuccessfulAt,plan:previous.plan}:{}), error: `${message.slice(0, 260)}${revoked||message.includes(refreshNetworkHint)?'':` ${refreshNetworkHint}`}`};
       }
     }));
     if(providerScope==='cursor')await this.cursor.refresh();

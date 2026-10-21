@@ -273,3 +273,15 @@ it('repairs source item IDs even when optional checkpoint normalization is disab
  expect(saved[2].payload).not.toHaveProperty('id');expect(saved[2].payload.call_id).toBe('pair');
  expect(saved[1]).toEqual(rows[1]);expect(saved[3]).toEqual(rows[3]);
 });
+
+it('recovers large local rollouts and histories without byte cutoffs',async()=>{
+ const f=await fixture();const token='large-official-window';
+ const first={type:'message',role:'user',content:[{type:'input_text',text:'x'.repeat(17*1024*1024)}]};
+ const text=[{type:'response_item',payload:first},{type:'event_msg',payload:{type:'ignored',detail:'y'.repeat(49*1024*1024)}},checkpoint(token)].map(v=>JSON.stringify(v)).join('\n')+'\n';
+ await writeFile(f.file,text);
+ const recovered=await f.migration.recover({type:'compaction',encrypted_content:token},[]);
+ expect(recovered).toHaveLength(1);expect(recovered[0].content[0].text).toHaveLength(17*1024*1024);
+ const cached=await f.migration.recover({type:'compaction',encrypted_content:token},[]);
+ expect(cached[0].content[0].text).toHaveLength(17*1024*1024);
+ expect(createHash('sha256').update(await readFile(f.file)).digest('hex')).toBe(createHash('sha256').update(text).digest('hex'));
+});

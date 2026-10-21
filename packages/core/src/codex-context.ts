@@ -6,7 +6,6 @@ import {GatewayContext,GatewayContextError,type ContextScope} from './gateway-co
 import {safePath} from './agent-connections.js';
 
 type Item=Record<string,any>;
-const LIMIT=64*1024*1024;
 const digest=(text:string)=>createHash('sha256').update(text).digest('hex');
 // V8 substrings can pin the whole rollout they were split from.
 const detached=(text:string):string=>JSON.parse(JSON.stringify(text));
@@ -46,7 +45,7 @@ export class CodexContext {
    await safePath(dir);let entries;try{entries=await readdir(dir,{withFileTypes:true});}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return;throw e;}
    for(const entry of entries){if(entry.isSymbolicLink())continue;const path=join(dir,entry.name);
     if(entry.isDirectory()&&depth<4)await walk(path,depth+1);
-    else if(entry.isFile()&&/^rollout-.*\.jsonl$/.test(entry.name)){const info=await stat(path);if(info.size<=LIMIT)files.push({path,mtime:info.mtimeMs});}
+    else if(entry.isFile()&&/^rollout-.*\.jsonl$/.test(entry.name)){const info=await stat(path);files.push({path,mtime:info.mtimeMs});}
    }
   };
   await walk(join(dirname(this.configPath),'sessions'),0);await walk(join(dirname(this.configPath),'archived_sessions'),0);
@@ -86,7 +85,6 @@ export class CodexContext {
     }
    }
    if(complete&&history.some(i=>i.role==='user')){
-    if(Buffer.byteLength(JSON.stringify(history))>16*1024*1024)throw new GatewayContextError('可恢复历史超过 16 MB，请先在原来源压缩或生成交接摘要；原会话未修改。',413);
     await this.save(token,history);return history;
    }
   }

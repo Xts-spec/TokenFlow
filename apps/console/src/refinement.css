@@ -491,7 +491,7 @@ a:hover{text-decoration:underline}
 .tfInlineAgentPicker{display:flex;flex-direction:column;min-width:0;gap:16px}
 .tfInlineAgentPicker .tfAgentPickerSearch{margin:0}
 .tfInlineAgentPicker .tfAgentPicked{padding:0;margin:0}
-.tfInlineAgentPicker .tfAgentPickerBrowser{margin:0;min-height:220px;height:340px;max-height:45dvh;flex:none}
+.tfInlineAgentPicker .tfAgentPickerBrowser{margin:0;min-height:220px;height:500px;max-height:62dvh;flex:none}
 .tfAgentPickerSources,.tfAgentPickerModelList{overflow-anchor:none;contain:paint}
 .tfAgentPickerSources button,.tfAgentPicker .tfPickModel,.tfAgentPicker .tfPickDraggableRow{transition:none}
 .tfInlineAgentPicker .tfAgentPickerSources{padding-bottom:0}
@@ -504,7 +504,7 @@ a:hover{text-decoration:underline}
 :root .tfKeyActionMenu button:is(:hover,:focus-visible){background:var(--soft)}
 :root .tfAgentPickerSources button:is(:focus,:focus-visible){outline:0;box-shadow:none}
 :root .tfAgentPickerSources button:focus-visible{background:var(--soft)}
-@media(max-width:600px){.tfInlineAgentPicker .tfAgentPickerBrowser{grid-template-columns:112px minmax(0,1fr);gap:10px;height:320px}}
+@media(max-width:600px){.tfInlineAgentPicker .tfAgentPickerBrowser{grid-template-columns:112px minmax(0,1fr);gap:10px;height:440px}}
 
 /* Activity relies on spacing and quiet selection fills, without divider rules. */
 .tfPage.tfActivityPage{width:100%;max-width:800px;margin-inline:auto}
@@ -695,11 +695,11 @@ body:has(dialog[open]) .tfOperationFeedback{display:none}
 .tfCompactPicker .tfAgentPickerSources{display:flex;flex-direction:row;flex-wrap:wrap;gap:6px;padding:0;background:transparent;border:0;overflow:visible}
 .tfCompactPicker .tfAgentPickerCaption{display:none}
 .tfCompactPicker .tfAgentPickerSources>button{position:relative;display:flex;justify-content:center;width:44px;min-width:44px;height:44px;min-height:44px;padding:10px;border-radius:9px;flex:none;border:1px solid transparent}
-.tfCompactPicker .tfAgentPickerSources>button[aria-selected=true]{border-color:var(--accent);background:var(--surface)}
+.tfCompactPicker .tfAgentPickerSources>button[aria-selected=true]{border-color:transparent;background:var(--soft);color:var(--text)}
 .tfCompactPicker .tfAgentPickerSources>button>span:not(.tfProviderIcon):not(.tfMark),.tfCompactPicker .tfAgentPickerSources>button>b:not(.chosen){display:none}
 .tfCompactPicker .tfAgentPickerSources>button>b.chosen{position:absolute;right:-2px;top:-3px;min-width:15px;height:15px;line-height:15px;padding:0 3px;font-size:9px;border-radius:8px;background:var(--accent);color:var(--surface)}
-.tfCompactPicker .tfAgentPickerCatalog{min-height:0;max-height:340px;display:flex;flex-direction:column;border:0;background:transparent}
-.tfCompactPicker .tfAgentPickerModelList{max-height:270px;min-height:0}
+.tfCompactPicker .tfAgentPickerCatalog{min-height:0;max-height:min(560px,65dvh);display:flex;flex-direction:column;border:0;background:transparent}
+.tfCompactPicker .tfAgentPickerModelList{max-height:min(480px,55dvh);min-height:0}
 .tfCompactPicker .tfAgentPickerEmpty{min-height:100px;padding:12px;gap:8px}
 .tfCompactPicker .tfAgentPickerEmpty strong{font-size:12px;font-weight:400;color:var(--muted)}
 .tfKeyCreatedDialog .tfDialogLead{margin:0 0 20px;font-size:14px}
@@ -710,3 +710,13 @@ body:has(dialog[open]) .tfOperationFeedback{display:none}
 .tfCreatedInfo input{box-sizing:border-box;width:100%;font-size:12px;min-height:32px;padding:6px 10px}
 .tfCreatedInfo .tfCreatedModels{max-height:100px;overflow:auto;white-space:pre-line}
 @media(max-width:600px){.tfPickerToolbar{flex-wrap:wrap;gap:8px}.tfPickerToolbar .tfSearch{flex-basis:100%}.tfKeyAccessField{gap:6px}.tfAccessChoices span{padding:7px 14px}}
+
+/* Keep source selection quiet and give long model catalogs more room. */
+.tfPickerAccounts{border:0;padding:0;margin:0;min-width:0}
+.tfPickerAccounts legend{font-size:12px;color:var(--muted);margin-bottom:8px}
+.tfPickerAccounts .tfAccessChoices{flex-wrap:wrap;width:fit-content;max-width:100%}
+.tfPickerAccounts .tfAccessChoices label{min-width:0;max-width:100%}
+.tfPickerAccounts .tfAccessChoices span{overflow-wrap:anywhere}
+.tfPickerAccountCount{margin-left:8px;font-size:11px;font-variant-numeric:tabular-nums}
+.tfAccessChoices input:focus-visible+span{outline:1px solid var(--muted)}
+.tfAccountsPage>.tfUsageFold{margin-bottom:16px}

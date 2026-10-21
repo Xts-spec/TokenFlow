@@ -79,3 +79,30 @@ it.each(['failed','error','truncated','missing-usage','error-body-disconnect','m
  await service.app.inject({method:'POST',url:'/v1/responses',headers:{host:admin.host,authorization:'Bearer '+apiKey},payload:{model:'qoder/model',input:transcript,stream:true,context_management:[{type:'compaction',compact_threshold:100}]}});
  expect((await GatewayKeys.open(root)).authenticate(apiKey)).toMatchObject({usedTokens:110,pendingRequests:0,unmeteredRequests:1});
 });
+
+it('accepts a large replay when a valid checkpoint replaces the oversized old tool history',async()=>{
+ const {root,port,service,admin}=await setup();const realFetch=globalThis.fetch;
+ const account=service.proxy.snapshot().accounts.find(a=>a.provider==='qoder')!;
+ const created=await service.app.inject({method:'POST',url:'/api/gateway-keys',headers:admin,payload:{name:'large-replay',sourceId:account.id,models:['qoder/model']}});
+ const {key,apiKey}=created.json();
+ const {GatewayContext}=await import('../packages/core/src/gateway-context.js');
+ const context=await GatewayContext.open(root);
+ const checkpoint=context.encodeCheckpoint([{role:'assistant',content:'Earlier tool work complete.'}],{owner:key.id,model:'qoder/model',source:account.id});
+ let forwarded=0;
+ vi.spyOn(globalThis,'fetch').mockImplementation(async(url,init)=>{
+  const parsed=new URL(String(url));if(parsed.port!==String(port)||parsed.pathname!=='/v1/responses')return realFetch(url,init);
+  forwarded++;
+  if(forwarded===1){expect(Buffer.byteLength(String(init?.body))).toBeLessThan(1024);expect(JSON.parse(String(init?.body)).input).toContainEqual({role:'user',content:'Continue with the tests.'});}
+  else {const body=JSON.parse(String(init?.body));expect(typeof body.input==='string'?body.input.length:body.input[0].content.length).toBe((body.model==='codex/model'?17:65)*1024*1024);if(body.model==='codex/model')expect(body.max_output_tokens).toBe(123);}
+  return Response.json({status:'completed',output:[],usage:{input_tokens:10,output_tokens:1}});
+ });
+ const response=await service.app.inject({method:'POST',url:'/v1/responses',headers:{host:admin.host,authorization:'Bearer '+apiKey},payload:{model:'qoder/model',store:false,input:[
+  {type:'function_call_output',call_id:'old',output:'x'.repeat(17*1024*1024)},
+  {type:'compaction',encrypted_content:checkpoint},{role:'user',content:'Continue with the tests.'},
+ ]}});
+ expect(response.statusCode,response.body).toBe(200);expect(forwarded).toBe(1);
+ const large=await service.app.inject({method:'POST',url:'/v1/responses',headers:{host:admin.host,authorization:'Bearer '+apiKey},payload:{model:'qoder/model',store:false,input:'x'.repeat(65*1024*1024)}});
+ expect(large.statusCode,large.body).toBe(200);expect(forwarded).toBe(2);
+ const native=await service.app.inject({method:'POST',url:'/v1/responses',headers:admin,payload:{model:'codex/model',store:false,max_output_tokens:123,input:'x'.repeat(17*1024*1024)}});
+ expect(native.statusCode,native.body).toBe(200);expect(forwarded).toBe(3);
+});

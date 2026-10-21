@@ -1,7 +1,7 @@
 import type { QuotaResponse } from './types.js';
 
 export class QuotaHTTPError extends Error {
-  constructor(readonly status: number, message: string) {super(message);}
+  constructor(readonly status: number, message: string, readonly code?: 'token_revoked') {super(message);}
 }
 export type Record_ = Record<string, unknown>;
 
@@ -43,6 +43,14 @@ export const windowLabel = (seconds: number | undefined) => {
 
 /** 只接受 2xx 且 JSON 可解析；错误信息不带上游响应正文。 */
 export function parseJSON(response: QuotaResponse, what: string): unknown {
-  if (response.statusCode < 200 || response.statusCode >= 300) throw new QuotaHTTPError(response.statusCode, `${what}请求失败（HTTP ${response.statusCode}）。`);
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    let code:'token_revoked'|undefined;
+    // Retain only an explicit, recognized code. Never expose the upstream body.
+    if(response.statusCode===401)try{
+      const error=record(record(JSON.parse(response.body))?.error);
+      if(error?.code==='token_revoked')code='token_revoked';
+    }catch{/* An opaque 401 is not proof that a saved grant was revoked. */}
+    throw new QuotaHTTPError(response.statusCode, `${what}请求失败（HTTP ${response.statusCode}）。`,code);
+  }
   try {return JSON.parse(response.body);} catch {throw new Error(`${what}返回了无法解析的内容。`);}
 }

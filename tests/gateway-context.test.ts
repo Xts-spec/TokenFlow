@@ -51,15 +51,15 @@ it.each(['qoder/model','workbuddy/model'])('compacts %s with the same model and 
  const compact=await context.response('responses/compact',{model,input:longInput},'key-a','account-a',send);
  const result=await compact.json();expect(result.object).toBe('response.compaction');expect(result.usage).toEqual(usage);
  expect(requests[0]).toMatchObject({model,stream:true,store:false});expect(requests[0]).not.toHaveProperty('tools');
- expect(result.output.filter((item:{role?:string})=>item.role==='user')).toHaveLength(3);
+ expect(result.output.filter((item:{role?:string})=>item.role==='user')).toHaveLength(2);
  expect(result.output.at(-1)).toMatchObject({type:'compaction'});expect(result.output.at(-1).encrypted_content).not.toContain('main.ts');
  expect(longInput).toEqual(original);
  const restarted=await GatewayContext.open(root);
  await restarted.response('responses',{model,input:[...result.output,{type:'function_call_output',call_id:'pending',output:'ready'}],store:false},'key-a','account-a',send);
  const forwarded=requests[1]!.input as Record<string,unknown>[];
- expect(forwarded).toContainEqual(original[0]);expect(forwarded).toContainEqual(original[1]);
+ expect(forwarded).toContainEqual(original[0]);expect(forwarded).not.toContainEqual(original[1]);
  expect(forwarded.slice(-5)).toEqual([...original.slice(5),{type:'function_call_output',call_id:'pending',output:'ready'}]);
- expect(forwarded.filter(item=>item.role==='user')).toHaveLength(3);
+ expect(forwarded.filter(item=>item.role==='user')).toHaveLength(2);
  expect(JSON.stringify(forwarded)).not.toContain('historical file content');
  expect((await readdir(join(root,'gateway-context'))).filter(name=>!name.startsWith('summary-'))).toEqual(['key']);
 });

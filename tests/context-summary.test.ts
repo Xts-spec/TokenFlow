@@ -48,3 +48,11 @@ it('bounds array tool output and removes binary attachments from the historical 
  expect(Buffer.byteLength(value)).toBeLessThan(3000);expect(value).toContain('必须保留 API');expect(value).toContain('middle omitted');expect(value).not.toContain('base64');
  expect(user.content[1]!.image_url).toContain('base64');
 });
+
+it.each(['json','sse'])('reads a large %s summary without a fixed response-byte cutoff',async format=>{
+ const text='x'.repeat(5*1024*1024);
+ const complete={status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text}]}]};
+ const response=format==='json'?Response.json(complete):sse([{type:'response.output_text.delta',delta:text},{type:'response.completed',response:{status:'completed',output:[]}}],64*1024);
+ const result=await readSummaryResponse(response);
+ expect(result.output[0].content[0].text).toHaveLength(text.length);
+});

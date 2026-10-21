@@ -1044,8 +1044,10 @@ export async function createDesktopService(options:ServiceOptions) {
   });
   app.addHook('preClose',async()=>{await access.close();});
   // Both API entrances share routing, model permissions, streaming and metering.
+  // Fastify requires a positive integer bodyLimit. Its largest representable
+  // integer disables practical application byte caps on inference requests.
   for(const path of ['models','responses','responses/compact','chat/completions','messages','messages/count_tokens']){
-   const route:RouteOptions={method:path==='models'?'GET':'POST',url:`/v1/${path}`,bodyLimit:16*1024*1024,handler:async(req,reply)=>{
+   const route:RouteOptions={method:path==='models'?'GET':'POST',url:`/v1/${path}`,bodyLimit:Number.MAX_SAFE_INTEGER,handler:async(req,reply)=>{
     const bearer=clientCredential(req.headers).value;
     const client=gatewayKeys.authenticate(bearer);
     if(bearer && !same(bearer,options.token) && !client) return reply.code(401).send({error:{message:'Invalid or disabled API key',type:'authentication_error'}});

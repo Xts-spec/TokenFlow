@@ -103,7 +103,7 @@ it('does not permanently reuse a checkpoint that failed the complete-round shrin
 });
 it('invalidates summaries that grow the final context after preserved messages are restored',async()=>{
  const {root,context}=await setup();let calls=0;
- const input=[{role:'user',content:'x'.repeat(8000)},{role:'assistant',content:'y'.repeat(100)},...history.slice(-8)];
+ const input=[{role:'user',content:'x'.repeat(8000)},{role:'assistant',content:'y'.repeat(300)},...Array.from({length:8},()=>({role:'assistant',content:'Recent work'}))];
  await expect(context.response('responses/compact',{model:'qoder/m',input},'a','s',async()=>{calls++;return stream('Summary detail. '.repeat(60));})).rejects.toMatchObject({code:'compaction_not_reduced'});
  const restarted=await GatewayContext.open(root);
  const response=await restarted.response('responses/compact',{model:'qoder/m',input},'a','s',async()=>{calls++;return stream('Next: test.');});
@@ -179,4 +179,41 @@ it('does not repeatedly compact a short checkpoint just because fixed context is
 it('preserves a safe upstream network category when summary creation fails',async()=>{
  const {context}=await setup();
  await expect(context.response('responses/compact',{model:'codex/model',input:history},'a','s',async()=>Response.json({error:{message:'TLS handshake failed: secret-token'}},{status:500}))).rejects.toMatchObject({statusCode:422,code:'compaction_upstream_failed',message:expect.stringContaining('TLS')});
+});
+
+it('compacts more than 16 MiB of replayed old tool results before forwarding',async()=>{
+ const {context}=await setup();const input:Record<string,unknown>[]=[{role:'user',content:'Keep the public API unchanged.'}];
+ for(let i=0;i<18;i++)input.push({type:'function_call',name:'read',call_id:'large'+i,arguments:'{}'},{type:'function_call_output',call_id:'large'+i,output:'x'.repeat(1024*1024)});
+ input.push({role:'user',content:'Now run the tests.'});let summaries=0,answers=0;
+ await context.response('responses',{model:'qoder/m',input,store:false},'a','s',async(_p,b)=>{
+  expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThan(128*1024);
+  if(b.instructions){summaries++;return stream('Read results checked. Preserve the API and run tests next.');}
+  answers++;expect(b.input).toContainEqual(input.at(-1));return Response.json({status:'completed',output:[],usage});
+ },{scope:{owner:'portable',source:'portable',model:'portable'},recover:async()=>{throw Error('No recovery expected');}});
+ expect(summaries).toBeGreaterThan(0);expect(answers).toBe(1);
+});
+
+it('summarizes a long transcript without a fixed summary-call ceiling',async()=>{
+ const {context}=await setup();let calls=0;
+ const input=[{role:'user',content:'Historical reference: '+'x'.repeat(33*48*1024)},...history.slice(-8)];
+ const response=await context.response('responses/compact',{model:'qoder/m',input,store:false},'a','s',async()=>{calls++;return stream('Historical reference reviewed. Continue with tests.');});
+ expect(response.ok).toBe(true);expect(calls).toBeGreaterThan(32);
+});
+
+it('stores, reloads and checkpoints history and responses larger than the former byte cap',async()=>{
+ const {root,context}=await setup();const scope={owner:'a',model:'qoder/m',source:'s'};
+ const input=[{role:'user',content:'x'.repeat(17*1024*1024)}];
+ const encrypted=context.encodeCheckpoint(input,scope);
+ expect(context.decodeCheckpoint(encrypted,[scope])[0].content).toHaveLength(17*1024*1024);
+ const response=await context.response('responses',{model:'qoder/m',input},'a','s',async()=>Response.json({status:'completed',output:[{role:'assistant',type:'message',content:'y'.repeat(17*1024*1024)}],usage}));
+ const stored=await response.json();const reopened=await GatewayContext.open(root);
+ const saved=await reopened.readStoredHistory(stored.id,[scope]);
+ expect(saved[0].content).toHaveLength(17*1024*1024);expect(saved[1].content).toHaveLength(17*1024*1024);
+});
+
+it('passes through a large SSE event without a gateway byte cutoff',async()=>{
+ const {context}=await setup();
+ const upstream=[{type:'response.output_text.delta',delta:'x'.repeat(17*1024*1024)},{type:'response.completed',response:{status:'completed',output:[],usage}}].map(e=>'data: '+JSON.stringify(e)+'\n\n').join('');
+ const response=await context.response('responses',{model:'qoder/m',input:'Continue',stream:true,store:false},'a','s',async()=>new Response(upstream,{headers:{'content-type':'text/event-stream'}}));
+ const text=await response.text();expect(text.length).toBeGreaterThan(17*1024*1024);expect(text).toContain('response.completed');
 });
