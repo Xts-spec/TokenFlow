@@ -107,7 +107,6 @@ const reply = (body:Item, headers?:Headers) => {
  * Ordinary native Responses connections retain their own state implementation.
  */
 export class GatewayContext {
- private failures=new Map<string,{until:number;message:string;code:string}>();
  private pending=new Map<string,Promise<string>>();
  private summaries=new Map<string,string>();
  private lastCachePrune=0;
@@ -418,8 +417,6 @@ export class GatewayContext {
     const path=join(this.directory,(durable?'managed-summary-':'summary-')+cacheKey);
     const remembered=this.summaries.get(cacheKey);if(remembered!==undefined){report.reused++;return remembered;}
     if(persistSummaries)try{const saved=this.unseal(await readFile(path,'utf8'),cacheScope);if(typeof saved[0]?.text==='string'){this.rememberSummary(cacheKey,saved[0].text);report.reused++;return saved[0].text;}}catch{/* Missing/corrupt derived caches may be recomputed; original history is untouched. */}
-    const failed=this.failures.get(cacheKey);
-    if(failed&&failed.until>Date.now())throw new GatewayContextError(failed.message,422,usage,failed.code);
     // Concurrent retries share the in-flight summary; only its owner is billed.
     const pending=this.pending.get(cacheKey);if(pending){
      try{const text=await pending;report.reused++;return text;}catch(error){
@@ -466,9 +463,8 @@ export class GatewayContext {
      if(result.summary_requested_tools||output.some(item=>['function_call','custom_tool_call'].includes(String(item.type))))throw new GatewayContextError('Context summary unexpectedly requested tools; original history is unchanged',422,usage,'compaction_tool_call');
      const text=output.filter(item=>item.type==='message'&&item.role==='assistant').flatMap(item=>Array.isArray(item.content)?item.content:[]).filter(part=>object(part)&&part.type==='output_text'&&typeof part.text==='string').map(part=>part.text).join('\n').trim();
      if(!text)throw new GatewayContextError('Context summary was empty; original history is unchanged',422,usage,'compaction_empty');
-     // A short final chunk may need a longer factual summary. Validate the
-     // complete round below; requiring every chunk to shrink rejects useful
-     // checkpoints even when the combined history becomes much smaller.
+     // Cache completed factual summaries regardless of their byte length.
+     // A short excerpt may legitimately need a longer checkpoint.
      this.rememberSummary(cacheKey,text);
      if(persistSummaries){
       const temp=path+'.'+randomUUID();try{await writeFile(temp,this.seal([{text}],cacheScope),{mode:0o600,flag:'wx'});await rename(temp,path);}catch{report.cacheWriteFailed=true;}finally{await rm(temp,{force:true}).catch(()=>{});}
@@ -477,47 +473,30 @@ export class GatewayContext {
      return text;
     })();
     this.pending.set(cacheKey,task);
-    try{return await task;}catch(error){
-     if(error instanceof GatewayContextError&&['compaction_empty','compaction_incomplete','compaction_tool_call','compaction_not_reduced'].includes(error.code)){if(this.failures.size>=256)this.failures.delete(this.failures.keys().next().value!);this.failures.set(cacheKey,{until:Date.now()+60_000,message:error.message,code:error.code});}
-     throw error;
-    }finally{if(this.pending.get(cacheKey)===task)this.pending.delete(cacheKey);}
-   };
-   const invalidate=async(keys:string[])=>{
-    for(const key of keys){
-     this.summaries.delete(key);if(this.failures.size>=256)this.failures.delete(this.failures.keys().next().value!);
-     this.failures.set(key,{until:Date.now()+60_000,message:'Context summary did not reduce history; original history is unchanged',code:'compaction_not_reduced'});
-     if(persistSummaries)await rm(join(this.directory,(durable?'managed-summary-':'summary-')+key),{force:true}).catch(()=>{report.cacheWriteFailed=true;});
-    }
+    // Share only an active attempt. A failed attempt must not block a fresh
+    // Codex reconnect; completed summaries remain reusable on disk.
+    try{return await task;}finally{if(this.pending.get(cacheKey)===task)this.pending.delete(cacheKey);}
    };
    // Rules are carried verbatim in `preserved`; summarizing them again adds
    // paid chunks without reducing the continuation, especially on IDE rollouts
    // with many developer messages. User turns stay as factual task context.
-   let transcript=summaryTranscript(prefix.filter(item=>!instruction(item)&&!historicalSummary(item)));let text='';let lastRoundKeys:string[]=[];
+   let transcript=summaryTranscript(prefix.filter(item=>!preserved.includes(item)));let text='';
    do {
-    const parts=splitTranscript(transcript);
-    const summaries:string[]=[],expanded:string[]=[];
-    lastRoundKeys=parts.map((part,i)=>summaryCacheKey(`Historical transcript part ${i+1}/${parts.length}:\n${part}`));
-    for(let i=0;i<parts.length;i++){
-     const part=`Historical transcript part ${i+1}/${parts.length}:\n${parts[i]}`;const result=await summarize(part);summaries.push(result);
-     if(Buffer.byteLength(result)>=Buffer.byteLength(part))expanded.push(summaryCacheKey(part));
-    }
-    text=summaries.join('\n');
-    if(Buffer.byteLength(text)>=Buffer.byteLength(transcript)){
-     const message='Context summary did not reduce history; original history is unchanged';
-     // Do not permanently replay the expanding blocks of an unusable round.
-     // Keep its shrinking blocks, just as after a later transport failure.
-     // Headers can make the combined round grow even if every part shrank.
-     await invalidate(expanded.length?expanded:lastRoundKeys);
-     throw new GatewayContextError(message,422,usage,'compaction_not_reduced');
-    }
+    const parts=splitTranscript(transcript),summaries:string[]=[];
+    for(let i=0;i<parts.length;i++)summaries.push(await summarize(`Historical transcript part ${i+1}/${parts.length}:\n${parts[i]}`));
+    const next=summaries.join('\n');
+    // Excerpts are already smaller than the original history. A factual
+    // checkpoint may exceed its excerpt and still be useful. Keep a valid
+    // result instead of rejecting continuation based on a byte comparison.
+    // Further merging is worthwhile only while it makes progress; if a merge
+    // grows, retain the previous checkpoint and let the client continue.
+    const reduced=Buffer.byteLength(next)<Buffer.byteLength(transcript);
+    if(!text||reduced)text=next;
+    if(!reduced)break;
     transcript=text;
    }while(size({type:'message',role:'assistant',content:[{type:'output_text',text:'Historical task checkpoint (summary of earlier work):\n'+text}]})>summaryLimit);
 
    compacted=[...preserved,{type:'message',role:'assistant',content:[{type:'output_text',text:'Historical task checkpoint (summary of earlier work):\n'+text}]},...tail];
-   if(size(compacted)>=size(input)){
-    await invalidate(lastRoundKeys);
-    throw new GatewayContextError('Context summary did not reduce history; original history is unchanged',422,usage,'compaction_not_reduced');
-   }
   }
   report.outputBytes=size(compacted);
   // This token is our own authenticated context, not an OpenAI encrypted state.

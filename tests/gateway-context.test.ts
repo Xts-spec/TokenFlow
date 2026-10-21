@@ -86,9 +86,9 @@ it('rejects tampered or cross-key compaction tokens without upstream calls',asyn
   await expect(context.response('responses',{model:'qoder/m',input},owner,'s',async()=>{throw new Error('must not invoke upstream');})).rejects.toThrow(/Context is invalid/);
  }
 });
-it('does not turn incomplete, empty, tool-calling or non-reducing summaries into success',async()=>{
+it('does not turn incomplete, empty or tool-calling summaries into success',async()=>{
  const {context}=await setup();
- for(const result of [answer('partial','incomplete'),answer(''),answer('x'.repeat(20000)),{...answer(),output:[{type:'function_call',name:'write',call_id:'bad',arguments:'{}'}]}]){
+ for(const result of [answer('partial','incomplete'),answer(''),{...answer(),output:[{type:'function_call',name:'write',call_id:'bad',arguments:'{}'}]}]){
   const input=structuredClone(longInput);
   await expect(context.response('responses/compact',{model:'workbuddy/m',input},'a','s',async()=>Response.json(result))).rejects.toThrow(/original history is unchanged/);
   expect(input).toEqual(longInput);

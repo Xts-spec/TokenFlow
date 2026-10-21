@@ -30,12 +30,12 @@ it('does not pay again for an identical successful summary after restart',async(
  await restarted.response('responses/compact',{model:'qoder/m',input:history},'a','other-source',send);expect(calls).toBe(3);
  await restarted.response('responses/compact',{model:'qoder/m',input:history},'other-owner','s',send);expect(calls).toBe(4);
 });
-it('returns non-retryable empty-summary errors and preserves usage details',async()=>{
+it('retries a failed summary immediately without a cached failure blocking reconnect',async()=>{
  const {context}=await setup();let calls=0;
- const send=async()=>{calls++;return stream('');};
+ const send=async()=>stream(++calls===1?'':'Recovered checkpoint: preserve API compatibility.');
  await expect(context.response('responses/compact',{model:'qoder/m',input:history},'a','s',send)).rejects.toMatchObject({statusCode:422,code:'compaction_empty',usage});
- await expect(context.response('responses/compact',{model:'qoder/m',input:history},'a','s',send)).rejects.toMatchObject({statusCode:422,usage:{input_tokens:0,output_tokens:0}});
- expect(calls).toBe(1);
+ const response=await context.response('responses/compact',{model:'qoder/m',input:history},'a','s',send);
+ expect(response.ok).toBe(true);expect(calls).toBe(2);
 });
 it('bounds an 11 MiB recovered tool transcript before sending summaries or inference',async()=>{
  const {context}=await setup();const old=[{role:'user',content:'Preserve API and report TASK_MARKER.'},...Array.from({length:100},(_,i)=>[
@@ -94,20 +94,32 @@ it('accepts a small final chunk whose summary grows when the complete checkpoint
  await context.response('responses',{model:'qoder/m',input:compact.output,store:false},'a','s',async(_p,b)=>{forwarded=b.input;return Response.json({status:'completed',output:[],usage});});
  expect(JSON.stringify(forwarded)).toContain('TAIL_CONSTRAINT');expect(Buffer.byteLength(JSON.stringify(forwarded))).toBeLessThan(16*1024);
 });
-it('does not permanently reuse a checkpoint that failed the complete-round shrink check',async()=>{
+it('accepts and saves a summary larger than the excerpt when the original history is much larger',async()=>{
  const {root,context}=await setup();let calls=0;
- await expect(context.response('responses/compact',{model:'qoder/m',input:history},'a','s',async()=>{calls++;return stream('Expanded rather than summarized. '.repeat(100));})).rejects.toMatchObject({code:'compaction_not_reduced'});
+ const send=async()=>{calls++;return stream('Expanded excerpt but smaller than the original history. '.repeat(100));};
+ const first=await context.response('responses/compact',{model:'qoder/m',input:history},'a','s',send);
+ expect(first.ok).toBe(true);
+ const checkpoint=(await first.json()).output.at(-1),restored=context.decodeCheckpoint(checkpoint.encrypted_content,[{owner:'a',model:'qoder/m',source:'s'}]);
+ expect(JSON.stringify(restored)).toContain('Expanded excerpt');expect(JSON.stringify(restored).length).toBeLessThan(JSON.stringify(history).length);
  const restarted=await GatewayContext.open(root);
- const response=await restarted.response('responses/compact',{model:'qoder/m',input:history},'a','s',async()=>{calls++;return stream('Constraints kept. Test next.');});
- expect(response.ok).toBe(true);expect(calls).toBe(2);
+ expect((await restarted.response('responses/compact',{model:'qoder/m',input:history},'a','s',send)).ok).toBe(true);expect(calls).toBe(1);
 });
-it('invalidates summaries that grow the final context after preserved messages are restored',async()=>{
- const {root,context}=await setup();let calls=0;
- const input=[{role:'user',content:'x'.repeat(8000)},{role:'assistant',content:'y'.repeat(300)},...Array.from({length:8},()=>({role:'assistant',content:'Recent work'}))];
- await expect(context.response('responses/compact',{model:'qoder/m',input},'a','s',async()=>{calls++;return stream('Summary detail. '.repeat(60));})).rejects.toMatchObject({code:'compaction_not_reduced'});
- const restarted=await GatewayContext.open(root);
- const response=await restarted.response('responses/compact',{model:'qoder/m',input},'a','s',async()=>{calls++;return stream('Next: test.');});
- expect(response.ok).toBe(true);expect(calls).toBe(2);
+it('does not reject a valid checkpoint when the final context grows, and preserves current instructions once',async()=>{
+ const {context}=await setup();let calls=0;let transcript='';
+ const input=[{role:'user',content:'CURRENT_INSTRUCTION '+ 'x'.repeat(8000)},{role:'assistant',content:'y'.repeat(300)},...Array.from({length:8},()=>({role:'assistant',content:'Recent work'}))];
+ const response=await context.response('responses/compact',{model:'qoder/m',input},'a','s',async(_p,body)=>{calls++;transcript=JSON.stringify(body.input);return stream('Summary detail. '.repeat(60));});
+ expect(response.ok).toBe(true);expect(calls).toBe(1);expect(transcript).not.toContain('CURRENT_INSTRUCTION');
+ const compact=await response.json();let forwarded:any;
+ await context.response('responses',{model:'qoder/m',input:compact.output,store:false},'a','s',async(_p,body)=>{forwarded=body.input;return Response.json({status:'completed',output:[],usage});});
+ expect(forwarded.filter((item:any)=>JSON.stringify(item).includes('CURRENT_INSTRUCTION'))).toHaveLength(1);
+ expect(JSON.stringify(forwarded)).toContain('Summary detail.');
+});
+it('stops merging when an oversized summary no longer shrinks and still allows continuation',async()=>{
+ const {context}=await setup();let calls=0;const long='Valid factual checkpoint. '.repeat(1000);
+ const response=await context.response('responses/compact',{model:'qoder/m',input:history},'a','s',async()=>{calls++;return stream(long);});
+ expect(response.ok).toBe(true);expect(calls).toBe(1);
+ const compact=await response.json();let sent=false;
+ await context.response('responses',{model:'qoder/m',input:compact.output,store:false},'a','s',async()=>{sent=true;return Response.json({status:'completed',output:[],usage});});expect(sent).toBe(true);
 });
 it('does not erase known charges when a later summary omits usage',async()=>{
  const {context}=await setup();const input:Record<string,unknown>[]=[{role:'user',content:'Preserve API.'}];
