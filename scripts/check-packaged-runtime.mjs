@@ -111,5 +111,27 @@ try{
  const profilePath=join(root,'Claude-3p/configLibrary',`${desktopJournal.id}.json`);
  await writeFile(profilePath,JSON.stringify({...desktopProfile,inferenceGatewayBaseUrl:'http://127.0.0.1:15721/claude-desktop'}));
  const changedDesktop=await request('/api/claude-desktop');assert.equal(changedDesktop.connected,false);assert.equal(changedDesktop.configurationChanged,true);
- console.log(JSON.stringify({passed:true,electron:process.versions.electron,platform:process.platform,arch:process.arch,checks:['production dependencies','bundled licenses','Cursor native SDK','WorkBuddy SDK import','static UI','Responses gateway','Pi repair conversation','selected usage evidence','local usage worker','Claude native account attribution','existing Qoder and both WorkBuddy edition identities','Qoder IDE switch, restore and standalone isolation','automatic LAN listener, per-key source IPs and isolated model routes','Claude Desktop subagent roles and independent menu routes','Claude Desktop external gateway drift detection']},null,2));
+ // Exercise compaction through the packaged gateway, including immediate retry.
+ const originalFetch=globalThis.fetch;let summaryCalls=0;
+ const compactInput=[{role:'user',content:'Preserve the original requirement.'},{role:'assistant',content:'Archived tool findings. '.repeat(1500)},...Array.from({length:8},(_,i)=>({role:i%2?'assistant':'user',content:'Recent '+i}))];
+ globalThis.fetch=async(url,init)=>{
+  const target=new URL(String(url));
+  if(target.port===String(port)&&target.pathname==='/v1/responses'){
+   const body=JSON.parse(String(init?.body));
+   if(body.instructions?.startsWith('Summarize the supplied')){
+    summaryCalls++;
+    return Response.json({status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:summaryCalls===1?'':'Valid checkpoint larger than the excerpt. '.repeat(100)}]}],usage:{input_tokens:7,output_tokens:3}});
+   }
+  }
+  return originalFetch(url,init);
+ };
+ try{
+  const compact=()=>service.app.inject({method:'POST',url:'/v1/responses/compact',headers:{...headers,authorization:`Bearer ${key.apiKey}`},payload:{model:'qoder/kmodel_latest',input:compactInput}});
+  assert.equal((await compact()).statusCode,422);
+  const recovered=await compact();assert.equal(recovered.statusCode,200,recovered.body);assert.equal(summaryCalls,2,'A failed summary must not be cached');
+  assert.equal((await compact()).statusCode,200);assert.equal(summaryCalls,2,'A successful expanding summary must remain reusable');
+  const resumed=await service.app.inject({method:'POST',url:'/v1/responses',headers:{...headers,authorization:`Bearer ${key.apiKey}`},payload:{model:'qoder/kmodel_latest',input:[...recovered.json().output,{role:'user',content:'Continue.'}]}});
+  assert.equal(resumed.statusCode,200,resumed.body);
+ }finally{globalThis.fetch=originalFetch;}
+ console.log(JSON.stringify({passed:true,electron:process.versions.electron,platform:process.platform,arch:process.arch,checks:['valid expanding summaries, immediate failed-summary retry and cached continuation','production dependencies','bundled licenses','Cursor native SDK','WorkBuddy SDK import','static UI','Responses gateway','Pi repair conversation','selected usage evidence','local usage worker','Claude native account attribution','existing Qoder and both WorkBuddy edition identities','Qoder IDE switch, restore and standalone isolation','automatic LAN listener, per-key source IPs and isolated model routes','Claude Desktop subagent roles and independent menu routes','Claude Desktop external gateway drift detection']},null,2));
 }finally{await service?.app.close();await rm(root,{recursive:true,force:true});}
