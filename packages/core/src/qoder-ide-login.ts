@@ -61,6 +61,13 @@ export class QoderIdeLogin {
   const journal=await this.journal();
   return {revision:nativeDigest(stored),accountId:identity?.accountId,email:identity?.email,displayName:identity?.displayName,loginState:identity?'signed-in' as const:readError?'unreadable' as const:'signed-out' as const,readError,readOnly:!this.secrets,pids:await this.processes(),backup:journal&&journal.state!=='restored'?{state:journal.state,createdAt:journal.createdAt}:null,gatewayConnected:false,unavailableReason:this.support()};
  }
+ async usageLogin(){
+  if(!this.options.crypto)return null;
+  const state=await this.stored();if(!state[0])return null;
+  const revision=nativeDigest(state[0]);if(this.cache?.revision!==revision)this.cache={revision,value:this.identity(state[0])};
+  const identity=await this.cache.value;
+  return identity?{provider:'qoder' as const,accountId:identity.accountId,email:identity.email??null,displayName:identity.displayName}:null;
+ }
  async prepare(raw:unknown){
   const reason=this.support();if(reason)throw conflict(reason);
   const parsed=desktopCredentialSchema.safeParse(raw);if(!parsed.success)throw conflict('登录凭据不完整或即将过期，请刷新账号或重新授权。');

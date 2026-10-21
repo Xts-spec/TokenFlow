@@ -19,6 +19,7 @@ const rowSchema = z.object({
   sourceId: z.string().max(80),
   model: z.string().max(300),
   requests: count, failed: count, unmeasured: count,
+  credits:z.number().finite().nonnegative().optional(),
   inputTokens: count, cachedTokens: count, cacheBaseTokens: count, outputTokens: count,
   durationMs: count,cacheWriteTokens:count.optional(),reasoningTokens:count.optional(),toolCalls:count.optional(),toolResults:count.optional(),generationMs:count.optional(),timedOutputTokens:count.optional(),
   last: z.string(),

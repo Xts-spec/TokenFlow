@@ -67,3 +67,28 @@ it.each(['antigravity','workbuddy','workbuddy-ai','qoder'] as const)('joins %s o
  expect(mapNativeAccounts(rows,[{id:'source',provider,accountId,email}])[0].sourceId).toBe('source');
  expect(mapNativeAccounts(rows,[{id:'other',provider:'different',accountId,email}])[0].sourceId).toBe('');
 });
+
+it('keeps concurrent Qoder and IDE logins separate while mapping both to the Qoder account pool',async()=>{
+ const {root,store}=await setup();
+ const app={provider:'qoder' as const,accountId:'app-account',email:'app@example.test'},ide={provider:'qoder' as const,accountId:'ide-account',email:'ide@example.test'};
+ await store.observe({qoder:app,'qoder-ide':ide},now);await store.observe({qoder:app,'qoder-ide':ide},now+5000);
+ const originals=[row(now+1000,{target:'qoder',provider:'qoder',channel:'official'}),row(now+1000,{target:'qoder-ide',provider:'qoder',channel:'official'}),row(now+1000,{target:'qoder-ide',provider:'qoder',channel:'api'})];
+ const enriched=enrichNativeLoginRows(originals,await readNativeLoginIntervals(root));
+ expect(enriched.map(r=>r.nativeAccountId)).toEqual([nativeIdentity('qoder','app-account'),nativeIdentity('qoder','ide-account'),undefined]);
+ const mapped=mapNativeAccounts(enriched,[{id:'app-source',...app},{id:'ide-source',...ide}]);
+ expect(mapped.map(r=>r.sourceId)).toEqual(['app-source','ide-source','']);
+ await store.observe({qoder:app,'qoder-ide':app},now+10000);await store.observe({qoder:app,'qoder-ide':app},now+15000);
+ const shared=enrichNativeLoginRows(originals.slice(0,2).map(r=>({...r,last:new Date(now+11000).toISOString()})),await readNativeLoginIntervals(root));
+ expect(mapNativeAccounts(shared,[{id:'app-source',...app}]).map(r=>r.sourceId)).toEqual(['app-source','app-source']);
+});
+
+it('labels Qoder usage by email then display name while keeping UID as the matching identity',async()=>{
+ const {root,store}=await setup();
+ const account={provider:'qoder' as const,accountId:'stable-uid',email:null,displayName:'Qoder User'};
+ await store.observe({qoder:account},now);await store.observe({qoder:account},now+5000);
+ expect(store.accounts()[0]).toMatchObject({account:nativeIdentity('qoder','stable-uid'),label:'Qoder User'});
+ const usage=enrichNativeLoginRows([row(now+1000,{target:'qoder',provider:'qoder',channel:'official'})],await readNativeLoginIntervals(root));
+ expect(mapNativeAccounts(usage,[],store.accounts())[0].nativeAccountLabel).toBe('Qoder User');
+ await store.observe({qoder:{...account,email:'person@example.test'}},now+10000);
+ expect(store.accounts().at(-1)?.label).toBe('person@example.test');
+});

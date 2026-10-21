@@ -99,4 +99,13 @@ describe('API source protocol detection',()=>{
   expect(sourceNameFromURL('https://api.openai.com/v1')).toBe('openai.com');
   expect(sourceNameFromURL('http://127.0.0.1:8080/v1')).toBe('本机 8080');
  });
+ it('observes actual probe usage without retaining the response text, and preserves unknown usage',async()=>{
+  const {origin}=await upstream((_path,_headers,body)=>({status:200,json:{choices:[{message:{content:'private answer'}}],...(body.model==='measured'?{usage:{prompt_tokens:20,prompt_cache_hit_tokens:12,completion_tokens:3}}:{})}}));
+  const measured:any[]=[],unknown:any[]=[];
+  await detectProtocol({baseURL:`${origin}/v1/chat/completions`,apiKey:'private-key',model:'measured'},undefined,usage=>measured.push(usage));
+  await detectProtocol({baseURL:`${origin}/v1/chat/completions`,apiKey:'private-key',model:'unknown'},undefined,usage=>unknown.push(usage));
+  expect(measured).toHaveLength(1);expect(measured[0]).toMatchObject({inputTokens:20,cachedTokens:12,outputTokens:3,protocol:'chat',model:'measured',status:200});
+  expect(unknown).toHaveLength(1);expect(unknown[0]).toMatchObject({inputTokens:null,outputTokens:null,cachedTokens:null});
+  expect(JSON.stringify(measured)).not.toMatch(/private answer|private-key/);
+ });
 });

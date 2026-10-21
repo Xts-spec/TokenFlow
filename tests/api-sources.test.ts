@@ -12,7 +12,7 @@ import { createSecrets } from '../apps/desktop/src/secrets.js';
 import { parse } from 'smol-toml';
 const cleanup:Array<()=>Promise<unknown>>=[];
 afterEach(async()=>{for(const fn of cleanup.splice(0).reverse())await fn();});
-async function fixture(real=false,configure?:(app:Awaited<ReturnType<typeof createDesktopService>>['app'])=>void,modelProtocols:Record<string,string>={},rejectBlankText=false){
+async function fixture(real=false,configure?:(app:Awaited<ReturnType<typeof createDesktopService>>['app'])=>void,modelProtocols:Record<string,string>={},rejectBlankText=false,streamUsageOptIn=false){
  const root=await realpath(await mkdtemp(join(tmpdir(),'api-sources-')));cleanup.push(()=>rm(root,{recursive:true,force:true}));await mkdir(join(root,'secrets'));
  const storage={isEncryptionAvailable:()=>true,encryptString:(v:string)=>Buffer.from(Buffer.from(v).map(b=>b^0x73)),decryptString:(v:Buffer)=>Buffer.from(Buffer.from(v).map(b=>b^0x73)).toString()};
  const secrets=createSecrets(root,storage);const calls:Array<{path:string;key:string;body:Record<string,unknown>}>=[];
@@ -33,6 +33,7 @@ async function fixture(real=false,configure?:(app:Awaited<ReturnType<typeof crea
   const response={id:'resp_fixture',object:'response',status:'completed',model:body.model,output:[{id:'msg_fixture',type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:key,annotations:[]}]}],usage};
   if(pathname==='/v1/chat/completions'){
    const chat={id:'chat-fixture',object:'chat.completion',model:body.model,choices:[{index:0,message:{role:'assistant',content:key},finish_reason:'stop'}],usage:{prompt_tokens:7,completion_tokens:3,total_tokens:10}};
+   if(body.stream&&streamUsageOptIn&&!body.stream_options?.include_usage)delete (chat as {usage?:unknown}).usage;
    if(body.stream){res.setHeader('content-type','text/event-stream');res.end(`data: ${JSON.stringify({...chat,object:'chat.completion.chunk',choices:[{index:0,delta:{role:'assistant',content:key},finish_reason:null}]})}\n\ndata: ${JSON.stringify({...chat,object:'chat.completion.chunk',choices:[{index:0,delta:{},finish_reason:'stop'}]})}\n\ndata: [DONE]\n\n`);}else res.end(JSON.stringify(chat));return;
   }
   if(pathname==='/v1/messages'){
@@ -53,7 +54,7 @@ async function fixture(real=false,configure?:(app:Awaited<ReturnType<typeof crea
  return {root,baseURL,secrets,calls,service,headers,add,options,holdResponses:()=>{let release!:()=>void;paused=new Promise<void>(r=>release=r);return()=>{paused=undefined;release();};}};
 }
 it('tests connectivity with the raw model name sent by the API card, using saved validation even when the gateway is stopped',async()=>{
- const {service,headers,baseURL,calls}=await fixture(false,undefined,{'claude-b':'messages'});
+ const {root,service,headers,baseURL,calls}=await fixture(false,undefined,{'claude-b':'messages'});
  const added=await service.app.inject({method:'POST',url:'/api/sources/quick',headers,payload:{baseURL,apiKey:'connectivity-fixture-key',model:'claude-b'}});
  expect(added.statusCode,added.body).toBe(200);const source=added.json();calls.length=0;
  await service.proxy.stop();
@@ -62,9 +63,46 @@ it('tests connectivity with the raw model name sent by the API card, using saved
  expect(calls.map(call=>call.path)).toEqual(['/v1/messages']);expect(calls[0].body.max_tokens).toBe(16);
  const saved=(await service.app.inject({url:'/api/sources',headers})).json().sources[0];
  expect(saved.checks['claude-b'].status).toBe('passed');expect(saved.modelRoutes).toEqual(source.modelRoutes);
+ const usage=(await service.app.inject({url:'/api/gateway/usage?days=0',headers})).json().rows.filter((row:any)=>row.sourceId===source.id);
+ expect(usage.reduce((sum:number,row:any)=>sum+row.requests,0)).toBe(2);
+ expect(usage.reduce((sum:number,row:any)=>sum+row.inputTokens+row.outputTokens,0)).toBe(20);
  const count=calls.length;
  const invalid=await service.app.inject({method:'POST',url:`/api/sources/${source.id}/check`,headers,payload:{model:'not-saved'}});
  expect(invalid.statusCode).toBe(409);expect(calls).toHaveLength(count);
+ await service.app.close();
+ const persisted=JSON.parse(await readFile(join(root,'usage-ledger.json'),'utf8')).rows.filter((row:any)=>row.sourceId===source.id);
+ expect(persisted.reduce((sum:number,row:any)=>sum+row.inputTokens+row.outputTokens,0)).toBe(20);
+});
+it('synchronizes successive API saves through the real sidecar without requiring a restart',async()=>{
+ const {service,headers,baseURL}=await fixture(true);
+ for(const [index,model] of ['deepseek-ai/DeepSeek-V4.1-Flash','deepseek-flash','company/third-model','company/fourth-model'].entries()){
+  const saved=await service.app.inject({method:'POST',url:'/api/sources',headers,payload:{name:`API ${index}`,baseURL,apiKey:'sync-fixture-key',protocol:'chat',models:[model]}});
+  expect(saved.statusCode,saved.body).toBe(200);
+  expect(saved.json().routingError).toBeUndefined();
+  expect(service.proxy.apiModelAvailable(apiModelID(saved.json().id,model))).toBe(true);
+  await new Promise(resolve=>setTimeout(resolve,400));
+ }
+});
+it('finishes delayed API route synchronization after save returns, without resaving or restarting',async()=>{
+ const {service,headers,add}=await fixture();
+ await fetch(`http://127.0.0.1:${service.proxy.port}/fixture`,{method:'POST',body:JSON.stringify({apiModelDelayReads:50})});
+ const source=await add('Delayed API','delayed-fixture-key','chat');
+ expect(source.routingError).toBeTruthy();
+ expect(source.routingPending).toBe(true);
+ expect(service.proxy.snapshot().apiRoutesSyncing).toBe(true);
+ await expect.poll(()=>service.proxy.apiModelAvailable(apiModelID(source.id,'shared')),{timeout:4000}).toBe(true);
+ const snapshot=(await service.app.inject({url:'/api/local-agent',headers})).json();
+ expect(snapshot.models.map((model:any)=>model.id)).toContain(apiModelID(source.id,'shared'));
+ expect(snapshot.apiRoutesSyncing).not.toBe(true);
+},15000);
+it('counts native Chat streams even when the caller did not opt in to usage chunks',async()=>{
+ const {service,headers,add,calls}=await fixture(false,undefined,{},false,true);
+ const source=await add('Streaming API','stream-usage-fixture','chat'),model=apiModelID(source.id,'shared');
+ const result=await service.app.inject({method:'POST',url:'/v1/chat/completions',headers,payload:{model,messages:[{role:'user',content:'hi'}],stream:true,stream_options:{include_obfuscation:false}}});
+ expect(result.statusCode,result.body).toBe(200);
+ const rows=(await service.app.inject({url:'/api/gateway/usage?days=0',headers})).json().rows.filter((row:any)=>row.sourceId===source.id);
+ expect(rows).toHaveLength(1);expect(rows[0]).toMatchObject({requests:1,inputTokens:7,outputTokens:3,unmeasured:0});
+ expect(calls.at(-1)?.body.stream_options).toEqual({include_usage:true,include_obfuscation:false});
 });
 it('does not send model probes when selecting or restoring a saved maintenance model',async()=>{
  const {service,headers,add,calls,options}=await fixture();const source=await add('No background probes','background-fixture-key');

@@ -9,6 +9,16 @@ const roots:string[]=[];afterEach(async()=>{for(const root of roots.splice(0))aw
 const oauth=(id:string)=>({account_id:id,access_token:`secret-access-${id}`,refresh_token:`secret-refresh-${id}`,id_token:`x.${Buffer.from(JSON.stringify({email:`${id}@example.test`})).toString('base64url')}.x`});
 const quiet={managed:async()=>[],loginStatus:async()=>'ok' as const};
 async function setup(){const root=await mkdtemp(join(await realpath(tmpdir()),'codex-switch-'));roots.push(root);await mkdir(join(root,'codex'));const config=join(root,'codex/config.toml'),auth=join(root,'codex/auth.json');let pids:number[]=[];return {root,config,auth,manager:new CodexAccounts(root,config,async()=>pids,quiet),running:(value:number[])=>pids=value};}
+it('clears a leftover OpenAI proxy URL when switching to official login and restores it on rollback',async()=>{
+ const {config,manager}=await setup();
+ const original='model = "codex/gpt-6-astra"\nopenai_base_url = "http://127.0.0.1:9527/v1"\n';
+ await writeFile(config,original);
+ await manager.switch({revision:(await manager.status()).revision,allowRunning:false,model:'codex/gpt-6-astra'},oauth('a'));
+ expect(parse(await readFile(config,'utf8'))).toMatchObject({model:'gpt-6-astra',model_provider:'openai'});
+ expect(parse(await readFile(config,'utf8')).openai_base_url).toBeUndefined();
+ await manager.restore({revision:(await manager.status()).revision,allowRunning:false});
+ expect(await readFile(config,'utf8')).toBe(original);
+});
 it('switches between two members of the same ChatGPT workspace',async()=>{
  const {config,auth,manager}=await setup();await writeFile(config,'model = "gpt-5"\n');
  const member=(name:string)=>({...oauth('team'),access_token:`secret-access-${name}`,id_token:`x.${Buffer.from(JSON.stringify({email:`${name}@example.test`})).toString('base64url')}.x`});

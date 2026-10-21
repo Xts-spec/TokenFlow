@@ -18,6 +18,6 @@ export function codexModelCatalog(selection:string|string[],labels:Record<string
   // Allow attachments through image-capable transports without maintaining a
   // per-model vision allowlist. The selected upstream decides model support.
   // Cursor's current text-prompt adapter cannot carry image blocks.
-  input_modalities:model.startsWith('cursor/')?['text']:['text','image'],experimental_supported_tools:[],
+  input_modalities:['text','image'],experimental_supported_tools:[],
  }))};
 }

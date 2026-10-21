@@ -302,7 +302,7 @@ it('allows image attachments without a per-model capability registry on forwardi
  await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:ids[0]!,sourceId:'a'.repeat(24),keyId:randomUUID(),key:'fixture-key',selections:ids.map(model=>({model,sourceId:'a'.repeat(24)}))});
  const config=parse(await readFile(paths.codex,'utf8'));
  const catalog=JSON.parse(await readFile(String(config.model_catalog_json),'utf8'));
- expect(catalog.models.map((m:any)=>m.input_modalities)).toEqual([['text','image'],['text','image'],['text','image'],['text','image'],['text']]);
+ expect(catalog.models.map((m:any)=>m.input_modalities)).toEqual([['text','image'],['text','image'],['text','image'],['text','image'],['text','image']]);
 });
 it('deletes stale records after reinstall without touching the new config, and keeps history selectable',async()=>{
  const {root,paths,connections}=await setup();await writeFile(paths.codex,'model = "original"\n');
@@ -323,6 +323,26 @@ it('returns an in-place edited Codex gateway to the official model',async()=>{
  await connections.restore(record.id);
  const doc=parse(await readFile(paths.codex,'utf8'));
  expect(doc.model).toBe('original');expect(doc.model_provider).toBeUndefined();expect((doc.model_providers as Record<string,unknown>|undefined)?.token_flow).toBeUndefined();
+});
+it('previews the saved custom provider without exposing credentials and keeps external routing intact',async()=>{
+ const {paths,connections}=await setup();
+ const original='model="original-model"\nmodel_provider="other"\n[model_providers.other]\nbase_url="https://example.test/v1"\nexperimental_bearer_token="private-fixture"\n';
+ await writeFile(paths.codex,original);
+ const record=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:'codex/new',sourceId:'s',keyId:randomUUID(),key:'fixture-key'});
+ const ready=await connections.restorePreview(record.id);
+ expect(ready).toMatchObject({canRestore:true,destination:{kind:'custom',provider:'other',model:'original-model'}});
+ expect(JSON.stringify(ready)).not.toMatch(/private-fixture|fixture-key|example.test/);
+ const external=(await readFile(paths.codex,'utf8')).replace('model_provider = "token_flow"','model_provider = "external"');
+ await writeFile(paths.codex,external);
+ const blocked=await connections.restorePreview(record.id);expect(blocked.canRestore).toBe(false);expect(blocked.reason).toContain('外部修改');
+ await expect(connections.restore(record.id)).rejects.toThrow('外部修改');expect(await readFile(paths.codex,'utf8')).toBe(external);
+});
+it.each([null,'model="native"','profile="work"\n[profiles.work]\nmodel_provider="custom"\nmodel="profile-model"'])('previews missing, official and profile restore destinations (%s)',async original=>{
+ const {paths,connections}=await setup();if(original!==null)await writeFile(paths.codex,original);
+ const record=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:'codex/new',sourceId:'s',keyId:randomUUID(),key:'fixture-key'});
+ const preview=await connections.restorePreview(record.id);
+ expect(preview.canRestore).toBe(true);
+ expect(preview.destination).toEqual(original===null?{kind:'default',provider:'openai'}:original.startsWith('model=')?{kind:'official',provider:'openai',model:'native'}:{kind:'custom',provider:'custom',model:'profile-model'});
 });
 it('restores a missing file without requiring a maintenance model',async()=>{
  const {paths,connections}=await setup();
@@ -585,4 +605,48 @@ it('neutralizes conflicting Claude cloud routing and restores it after local gat
  const doc=JSON.parse(await readFile(paths.claude,'utf8'));for(const k of ['CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY'])expect(doc.env[k]).toBe('0');expect(doc.apiKeyHelper).toBeUndefined();expect(doc.forceLoginGatewayUrl).toBeUndefined();doc.model='claude/second';await writeFile(paths.claude,JSON.stringify(doc));
  expect((await connections.review(record.id)).checks.every(c=>c.ok)).toBe(true);expect(doc.env.ANTHROPIC_MODEL).toBe('');expect(doc.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('');
  await connections.restore(record.id);expect(JSON.parse(await readFile(paths.claude,'utf8'))).toEqual(original);
+});
+
+it('returns Codex to official defaults from current conflicting routing without replaying a previous provider or changing login',async()=>{
+ const {root,paths,connections}=await setup();
+ await writeFile(paths.codex,'model_provider="old_vendor"\nmodel="old-model"\n');
+ const auth=join(paths.codex,'..','auth.json');await writeFile(auth,'{"fixture_login":"unchanged"}');
+ const record=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:'codex/model',sourceId:'s',keyId:randomUUID(),key:'fixture-key'});
+ const external='model_provider="other"\nmodel="other-model"\nopenai_base_url="https://fixture.invalid"\nmodel_catalog_json="custom.json"\nprofile="work"\napproval_policy="on-request"\n[profiles.work]\nmodel_provider="other"\nmodel="sub-model"\nopenai_base_url="https://fixture.invalid"\n[agents]\ndefault_subagent_model="other-model"\n[model_providers.openai]\nbase_url="https://fixture.invalid"\n[model_providers.token_flow]\nbase_url="http://127.0.0.1:9527/v1"\n';
+ await writeFile(paths.codex,external);
+ const preview=await connections.restorePreview(record.id,'native');
+ expect(preview).toMatchObject({canRestore:true,destination:{kind:'official',provider:'openai'}});
+ await connections.restore(record.id,{revision:preview.revision,allowRunning:false},'native');
+ const result=parse(await readFile(paths.codex,'utf8')) as any;
+ expect(result).toMatchObject({model_provider:'openai',approval_policy:'on-request',profiles:{work:{model_provider:'openai'}}});
+ for(const field of ['model','openai_base_url','model_catalog_json']){expect(result[field]).toBeUndefined();expect(result.profiles.work[field]).toBeUndefined();}
+ expect(result.model_providers?.openai).toBeUndefined();expect(result.model_providers?.token_flow).toBeUndefined();expect(result.agents?.default_subagent_model).toBeUndefined();
+ expect(await readFile(auth,'utf8')).toBe('{"fixture_login":"unchanged"}');
+ const {readdir}=await import('node:fs/promises');const backup=(await readdir(join(root,'agent-backups'))).find(name=>name.startsWith(`native-${record.id}-`))!;
+ expect(JSON.parse(await readFile(join(root,'agent-backups',backup),'utf8')).before).toBe(external);
+});
+
+it('can directly replace conflicting gateway routing for every local Agent',async()=>{
+ const {paths,connections}=await setup();
+ for(const target of ['codex','claude','pi','qoder','workbuddy','workbuddy-ai','deepseek'] as const){
+  const path=connections.paths[target];const first=await connections.preview(target,'http://127.0.0.1:9527','codex/one');
+  const record=await connections.apply({target,revision:first.revision,origin:'http://127.0.0.1:9527',model:'codex/one',sourceId:'s',keyId:randomUUID(),key:'first-key'});
+  await writeFile(path,(await readFile(path,'utf8')).replaceAll('first-key','external-key'));
+  const preview=await connections.preview(target,'http://127.0.0.1:9527','codex/two');
+  await connections.apply({target,revision:preview.revision,replaceId:record.id,origin:'http://127.0.0.1:9527',model:'codex/two',sourceId:'s',keyId:randomUUID(),key:'next-key'});
+  expect(await readFile(path,'utf8')).toContain('next-key');
+ }
+});
+
+it.each(['claude','pi','qoder','workbuddy','workbuddy-ai','deepseek'] as const)('exits %s gateway from current settings instead of replaying the pre-connection config',async target=>{
+ const {root,connections}=await setup();const path=connections.paths[target];await mkdir(join(path,'..'),{recursive:true});
+ const original=target==='claude'?'{"env":{"ANTHROPIC_BASE_URL":"https://old.invalid","ANTHROPIC_SMALL_FAST_MODEL":"old-third-party"},"theme":"old"}':target==='deepseek'?'[]':target==='workbuddy'||target==='workbuddy-ai'?'[]':'{}';
+ await writeFile(path,original);
+ const record=await connections.apply({target,revision:(await connections.preview(target,'http://127.0.0.1:9527','codex/one')).revision,origin:'http://127.0.0.1:9527',model:'codex/one',sourceId:'s',keyId:randomUUID(),key:'fixture-key'});
+ const current=(await readFile(path,'utf8')).replaceAll('fixture-key','external-key');await writeFile(path,current);
+ const preview=await connections.restorePreview(record.id,'native');expect(preview.canRestore).toBe(true);
+ await connections.restore(record.id,{revision:preview.revision,allowRunning:false},'native');
+ const result=await readFile(path,'utf8');expect(result).not.toContain('external-key');expect(result).not.toContain('old-third-party');expect(result).not.toContain('https://old.invalid');
+ if(target==='claude')expect(JSON.parse(result)).toEqual({env:{},theme:'old'});
+ const {readdir}=await import('node:fs/promises');expect((await readdir(join(root,'agent-backups'))).some(name=>name.startsWith(`native-${record.id}-`))).toBe(true);
 });

@@ -6,10 +6,12 @@ import {nativeIdentity,type LocalUsageRow} from './local-usage.js';
 
 const providers=['codex','claude','antigravity','workbuddy','workbuddy-ai','qoder'] as const;
 export type NativeUsageProvider=typeof providers[number];
-export type NativeUsageLogin={provider:NativeUsageProvider;accountId:string;email:string|null;organizationId?:string|null};
+const clients=[...providers,'qoder-ide'] as const;
+type NativeUsageClient=typeof clients[number];
+export type NativeUsageLogin={provider:NativeUsageProvider;accountId:string;email:string|null;displayName?:string;organizationId?:string|null};
 const hash=z.string().regex(/^[a-f0-9]{64}$/),time=z.number().int().nonnegative();
 const identity=z.object({provider:z.enum(providers),account:hash,email:hash.optional(),organization:hash.optional()});
-const interval=identity.extend({from:time,to:time});
+const interval=identity.extend({target:z.enum(clients).optional(),from:time,to:time});
 const account=identity.extend({label:z.string().min(1).max(320)});
 const saved=z.object({version:z.literal(1),intervals:z.array(interval).max(2000),accounts:z.array(account).max(500)});
 export type NativeLoginInterval=z.infer<typeof interval>;
@@ -20,22 +22,22 @@ const hashed=(v:NativeUsageLogin)=>({provider:v.provider,account:nativeIdentity(
 export async function readNativeLoginIntervals(root:string):Promise<NativeLoginInterval[]>{try{return saved.parse(JSON.parse(await readConfig(pathFor(root))??'null')).intervals;}catch{return [];}}
 /** Observations apply only between two readings of the same login, never across startup gaps or an account change. */
 export class NativeUsageLogins{
- private intervals:NativeLoginInterval[]=[];private catalog:NativeUsageAccount[]=[];private active=new Map<NativeUsageProvider,NativeLoginInterval>();
+ private intervals:NativeLoginInterval[]=[];private catalog:NativeUsageAccount[]=[];private active=new Map<NativeUsageClient,NativeLoginInterval>();
  private error='';private pending=Promise.resolve();
  private constructor(private root:string){}
  static async open(root:string){const store=new NativeUsageLogins(root);try{const raw=await readConfig(pathFor(root));if(raw){const data=saved.parse(JSON.parse(raw));store.intervals=data.intervals;store.catalog=data.accounts;}}catch{store.error='本机账号识别记录暂不可用，已保留原文件；无法识别的用量仍单独显示。';}return store;}
  get warning(){return this.error;}
  accounts(){return this.catalog;}
- observe(logins:Partial<Record<NativeUsageProvider,NativeUsageLogin|null>>,now=Date.now()){
+ observe(logins:Partial<Record<NativeUsageClient,NativeUsageLogin|null>>,now=Date.now()){
   const work=async()=>{
    if(this.error)return;let changed=false;
-   for(const provider of providers){
-    const login=logins[provider],previous=this.active.get(provider);
-    if(!login){this.active.delete(provider);continue;}
+   for(const target of clients){
+    const login=logins[target],previous=this.active.get(target);
+    if(!login){this.active.delete(target);continue;}
     const value=hashed(login),key=identityKey(value);
     if(previous&&identityKey(previous)===key&&now>=previous.to&&now-previous.to<=15000)previous.to=now;
-    else{const next={...value,from:now,to:now};this.intervals.push(next);this.active.set(provider,next);}
-    const label=login.email?.trim()||`${provider==='claude'?'Claude Code':provider} 本机账号 ${value.account.slice(0,8)}`;
+    else{const next={...value,target,from:now,to:now};this.intervals.push(next);this.active.set(target,next);}
+    const label=login.email?.trim()||login.displayName?.trim()||`${login.provider==='claude'?'Claude Code':login.provider} 本机账号 ${value.account.slice(0,8)}`;
     this.catalog=this.catalog.filter(a=>identityKey(a)!==key);this.catalog.push({...value,label:label.slice(0,320)});changed=true;
    }
    if(changed){this.intervals=this.intervals.slice(-2000);this.catalog=this.catalog.slice(-500);try{await writePrivate(pathFor(this.root),JSON.stringify({version:1,intervals:this.intervals,accounts:this.catalog}));}catch{this.error='本机账号归属暂时无法保存，后续用量继续单独显示。';this.active.clear();}}
@@ -47,10 +49,10 @@ export class NativeUsageLogins{
 /** A login snapshot is an explicitly labelled fallback. Request-level identity always wins. */
 export function enrichNativeLoginRows(rows:readonly LocalUsageRow[],intervals:readonly NativeLoginInterval[]):LocalUsageRow[]{
  return rows.map(row=>{
-  if(row.nativeModelUnconfirmed||row.nativeAccountId||row.nativeAccountEvidence==='conflict'||row.channel==='api'||!providers.includes(row.target as NativeUsageProvider)||row.provider!==row.target)return row;
+  if(row.nativeModelUnconfirmed||row.nativeAccountId||row.nativeAccountEvidence==='conflict'||row.channel==='api'||!clients.includes(row.target as NativeUsageClient)||row.provider!==(row.target==='qoder-ide'?'qoder':row.target))return row;
   // A coexisting desktop login cannot prove that an unlabelled request used it.
   if(!['codex','claude'].includes(row.target)&&row.channel!=='official')return row;
-  const at=Date.parse(row.last),matches=intervals.filter(i=>i.provider===row.target&&i.from<=at&&i.to>=at&&i.to>i.from),unique=new Map(matches.map(i=>[identityKey(i),i]));
+  const at=Date.parse(row.last),matches=intervals.filter(i=>(i.target??i.provider)===row.target&&i.from<=at&&i.to>=at&&i.to>i.from),unique=new Map(matches.map(i=>[identityKey(i),i]));
   if(unique.size!==1)return row;
   const match=[...unique.values()][0];return {...row,channel:'official',keyName:'官方登录',nativeAccountEvidence:'login-snapshot',nativeAccountId:match.account,...(match.email?{nativeEmailHash:match.email}:{}),...(match.organization?{nativeOrganizationId:match.organization}:{})};
  });

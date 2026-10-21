@@ -22,7 +22,7 @@ export function Notifications({notice,onDismiss,warnings,onDismissWarning,gatewa
   return <section className={`tfToast ${kind}`} role={kind==='ok'?'status':'alert'} aria-label={title}><span className="tfToastIcon"><Icon name={icon} size={20}/></span><div className="tfToastText"><strong>{title}</strong><p>{text}</p></div>{action}</section>;
  };
  return <div ref={container} popover="manual" className="tfNotifications" aria-label="消息提示" onMouseEnter={()=>setHovered(true)} onMouseLeave={()=>setHovered(false)} onFocusCapture={()=>setFocused(true)} onBlurCapture={event=>{if(!event.currentTarget.contains(event.relatedTarget))setFocused(false);}}>
-  {notice&&card(notice.kind,notice.kind==='ok'?'操作完成':'操作未完成',notice.text,<button className="tfToastClose" aria-label="关闭提示" onClick={onDismiss}><Icon name="close" size={16}/></button>)}
+  {notice&&card(notice.kind,notice.title??(notice.kind==='ok'?'操作完成':notice.kind==='warning'?'需要注意':'操作未完成'),notice.text,<button className="tfToastClose" aria-label="关闭提示" onClick={onDismiss}><Icon name="close" size={16}/></button>)}
   {warnings.map(text=><div key={text}>{card('warning','需要注意',text,<button className="tfToastClose" aria-label="关闭提醒" onClick={()=>onDismissWarning(text)}><Icon name="close" size={16}/></button>)}</div>)}
   {gateway&&card('warning','网关状态',gateway.text,gateway.canStart?<button className="tfToastAction" disabled={gateway.busy} onClick={gateway.onStart}>启动</button>:null)}
  </div>;

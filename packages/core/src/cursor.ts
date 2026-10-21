@@ -25,7 +25,7 @@ type Credential=z.infer<typeof credentialSchema>;
 type Secrets={get:(name:string)=>Promise<string>;set:(name:string,value:string)=>Promise<void>};
 const failure=(message:string,statusCode=400)=>Object.assign(new Error(message),{statusCode});
 const errorResponse=(message:string,status=400,code?:string)=>Response.json({error:{message,type:'cursor_error',...(code?{code}:{})}},{status});
-export const cursorCatalog={id:'cursor' as const,label:'Cursor',flow:'device' as const,hint:'官方 SDK 授权 · 支持文本、客户端工具与官方用量查询'};
+export const cursorCatalog={id:'cursor' as const,label:'Cursor',flow:'device' as const,hint:'官方 SDK 授权 · 支持文本、图片、客户端工具与官方用量查询'};
 
 // Only client-declared tools are exposed. No local filesystem or shell tools.
 class CursorAccount {
@@ -113,7 +113,10 @@ class CursorAccount {
  async remove(){if(this.loginTask)throw failure('请先结束 Cursor 授权',409);await this.secrets.set('cursor-account','');this.credential=undefined;this.models=[];this.quota=undefined;this.billing=undefined;await this.active?.cancel();}
  async close(){this.closed=true;this.refreshAbort.abort();this.loginAbort?.abort();await this.active?.cancel().catch(()=>{});await this.loginTask;await this.refreshTask?.catch(()=>{});}
  async response(path:string,body:unknown,signal:AbortSignal):Promise<Response>{
-  let input:ReturnType<typeof parseCursorInput>;try{input=parseCursorInput(path,body);}catch(error){return Response.json({error:{type:'invalid_request_error',code:'cursor_invalid_request',fields:cursorInputFields(error),message:'Cursor 请求格式不支持：请使用文本、函数工具及工具结果；图片、服务端工具和严格 JSON 输出暂不可用。'}},{status:400});}
+  let input:ReturnType<typeof parseCursorInput>;try{input=parseCursorInput(path,body);}catch(error){
+   const fields=cursorInputFields(error),safeguards=fields.includes('safeguards');
+   return Response.json({error:{type:'invalid_request_error',code:safeguards?'cursor_safeguards_unsupported':'cursor_invalid_request',fields,message:safeguards?'Claude 自动权限模式请求了服务端工具安全审查（safeguards），Cursor SDK 暂不支持。请在 Claude 中改用逐次询问工具权限的模式后重试；网关未删除审查要求。':'Cursor 请求格式不支持：请检查所标注的消息内容或工具格式；服务端工具和严格 JSON 输出暂不可用。'}},{status:400});
+  }
   if(!this.id)return errorResponse('Cursor 尚未授权',503,'cursor_unavailable');
   this.assertSource(this.id,input.model);
   if(this.closed||signal.aborted)return errorResponse('请求已取消',499,'cursor_cancelled');
@@ -152,7 +155,7 @@ class CursorAccount {
    if(signal.aborted||this.closed||this.credential?.disabled||this.credential?.apiKey!==credential.apiKey)return errorResponse('请求已取消',499,'cursor_cancelled');
    const startedAt=Date.now();
    if(agent.agentId)await rememberCursorGatewayConversation(this.root,agent.agentId,startedAt);
-   this.active=await agent.send(input.prompt);if(signal.aborted)cancel();
+   this.active=await agent.send(input.images.length?{text:input.prompt,images:input.images}:input.prompt);if(signal.aborted)cancel();
    const wait=this.active.wait();
    const outcome=await Promise.race([wait,toolRequested]);
    let result:Awaited<typeof wait>;
@@ -262,11 +265,14 @@ function cursorFailure(error:unknown){
  // are lost when a failed run crosses the SDK's event/storage boundary.
  const e=(typeof error==='string'?{message:error}:error??{}) as {name?:string;status?:number;code?:string;message?:string};
  const upstreamCode=e.code?.toLowerCase()??'';
+ // The SDK can report a regional denial as a message-only RunError.
+ // Match its explicit provider denial, not the ambiguous "Model not available".
+ const regionUnsupported=/\b(?:this )?model provider is not supported in your region\b/i.test(e.message??'');
  const auth=e.status===401||e.name==='AuthenticationError'||['unauthenticated','unauthorized','not_logged_in','invalid_auth_id','agent_requires_login','auth_token_not_found','auth_token_expired'].includes(upstreamCode);
- const blocked=auth||e.status===403||['plan_required','permission_denied','not_high_enough_permissions'].includes(upstreamCode);
+ const blocked=!regionUnsupported&&(auth||e.status===403||['plan_required','permission_denied','not_high_enough_permissions'].includes(upstreamCode));
  const network=safeFailure(error instanceof Error?error:e.message);
  const modelMissing=upstreamCode==='model_not_found'||/\bmodel (?:was |is )?not found\b/i.test(e.message??'');
- const code=modelMissing?'cursor_model_not_found':upstreamCode==='plan_required'?'cursor_plan_required':auth?'cursor_authentication_failed':blocked?'cursor_permission_denied':
+ const code=regionUnsupported?'cursor_region_unsupported':modelMissing?'cursor_model_not_found':upstreamCode==='plan_required'?'cursor_plan_required':auth?'cursor_authentication_failed':blocked?'cursor_permission_denied':
   e.status===429||e.name==='RateLimitError'||['resource_exhausted','rate_limited','rate_limited_changeable','openai_rate_limit_exceeded','generic_rate_limit_exceeded','api_key_rate_limit'].includes(upstreamCode)?'cursor_rate_limited':
   ['invalid_argument','bad_request','bad_model_name'].includes(upstreamCode)||e.name==='ConfigurationError'?'cursor_request_rejected':
   ['deadline_exceeded','timeout'].includes(upstreamCode)||network.code==='timeout'?'cursor_timeout':
@@ -274,7 +280,7 @@ function cursorFailure(error:unknown){
   ['connection_refused','connection_closed','proxy','proxy_auth'].includes(network.code)?'cursor_network_error':
   upstreamCode==='unavailable'?'cursor_upstream_unavailable':upstreamCode==='internal'?'cursor_upstream_internal':
   e.name==='TypeError'||e.name==='NetworkError'?'cursor_network_error':process.env.CURSOR_BACKEND_URL?'cursor_backend_override':'cursor_upstream_error';
- return {auth,blocked,code,status:modelMissing?400:502,message:upstreamError(502,JSON.stringify({error:{code}})).message};
+ return {auth,blocked,code,status:regionUnsupported?403:modelMissing?400:502,message:upstreamError(regionUnsupported?403:502,JSON.stringify({error:{code}})).message};
 }
 
 function containsTransportPath(value:unknown,root:string):boolean {

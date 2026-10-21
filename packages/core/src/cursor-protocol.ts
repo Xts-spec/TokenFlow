@@ -1,17 +1,22 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { SDKJsonValue } from '@cursor/sdk';
+import type { SDKJsonValue,SDKImage } from '@cursor/sdk';
 
 export type CursorToolCall={id:string;name:string;arguments:string;custom?:boolean;namespace?:string};
 const object=z.record(z.unknown());
 const textBlock=z.object({type:z.enum(['text','input_text','output_text']),text:z.string()}).passthrough();
 const toolUse=z.object({type:z.literal('tool_use'),id:z.string(),name:z.string(),input:object}).passthrough();
 const toolReference=z.object({type:z.literal('tool_reference'),tool_name:z.string()});
-const toolResult=z.object({type:z.literal('tool_result'),tool_use_id:z.string(),content:z.union([z.string(),z.array(z.union([textBlock,toolReference]))]).optional(),is_error:z.boolean().optional()}).passthrough();
+const imageURL=z.string().refine(v=>/^https?:\/\/\S+$/i.test(v)||/^data:image\/[\w.+-]+;base64,[\s\S]+$/.test(v));
+const imageBlock=z.union([
+ z.object({type:z.literal('image'),source:z.union([z.object({type:z.literal('base64'),media_type:z.string().regex(/^image\/[\w.+-]+$/),data:z.string().min(1)}),z.object({type:z.literal('url'),url:imageURL})])}),
+ z.object({type:z.enum(['image_url','input_image']),image_url:z.union([imageURL,z.object({url:imageURL})])}),
+]);
+const toolResult=z.object({type:z.literal('tool_result'),tool_use_id:z.string(),content:z.union([z.string(),z.array(z.union([textBlock,toolReference,imageBlock]))]).optional(),is_error:z.boolean().optional()}).passthrough();
 const thinking=z.union([z.object({type:z.literal('thinking'),thinking:z.string(),signature:z.string().optional()}),z.object({type:z.literal('redacted_thinking'),data:z.string()})]);
 // Thinking belongs to the previous provider's signed internal state. Keep its
 // adjacent visible text and tool calls, but never replay that state to an SDK.
-const content=z.union([z.string(),z.array(z.union([textBlock,toolUse,toolResult,thinking])).transform(blocks=>blocks.filter(block=>block.type!=='thinking'&&block.type!=='redacted_thinking'))]);
+const content=z.union([z.string(),z.array(z.union([textBlock,toolUse,toolResult,thinking,imageBlock])).transform(blocks=>blocks.filter(block=>block.type!=='thinking'&&block.type!=='redacted_thinking'))]);
 const chatCall=z.object({id:z.string(),type:z.literal('function'),function:z.object({name:z.string(),arguments:z.string()})});
 const message=z.object({type:z.literal('message').optional(),role:z.enum(['system','developer','user','assistant','tool']),content:content.nullish(),tool_calls:z.array(chatCall).optional(),tool_call_id:z.string().optional()}).passthrough();
 const item=z.union([message,z.object({type:z.literal('function_call'),call_id:z.string(),name:z.string(),arguments:z.string()}).passthrough(),z.object({type:z.literal('function_call_output'),call_id:z.string(),output:content}).passthrough(),z.object({type:z.literal('custom_tool_call'),call_id:z.string(),name:z.string(),input:z.string()}).passthrough(),z.object({type:z.literal('custom_tool_call_output'),call_id:z.string(),output:content}).passthrough(),z.object({type:z.literal('reasoning'),summary:z.array(textBlock).optional()}).passthrough()]);
@@ -31,11 +36,33 @@ const request=z.object({
  truncation:z.enum(['auto','disabled']).optional(),service_tier:z.string().optional(),
 }).strict();
 export function cursorInputFields(error:unknown){
- return error instanceof z.ZodError?[...new Set(error.issues.map(issue=>issue.path.join('.')).filter(path=>/^[a-zA-Z][a-zA-Z0-9_.]{0,100}$/.test(path)))].slice(0,5):[];
+ return error instanceof z.ZodError?[...new Set(error.issues.flatMap(issue=>issue.code==='unrecognized_keys'?issue.keys.map(key=>[...issue.path,key].join('.')):[issue.path.join('.')]).filter(path=>/^[a-zA-Z][a-zA-Z0-9_.]{0,100}$/.test(path)))].slice(0,5):[];
 }
 export function parseCursorInput(path:string,body:unknown){
  if(!['responses','chat/completions','messages'].includes(path))throw new Error('Cursor 不支持此接口。');
- const value=request.parse(body);const history=path==='responses'?value.input:value.messages;
+ const value=request.parse(body);const images:SDKImage[]=[];
+ // Only visit content blocks. Tool arguments and schemas can contain objects
+ // that resemble images and must remain untouched.
+ const normalizeContent=(c:unknown):unknown=>{
+  if(!Array.isArray(c))return c;
+  return c.map(block=>{
+   const image=imageBlock.safeParse(block);
+   if(image.success){
+    const b=image.data;
+    if(b.type==='image'&&b.source.type==='base64')images.push({data:b.source.data,mimeType:b.source.media_type});
+    else{
+     const url=b.type==='image'?b.source.type==='url'?b.source.url:'':typeof b.image_url==='string'?b.image_url:b.image_url.url;
+     const data=/^data:(image\/[\w.+-]+);base64,([\s\S]+)$/.exec(url);
+     images.push(data?{data:data[2],mimeType:data[1]}:{url});
+    }
+    return {type:'text',text:`[Attached image ${images.length}]`};
+   }
+   return block?.type==='tool_result'?{...block,content:normalizeContent(block.content)}:block;
+  });
+ };
+ const system=normalizeContent(value.system);
+ const rawHistory=path==='responses'?value.input:value.messages;
+ const history=Array.isArray(rawHistory)?rawHistory.map(m=>'role'in m?{...m,content:normalizeContent(m.content)}:m.type==='function_call_output'||m.type==='custom_tool_call_output'?{...m,output:normalizeContent(m.output)}:m):rawHistory;
  if(!history||Array.isArray(history)&&!history.length)throw new Error('缺少对话内容。');
  const declared=value.tools.flatMap<{tool:z.infer<typeof tool>;namespace?:string}>(t=>'type'in t&&t.type==='namespace'?t.tools.map(tool=>({tool,namespace:t.name})): [{tool:t}]);
  if(declared.length>2048)throw new Error('工具过多。');
@@ -57,10 +84,10 @@ export function parseCursorInput(path:string,body:unknown){
   'The SDK ambient environment (including its working directory and user_info) is only the transport host, not the client workspace. Resolve client tool paths from the client conversation, system instructions and tool results. Never prefix client paths with the SDK working directory. If the client working directory is unknown, preserve relative paths when supported or ask the client; do not guess an absolute path.',
   required?'You must call one of the supplied tools before answering.':undefined,
   limit?`Requested output budget: ${limit} tokens. Keep the reply within that budget when possible.`:undefined,
-  JSON.stringify({instructions:value.instructions,system:value.system,history}),
+  JSON.stringify({instructions:value.instructions,system,history}),
  ].filter(Boolean).join('\n\n');
  if(prompt.length>4000000)throw new Error('Cursor 对话过长，请先压缩。');
- return {model:value.model,stream:value.stream,prompt,tools:tools.map(t=>({...t,parameters:t.parameters as Record<string,SDKJsonValue>})),required,parallel_tool_calls:value.parallel_tool_calls,effort:value.reasoning?.effort??value.reasoning_effort??value.output_config?.effort,limit};
+ return {model:value.model,stream:value.stream,prompt,images,tools:tools.map(t=>({...t,parameters:t.parameters as Record<string,SDKJsonValue>})),required,parallel_tool_calls:value.parallel_tool_calls,effort:value.reasoning?.effort??value.reasoning_effort??value.output_config?.effort,limit};
 }
 
 export function cursorResponse(path:string,model:string,text:string,usage:{input_tokens:number;output_tokens:number;cached_tokens?:number;cache_write_tokens?:number}|undefined,stream:boolean,calls:CursorToolCall[]=[],provider='cursor'){
