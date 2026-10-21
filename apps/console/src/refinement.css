@@ -43,7 +43,6 @@
 .tfRepair .tfFix p,.tfRepair .tfFix small,.tfRepair .tfTool summary{color:var(--muted)}
 .tfRepair .tfBubble.assistant{color:var(--text);background:transparent}
 .tfRepair .tfChatEmpty{color:var(--muted)}
-.tfDialog.tfLoginDialog{inset:0;margin:auto;width:min(520px,calc(100vw - 32px));height:fit-content;max-height:calc(100dvh - 80px);border:1px solid var(--line);border-radius:16px;box-shadow:0 24px 80px #0005;overflow:auto;background:var(--surface)}
 .tfLoginDialog .tfDialogContent{min-height:0;padding:24px}
 .tfLoginDialog .tfDialogContent>header{position:static;padding:0;margin-bottom:24px}
 .tfLoginDialog .tfDialogContent>header h2{font-size:19px}
@@ -193,7 +192,6 @@ a:hover{text-decoration:underline}
 .tfCredentialBack .inputAction input{padding:4px;min-height:26px}
 .tfCredentialModels{margin-top:4px;flex-shrink:0}
 .tfCredentialModels ul{max-height:88px}
-.tfDialog.tfVerifyDialog,.tfDialog.tfNativeMacDialog.tfVerifyDialog{inset:0!important;margin:auto;width:min(440px,calc(100vw - 32px));height:fit-content!important;max-height:calc(100dvh - 80px);border-radius:14px;background:var(--surface);border:1px solid var(--line);box-shadow:0 24px 80px #0005}
 .tfVerifyDialog .tfDialogContent{padding:22px;display:grid;gap:16px;min-height:0}
 .tfVerifyDialog .tfDialogContent>header{position:static;padding:0;margin:0}
 .tfVerifyDialog .tfDialogContent>header h2{font-size:18px}
@@ -467,11 +465,10 @@ a:hover{text-decoration:underline}
 .tfKeyCreateDialog .tfKeyCreate>footer{position:sticky;bottom:-20px;z-index:4;padding:16px 0 0;background:var(--surface)}
 .tfKeyCreateDialog .tfKeyCreate>footer .tfRow{margin-left:auto}
 .tfKeyCreateDialog .tfPickBody{min-height:0}
-.tfDialog.tfKeyCreateDialog{inset:0;margin:auto;width:min(900px,calc(100vw - 48px));height:auto;max-height:calc(100dvh - 80px);padding:0;border:1px solid var(--line);border-radius:14px;overflow:auto}
 .tfKeyCreateDialog .tfDialogContent{padding:24px}
 .tfKeyCreateDialog .tfDialogContent>header{top:-24px}
 .tfKeyCreateDialog .tfKeyCreate>footer{bottom:-24px;padding-bottom:12px}
-@media(max-width:600px){.tfDialog.tfKeyCreateDialog{width:calc(100vw - 24px);max-height:calc(100dvh - 40px)}.tfKeyCreateDialog .tfKeyFields{grid-template-columns:1fr}}
+@media(max-width:600px){.tfKeyCreateDialog .tfKeyFields{grid-template-columns:1fr}}
 .tfKeyCard.tfKeyHeld{pointer-events:none;z-index:8;transition:none}
 .tfKeyCreateDialog .tfKeyCreate>footer{bottom:0;padding:16px 0;background:var(--surface)}
 
@@ -551,11 +548,9 @@ a:hover{text-decoration:underline}
 .tfInlineField>.tfInlineMinimum{grid-area:1/1;visibility:hidden;white-space:pre}
 :root[data-theme] .tfKeyDetail .tfInlineField>.tfInlineInput{width:100%;min-width:0;min-height:0;max-width:100%;padding:0;border:0;border-radius:2px;font:inherit;line-height:inherit;color:inherit;background:var(--soft);box-shadow:0 0 0 4px var(--soft);outline:1px solid var(--line);outline-offset:4px;box-sizing:border-box}
 :root[data-theme] .tfKeyDetail .tfInlineField>.tfInlineInput:focus-visible{outline:1px solid var(--accent);outline-offset:4px}
-.tfDialog.tfKeyRenameDialog{inset:0;margin:auto;width:min(400px,calc(100vw - 32px));height:fit-content;max-height:calc(100dvh - 80px);border:1px solid var(--line);border-radius:14px;overflow:auto}
 .tfKeyRenameDialog .tfDialogContent{min-height:0;padding:24px}
 .tfKeyRenameDialog .tfDialogContent>header{position:static;margin:0 0 20px;padding:0}
 .tfKeyRenameDialog .tfDialogContent>header h2{font-size:18px}
-.tfDialog.tfRestoreConfigDialog,.tfDialog.tfRestoreConfigDialog.tfNativeMacDialog{width:min(520px,calc(100vw - 32px))}
 .tfRestoreDestination{margin:16px 0;padding:12px 0;border-block:1px solid var(--line);display:grid;gap:10px;font-size:13px;line-height:1.6}
 .tfRestoreDestination>div{display:grid;grid-template-columns:64px minmax(0,1fr);gap:12px}
 .tfRestoreDestination dt{color:var(--muted)}
@@ -667,3 +662,39 @@ body:has(dialog[open]) .tfOperationFeedback{display:none}
 .tfUsageDetails>summary{cursor:pointer;padding:8px 0;color:var(--muted);font-size:12px}
 .tfUsageDetails[open]>:not(summary){margin-top:16px}
 .tfUsageFoldHead{flex-wrap:wrap}
+
+/* Key creation stays compact; connection confirmation has its own centered dialog. */
+.tfKeyAccessField{border:0;padding:0;margin:0;display:flex;align-items:center;gap:20px}
+.tfKeyAccessField legend{float:left;font-size:12px;color:var(--text);padding:8px 20px 8px 0}
+.tfAccessChoices{display:flex;gap:4px;padding:3px;border-radius:8px;background:var(--bg)}
+.tfAccessChoices label{position:relative;cursor:pointer;margin:0}
+.tfAccessChoices input{position:absolute;opacity:0;width:1px;height:1px}
+.tfAccessChoices span{display:block;padding:7px 18px;border-radius:6px;font-size:12px;color:var(--muted)}
+.tfAccessChoices input:checked+span{background:var(--surface);color:var(--text);box-shadow:0 1px 3px #0002}
+.tfAccessChoices input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
+.tfAccessChoices input:disabled+span{opacity:.5;cursor:default}
+.tfKeyIPField{display:block;font-size:12px;color:var(--text)}
+.tfKeyIPField small{color:var(--muted);font-weight:400;margin-left:6px}
+.tfKeyIPField input{display:block;width:100%;box-sizing:border-box;margin-top:8px;font-size:12px}
+.tfPickerToolbar{display:flex;align-items:center;gap:18px;min-width:0}
+.tfPickerToolbar h3{margin:0;white-space:nowrap;font-size:13px;font-weight:550}
+.tfPickerToolbar .tfSearch{flex:1;min-width:0}
+.tfCompactPicker.tfInlineAgentPicker .tfAgentPickerBrowser{display:flex;flex-direction:column;gap:12px;height:auto;min-height:0;max-height:none}
+.tfCompactPicker .tfAgentPickerSources{display:flex;flex-direction:row;flex-wrap:wrap;gap:6px;padding:0;background:transparent;border:0;overflow:visible}
+.tfCompactPicker .tfAgentPickerCaption{display:none}
+.tfCompactPicker .tfAgentPickerSources>button{position:relative;display:flex;justify-content:center;width:44px;min-width:44px;height:44px;min-height:44px;padding:10px;border-radius:9px;flex:none;border:1px solid transparent}
+.tfCompactPicker .tfAgentPickerSources>button[aria-selected=true]{border-color:var(--accent);background:var(--surface)}
+.tfCompactPicker .tfAgentPickerSources>button>span:not(.tfProviderIcon):not(.tfMark),.tfCompactPicker .tfAgentPickerSources>button>b:not(.chosen){display:none}
+.tfCompactPicker .tfAgentPickerSources>button>b.chosen{position:absolute;right:-2px;top:-3px;min-width:15px;height:15px;line-height:15px;padding:0 3px;font-size:9px;border-radius:8px;background:var(--accent);color:var(--surface)}
+.tfCompactPicker .tfAgentPickerCatalog{min-height:0;max-height:340px;display:flex;flex-direction:column;border:0;background:transparent}
+.tfCompactPicker .tfAgentPickerModelList{max-height:270px;min-height:0}
+.tfCompactPicker .tfAgentPickerEmpty{min-height:100px;padding:12px;gap:8px}
+.tfCompactPicker .tfAgentPickerEmpty strong{font-size:12px;font-weight:400;color:var(--muted)}
+.tfKeyCreatedDialog .tfDialogLead{margin:0 0 20px;font-size:14px}
+.tfCreatedInfo{display:grid;gap:14px;margin:0 0 20px}
+.tfCreatedInfo>div{display:grid;gap:5px;min-width:0}
+.tfCreatedInfo dt{font-size:11px;color:var(--muted)}
+.tfCreatedInfo dd{margin:0;font-size:12px;overflow-wrap:anywhere;line-height:1.5}
+.tfCreatedInfo input{box-sizing:border-box;width:100%;font-size:12px;min-height:32px;padding:6px 10px}
+.tfCreatedInfo .tfCreatedModels{max-height:100px;overflow:auto;white-space:pre-line}
+@media(max-width:600px){.tfPickerToolbar{flex-wrap:wrap;gap:8px}.tfPickerToolbar .tfSearch{flex-basis:100%}.tfKeyAccessField{gap:6px}.tfAccessChoices span{padding:7px 14px}}

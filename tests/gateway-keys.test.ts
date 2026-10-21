@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, realpath } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -9,7 +9,7 @@ import {modelLabel} from '../packages/core/src/model-label.js';
 const cleanup:Array<()=>Promise<unknown>>=[];
 afterEach(async()=>{for(const fn of cleanup.splice(0).reverse())await fn();});
 async function setup() {
-  const root=await mkdtemp(join(tmpdir(),'scoped-models-'));cleanup.push(()=>rm(root,{recursive:true,force:true}));
+  const root=await mkdtemp(join(await realpath(tmpdir()),'scoped-models-'));cleanup.push(()=>rm(root,{recursive:true,force:true}));
   const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
   await mkdir(join(root,'cliproxy'));
   await writeFile(join(root,'cliproxy','fixture-accounts.json'),JSON.stringify(['codex','claude'].map(provider=>({name:`${provider}.json`,provider,email:`${provider}@example.test`,status:'active',models:['shared-model','second-model']}))));
@@ -33,6 +33,30 @@ it('exports the same catalog names shown in the gateway while preserving routabl
  expect(models.json().data).toEqual([expect.objectContaining({id:model,name:label,display_name:label})]);
  const response=await service.app.inject({method:'POST',url:'/v1/responses',headers,payload:{model,input:'hello'}});
  expect(response.statusCode,response.body).toBe(200);expect(response.json().output[0].content[0].text).toBe('qoder');
+});
+
+it('opens LAN only when saving a LAN key and closes it after the last enabled LAN key is removed',async()=>{
+ const {service,admin}=await setup();
+ const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
+ await service.app.inject({url:'/api/gateway/access',method:'PUT',headers:admin,payload:{enabled:false,port}});
+ const create=(access:string)=>service.app.inject({url:'/api/gateway-keys',method:'POST',headers:admin,payload:{name:access,access,models:['codex/shared-model']}});
+ expect((await create('local')).statusCode).toBe(200);
+ const status=async()=>(await service.app.inject({url:'/api/gateway/access',headers:admin})).json();
+ expect((await status()).running).toBe(false);
+ const created=await create('lan');expect(created.statusCode,created.body).toBe(200);expect((await status()).running).toBe(true);
+ expect((await fetch(`http://127.0.0.1:${port}/v1/models`,{headers:{authorization:`Bearer ${created.json().apiKey}`}})).status).toBe(200);
+ await service.app.inject({url:`/api/gateway-keys/${created.json().key.id}`,method:'DELETE',headers:admin});expect((await status()).running).toBe(false);
+});
+
+it('does not create an unseen key when the LAN port is occupied',async()=>{
+ const {service,admin}=await setup();const occupied=createServer();await new Promise<void>(r=>occupied.listen(0,'0.0.0.0',r));cleanup.push(()=>new Promise<void>(r=>occupied.close(()=>r())));
+ const port=(occupied.address() as {port:number}).port;
+ await service.app.inject({url:'/api/gateway/access',method:'PUT',headers:admin,payload:{enabled:false,port}});
+ const before=(await service.app.inject({url:'/api/gateway-keys',headers:admin})).json().keys;
+ const failed=await service.app.inject({url:'/api/gateway-keys',method:'POST',headers:admin,payload:{name:'occupied',access:'lan',models:['codex/shared-model']}});
+ expect(failed.statusCode).toBe(409);expect(failed.body).toContain('已被占用');
+ expect((await service.app.inject({url:'/api/gateway-keys',headers:admin})).json().keys).toEqual(before);
+ expect((await service.app.inject({url:'/api/gateway/access',headers:admin})).json()).toMatchObject({enabled:false,running:false});
 });
 
 it('registers actual namespaced aliases for duplicate provider models and restores them after restart',async()=>{
@@ -158,6 +182,21 @@ it('retains pool credentials and inference after a quota 401, and recovers on a 
  const response=await service.app.inject({method:'POST',url:'/v1/responses',headers:{host:admin.host,authorization:`Bearer ${created.json().apiKey}`},payload:{model:'codex/shared-model',input:'hi'}});expect(response.statusCode).toBe(200);expect(response.json().output[0].content[0].text).toBe('codex');
  await fetch(`http://127.0.0.1:${port}/fixture`,{method:'POST',body:JSON.stringify({mode:'wait'})});await service.proxy.refreshQuota();
  expect(service.proxy.snapshot().quotas[source.id].status).toBe('ok');
+});
+
+it('reports a proven expired login and removes its grant only after confirmation',async()=>{
+ const {root,service,port,admin}=await setup();const source=service.proxy.snapshot().accounts.find(a=>a.provider==='codex')!;
+ const created=await service.app.inject({method:'POST',url:'/api/gateway-keys',headers:admin,payload:{name:'expired',sourceId:source.id,models:['codex/shared-model']}});expect(created.statusCode).toBe(200);
+ const file=join(root,'cliproxy/fixture-accounts.json');const files=JSON.parse(await readFile(file,'utf8'));files.find((a:{provider:string})=>a.provider==='codex').status='error';files.find((a:{provider:string})=>a.provider==='codex').status_message='refresh_token_revoked';await fetch(`http://127.0.0.1:${port}/fixture`,{method:'POST',body:JSON.stringify({accounts:files})});
+ await service.proxy.refreshAccounts();expect(service.proxy.snapshot().accounts.find(a=>a.id===source.id)?.authenticationRequired).toBe(true);
+ const failed=await service.app.inject({method:'POST',url:'/v1/responses',headers:{host:admin.host,authorization:`Bearer ${created.json().apiKey}`},payload:{model:'codex/shared-model',input:'hi'}});
+ expect(failed.statusCode).toBe(401);expect(failed.json().error.type).toBe('source_auth_expired');expect(failed.body).toContain('登录授权已失效');
+ const healthy=service.proxy.snapshot().accounts.find(a=>a.provider==='claude')!;
+ expect((await service.app.inject({method:'DELETE',url:`/api/local-agent/accounts/${healthy.id}/expired`,headers:admin})).statusCode).toBe(409);
+ expect((await service.app.inject({method:'DELETE',url:`/api/local-agent/accounts/${source.id}/expired`,headers:{host:admin.host}})).statusCode).toBe(401);
+ expect(service.proxy.snapshot().accounts.some(a=>a.id===source.id)).toBe(true);
+ const removed=await service.app.inject({method:'DELETE',url:`/api/local-agent/accounts/${source.id}/expired`,headers:admin});expect(removed.statusCode,removed.body).toBe(200);
+ expect(service.proxy.snapshot().accounts.some(a=>a.id===source.id)).toBe(false);expect(service.proxy.snapshot().accounts.some(a=>a.id===healthy.id)).toBe(true);
 });
 
 it('explains an upstream region restriction without exposing upstream diagnostics',async()=>{

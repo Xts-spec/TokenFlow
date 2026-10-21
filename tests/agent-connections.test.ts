@@ -4,7 +4,7 @@ import { mkdtemp,mkdir,writeFile,readFile,rm,stat,symlink,realpath } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { parse } from 'smol-toml';
+import { parse, stringify } from 'smol-toml';
 import { AgentConnections,agentPaths,connectedConfig } from '../packages/core/src/agent-connections.js';
 import { agentConfig } from '../apps/console/src/agent-config.js';
 import { connectionEvidence } from '../apps/console/src/connection-evidence.js';
@@ -615,6 +615,24 @@ it('returns Codex to official defaults from current conflicting routing without 
  expect(JSON.parse(await readFile(join(root,'agent-backups',backup),'utf8')).before).toBe(external);
 });
 
+it('returns gateway profiles and their subagent defaults to official routing after the selected profile changes',async()=>{
+ const {paths,connections}=await setup();
+ await writeFile(paths.codex,'profile="work"\n[agents]\ndefault_subagent_model="native-small"\nmax_threads=3\n[profiles.work]\nmodel="native-work"\n[profiles.work.agents]\ndefault_subagent_model="native-work-small"\nmax_threads=2\n[profiles.personal]\nmodel_provider="openai"\n[profiles.custom]\nmodel_provider="custom"\nmodel="own-model"\n');
+ const record=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:'codex/model',sourceId:'s',keyId:randomUUID(),key:'fixture-key'});
+ const current=parse(await readFile(paths.codex,'utf8')) as any;
+ current.profile='personal';current.agents.default_subagent_model='codex/model';current.profiles.work.agents.default_subagent_model='codex/model';
+ await writeFile(paths.codex,stringify(current));
+ const preview=await connections.restorePreview(record.id,'native');
+ await connections.restore(record.id,{revision:preview.revision,allowRunning:false},'native');
+ const restored=parse(await readFile(paths.codex,'utf8')) as any;
+ expect(restored.model_provider).toBe('openai');
+ expect(restored.profiles.work.model_provider).toBe('openai');
+ expect(restored.profiles.work.model).toBeUndefined();
+ expect(restored.profiles.work.agents).toEqual({max_threads:2});
+ expect(restored.agents).toEqual({max_threads:3});
+ expect(restored.profiles.custom).toEqual({model_provider:'custom',model:'own-model'});
+});
+
 it('can directly replace conflicting gateway routing for every local Agent',async()=>{
  const {paths,connections}=await setup();
  for(const target of ['codex','claude','pi','qoder','workbuddy','workbuddy-ai','deepseek'] as const){
@@ -638,4 +656,20 @@ it.each(['claude','pi','qoder','workbuddy','workbuddy-ai','deepseek'] as const)(
  const result=await readFile(path,'utf8');expect(result).not.toContain('external-key');expect(result).not.toContain('old-third-party');expect(result).not.toContain('https://old.invalid');
  if(target==='claude')expect(JSON.parse(result)).toEqual({env:{},theme:'old'});
  const {readdir}=await import('node:fs/promises');expect((await readdir(join(root,'agent-backups'))).some(name=>name.startsWith(`native-${record.id}-`))).toBe(true);
+});
+
+it('disconnects DeepSeek gateway without changing a subsequently selected unrelated API model',async()=>{
+ const {connections}=await setup();const path=connections.paths.deepseek;
+ const preview=await connections.preview('deepseek','http://127.0.0.1:9527','codex/one');
+ const record=await connections.apply({target:'deepseek',revision:preview.revision,origin:'http://127.0.0.1:9527',model:'codex/one',sourceId:'s',keyId:randomUUID(),key:'fixture-key'});
+ const yaml=await import('yaml');const entries=yaml.parse(await readFile(path,'utf8'));
+ const defaults=entries.find((entry:{id:string})=>entry.id==='agent-default-model');defaults.config={provider:'other-api',model:'chosen-by-user',temperature:0.5};
+ const providers=entries.find((entry:{id:string})=>entry.id==='llm-pi-ai').config.providers;providers['other-api']={baseURL:'https://fixture.invalid',apiKey:'keep-fixture-key',models:[{id:'chosen-by-user'}]};
+ await writeFile(path,yaml.stringify(entries));
+ const leaving=await connections.restorePreview(record.id,'native');expect(leaving.destination?.kind).toBe('disconnect');
+ await connections.restore(record.id,{revision:leaving.revision,allowRunning:false},'native');
+ const result=yaml.parse(await readFile(path,'utf8'));
+ expect(result.find((entry:{id:string})=>entry.id==='agent-default-model').config).toEqual(defaults.config);
+ const after=result.find((entry:{id:string})=>entry.id==='llm-pi-ai').config.providers;
+ expect(after['token-flow']).toBeUndefined();expect(after['other-api']).toEqual(providers['other-api']);
 });

@@ -13,7 +13,7 @@ import {useDialogDismiss} from './dialog-dismiss';
 const same=(a:Choice|undefined,b:Choice)=>!!a&&a.sourceId===b.sourceId&&a.model===b.model;
 const quotaText=(group:ModelSourceGroup)=>group.quota?.status==='error'?'额度查询失败':group.remaining===null?'额度暂未提供':`剩余 ${Math.round(group.remaining)}%`;
 
-export function ModelPicker({open,title,local,current,recent=[],isDisabled,onPick,onClose,selected,onConfirm,allowEmpty=false,confirmLabel='应用所选模型',embedded=false,busy=false,error='',closeOnConfirm=true,inlineSelection=false,onSelectionChange,beforeSearch}:{beforeSearch?:ReactNode;inlineSelection?:boolean;onSelectionChange?:(choices:Choice[])=>void;open:boolean;title:string;local:LocalAgentSnapshot;current?:Choice;recent?:Choice[];isDisabled?:(choice:Choice)=>boolean;onPick?:(choice:Choice)=>void;onClose:()=>void;selected?:Choice[];onConfirm?:(choices:Choice[])=>void;allowEmpty?:boolean;confirmLabel?:string;embedded?:boolean;busy?:boolean;error?:string;closeOnConfirm?:boolean}){
+export function ModelPicker({open,title,local,current,recent=[],isDisabled,onPick,onClose,selected,onConfirm,allowEmpty=false,confirmLabel='应用所选模型',embedded=false,busy=false,error='',closeOnConfirm=true,inlineSelection=false,onSelectionChange,beforeSearch,afterModels}:{afterModels?:ReactNode;beforeSearch?:ReactNode;inlineSelection?:boolean;onSelectionChange?:(choices:Choice[])=>void;open:boolean;title:string;local:LocalAgentSnapshot;current?:Choice;recent?:Choice[];isDisabled?:(choice:Choice)=>boolean;onPick?:(choice:Choice)=>void;onClose:()=>void;selected?:Choice[];onConfirm?:(choices:Choice[])=>void;allowEmpty?:boolean;confirmLabel?:string;embedded?:boolean;busy?:boolean;error?:string;closeOnConfirm?:boolean}){
  const dismiss=useDialogDismiss(onClose,busy);
  const [modelOrder,setModelOrder,modelRanks,moveModel]=useModelOrder();
  const dialog=useRef<HTMLDialogElement>(null);const [query,setQuery]=useState('');
@@ -71,6 +71,7 @@ export function ModelPicker({open,title,local,current,recent=[],isDisabled,onPic
    })}
    {!groups.length&&<p className="tfHint">{q?'没有匹配的模型。':'还没有可用模型，先在「账号授权」或「API 接口」添加。'}</p>}
   </div>
+  {afterModels}
   {error&&<p className="tfError tfPickerError" role="alert">{error}</p>}
   {multiple&&!inlineSelection&&<footer className="tfPickerFooter"><span aria-live="polite">{allowEmpty&&!draft.length?'未选择模型，保存后此 Key 将无法调用模型':`已选择 ${draft.length} 个模型`}</span><button type="button" disabled={busy} onClick={onClose}>取消</button><button type="button" className="primary" disabled={busy||!allowEmpty&&!draft.length} onClick={()=>{onConfirm?.(draft);if(closeOnConfirm)onClose();}}>{busy?<Thinking label="正在保存模型权限"/>:confirmLabel}</button></footer>}
  </>;

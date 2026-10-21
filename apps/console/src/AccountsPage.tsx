@@ -6,17 +6,15 @@ import {Thinking,LoadingSkeleton} from './LoadingState';
 import {FlowDialog} from './FlowDialog';
 import {ColumnDivider} from './ColumnDivider';
 import {copyText} from './clipboard';
-import {localDay,spentByPlatform} from './usage-model';
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { LocalAgentSnapshot } from '../../../packages/core/src/cliproxy';
 import { QuotaDetails } from './QuotaDetails';
 import { qualifiedModelLabel as modelLabel } from './model-label';
-import { formatTokens, percentText, rangeLabel, totalsOf } from './usage-model';
 import type { UsageData } from './usage-data';
 import {officialLoginHeld} from '../../shared/native-login-identity';
 import { clientOptions, loginNames, useNativeLogin, type LoginProvider } from './native-login';
 import { Icon } from './Icons';
-import {UsageFold,UsageSummary,SourceUsage,ModelUsage,modelManufacturer} from './UsagePanel';
+import {modelManufacturer} from './UsagePanel';
 import {DragHandle,dropOrder,orderModels,useModelOrder} from './display-order';
 import { ProviderIcon } from './ProviderIcon';
 import type { Notify } from './notify';
@@ -85,7 +83,7 @@ export function AccountsPage({local,usage,disabled,actions,notify,onContext}:{lo
  const loginPending=!!local.login&&pendingStates.includes(local.login.status);
  const accountsLoading=!!local.accountsLoading||local.state==='starting';
  const locked=disabled||switching||!!refreshing||loginPending||['starting','stopping'].includes(local.state);
- const providers=local.providers.map(provider=>({...provider,accounts:local.accounts.filter(a=>a.provider===provider.id&&!a.isDuplicate&&(!a.unavailable||a.retryable||provider.id==='cursor'))}));
+ const providers=local.providers.map(provider=>({...provider,accounts:local.accounts.filter(a=>a.provider===provider.id&&!a.isDuplicate)}));
  const provider=providers.find(p=>p.id===tab)??providers[0];
  const variants=provider?.id==='workbuddy'?clientOptions.workbuddy:provider?.id==='qoder'?clientOptions.qoder:undefined;
  const client=provider?(clients[provider.id]??(provider.id in loginNames?provider.id as LoginProvider:undefined)):undefined;
@@ -122,15 +120,13 @@ export function AccountsPage({local,usage,disabled,actions,notify,onContext}:{lo
   {!provider&&<p className="tfHint">正在读取授权平台…</p>}
   {provider&&<section id={`provider-panel-${provider.id}`} role="tabpanel" aria-labelledby={`provider-tab-${provider.id}`} className="tfProviderPanel">
    <header className="tfProviderHead">
-    <div className="tfProviderTitle"><UsageFold loaded={usage.loaded} error={usage.error} onRetry={usage.reload} title={`${provider.label} 用量`} rows={usage.allRows.filter(row=>row.day===localDay(new Date())).filter(r=>spentByPlatform(r,provider))} range="today"/><button className="textButton tfProviderRefresh" aria-label={`刷新 ${provider.label} 账号、模型和额度`} title="点击刷新此平台的账号、模型和额度" disabled={locked||local.state!=='running'} onClick={()=>void (async()=>{if(lock.current)return;lock.current=true;setRefreshing(provider.id);try{await actions.refresh(provider.id);await login?.refresh(true);}catch(error){notify({kind:'error',text:error instanceof Error?error.message:'刷新失败，请重试'});}finally{lock.current=false;setRefreshing('');}})()}><Icon name="refresh" size={14}/>刷新</button></div>
+    <div className="tfProviderTitle"><h2>{provider.label}</h2><button className="textButton tfProviderRefresh" aria-label={`刷新 ${provider.label} 账号、模型和额度`} title="点击刷新此平台的账号、模型和额度" disabled={locked||local.state!=='running'} onClick={()=>void (async()=>{if(lock.current)return;lock.current=true;setRefreshing(provider.id);try{await actions.refresh(provider.id);await login?.refresh(true);}catch(error){notify({kind:'error',text:error instanceof Error?error.message:'刷新失败，请重试'});}finally{lock.current=false;setRefreshing('');}})()}><Icon name="refresh" size={14}/>刷新</button></div>
     <div className="tfRow">
      {importable.has(provider.id)&&<button disabled={locked} onClick={()=>void actions.importLocal(client==='workbuddy-ai'?'workbuddy-ai':provider.id).then(()=>login?.refresh(true))}>{provider.id==='cursor'&&login?.nativeCurrent?'复用本机账号':'从本机导入'}</button>}
-     <button className="primary" aria-label={`添加 ${client?loginNames[client]:provider.label} 账号`} disabled={locked} onClick={()=>void actions.connect(client==='workbuddy-ai'?'workbuddy-overseas':provider.id)}><Icon name="plus" size={14}/>{provider.id==='zcode'?'添加 Z.ai 账号':'添加账号'}</button>
+     <button className="iconButton tfCollectionAdd" title="添加账号" aria-label={`添加 ${client?loginNames[client]:provider.label} 账号`} disabled={locked} onClick={()=>void actions.connect(client==='workbuddy-ai'?'workbuddy-overseas':provider.id)}><Icon name="plus" size={18}/></button>
      {provider.id==='claude'&&<button title="不使用本机回调端口：在官方页面复制授权码后粘贴回来" disabled={locked} onClick={()=>void actions.connect('claude-manual')}>授权码登录</button>}
     </div>
    </header>
-   {(()=>{const coverage=usage.coverage.find(item=>item.target===(client==='workbuddy-ai'||client==='qoder-ide'?client:provider.id));return coverage&&coverage.status!=='ready'?<p className="tfHint">{coverage.status==='unsupported'?'此客户端直连用量尚未采集；上方用量仅包含已记录的 TokenFlow 请求。':coverage.status==='scanning'?'正在读取本机直连用量…':'未找到可读取的客户端直连记录；上方用量仅包含已采集的请求。'}</p>:null;})()}
-   <p className="tfHint">按消费账号汇总所有已采集客户端的用量；自定义 API 归其实际来源。{provider.id==='qoder'?'Qoder 与 Qoder IDE 共用账号统计；':''}未确认账号的历史消费单独列出。</p>
    {variants&&client&&<SwitchTabs label="账号客户端" value={client} options={variants} disabled={locked} onChange={id=>setClients(previous=>({...previous,[provider.id]:id}))}/>}
    {!account&&!accountsLoading&&login&&client&&<div className="tfAccountTabs"><UnpooledNativeAccount provider={client} login={login} compact/></div>}
    {!account&&!accountsLoading&&nativeLogin}
@@ -149,30 +145,24 @@ export function AccountsPage({local,usage,disabled,actions,notify,onContext}:{lo
      const quota=local.quotas[account.id];
      const shownModels=orderModels(account.models??[],id=>modelLabel(local,id),modelOrder==='manual'?'manual':'name',modelRanks);
      return <div id={`account-panel-${account.id}`} role="tabpanel" aria-labelledby={`account-tab-${account.id}`} className={`tfAccountDetail ${account.disabled?'off':''}`}>
-      <UsageFold title={`${account.label} 已确认用量`} rows={usage.allRows.filter(row=>row.day===localDay(new Date())&&row.sourceId===account.id)} range="today" loaded={usage.loaded} error={usage.error} onRetry={usage.reload}/>
       <div className="tfAccountTop">
        {nativeLogin}
        <div className="tfAccountManage"><label className="toggle" title={account.disabled?'启用':'停用'}><input type="checkbox" checked={!account.disabled} disabled={locked||local.state!=='running'} onChange={()=>void actions.toggle(account.id,account.disabled)}/><span>启用</span></label>
        <button className="textButton danger" disabled={locked||local.state!=='running'} onClick={()=>{if(window.confirm(`删除账号 ${account.label} 的登录凭据？`))void actions.remove(account.id);}}>删除</button></div>
       </div>
-      {(account.credentialCount??0)>1&&<small className="tfHint">已保存 {account.credentialCount} 份授权，优先使用最新可用授权。</small>}
-      {refreshing!==provider.id&&account.modelError&&<small className="tfWarn">{account.modelError}</small>}
-      {account.retryable&&<small className="tfHint">上次请求暂时失败，可稍后重试。</small>}
+      {!account.authenticationRequired&&refreshing!==provider.id&&account.modelError&&<small className="tfWarn">{account.modelError}</small>}
+      {!account.authenticationRequired&&account.retryable&&<small className="tfHint">上次请求暂时失败，可稍后重试。</small>}
       <div className="tfAccountColumns">
-       <section className="tfQuotaSide" aria-label="账号额度"><h3>额度</h3>{refreshing===provider.id||local.quotaBusy?<LoadingSkeleton label="正在加载账号额度"/>:quota&&!account.disabled?<QuotaDetails quota={quota} label={account.label} compact/>:<small className="tfHint">{account.disabled?'已停用，不参与调用':'额度暂未提供'}</small>}</section>
+       <section className="tfQuotaSide" aria-label="账号额度"><h3>额度</h3>{account.authenticationRequired?<p className="tfWarn">登录授权已失效，请重新授权。</p>:refreshing===provider.id||local.quotaBusy?<LoadingSkeleton label="正在加载账号额度"/>:quota&&!account.disabled?<QuotaDetails quota={quota} label={account.label} compact/>:<small className="tfHint">{account.disabled?'已停用，不参与调用':'额度暂未提供'}</small>}</section>
        <ColumnDivider storageKey="token-flow.layout.account-split" label="调整额度与模型宽度"/>
        <section className="tfModelsSide" aria-label="账号模型"><div className="tfAccountModels" id={`models-${account.id}`}>
        <header className="tfAccountModelsHead"><h3>模型</h3><small className="tfAccountModelCount">{account.models?.length??0} 个模型</small></header>
-       {refreshing===provider.id?<LoadingSkeleton label="正在加载账号模型"/>:account.models?.length?<ul aria-label={`${account.label} 支持的模型`}>{shownModels.map(id=><li key={id} className="tfDragRow" {...dropOrder('models',id,shownModels,moveModel)}><DragHandle kind="models" id={id} label={modelLabel(local,id)} items={shownModels} move={moveModel}/><ProviderIcon provider={modelManufacturer(id,local)} size={28}/><span className="tfCatalogModelName"><strong title={modelLabel(local,id)}>{modelLabel(local,id)}</strong></span><button className="textButton" aria-label={`复制模型 ${modelLabel(local,id)}`} title={id} onClick={()=>void copyText(id).then(()=>notify({kind:'ok',text:'模型 ID 已复制'})).catch(()=>notify({kind:'error',text:'复制失败'}))}>复制</button></li>)}</ul>:<p className="tfHint">尚未获取到模型，请启用账号后刷新。</p>}
+       {refreshing===provider.id?<LoadingSkeleton label="正在加载账号模型"/>:account.models?.length?<ul aria-label={`${account.label} 支持的模型`}>{shownModels.map(id=><li key={id} className="tfDragRow" {...dropOrder('models',id,shownModels,moveModel)}><DragHandle kind="models" id={id} label={modelLabel(local,id)} items={shownModels} move={moveModel}/><ProviderIcon provider={modelManufacturer(id,local)} size={28}/><span className="tfCatalogModelName"><strong title={modelLabel(local,id)}>{modelLabel(local,id)}</strong></span><button className="textButton" aria-label={`复制模型 ${modelLabel(local,id)}`} title={id} onClick={()=>void copyText(id).then(()=>notify({kind:'ok',text:'模型 ID 已复制'})).catch(()=>notify({kind:'error',text:'复制失败'}))}>复制</button></li>)}</ul>:<p className="tfHint">{account.authenticationRequired?'重新授权后获取模型。':account.disabled?'启用账号后获取模型。':'暂未获取到模型，请刷新后重试。'}</p>}
       </div></section></div>
      </div>;
     })()}
    </>}
-   <details className="tfUsageDetails"><summary>按消费账号与模型查看用量</summary>
-    <UsageSummary rows={usage.combinedRows.filter(row=>spentByPlatform(row,provider))} range={usage.range} onRange={usage.setRange} loaded={usage.loaded} hint="此处汇总本平台官方账号的已采集消费。无账号证据的记录计入平台总量，单独显示，不归给当前登录账号。"/>
-    <SourceUsage local={local} rows={usage.combinedRows.filter(row=>spentByPlatform(row,provider))} showQuota={false} empty="暂无已采集的账号用量"/>
-    <ModelUsage local={local} rows={usage.combinedRows.filter(row=>spentByPlatform(row,provider))} empty="暂无已采集的模型用量"/>
-   </details>
+
   </section>}
  </div>;
 }

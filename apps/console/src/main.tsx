@@ -1,3 +1,4 @@
+import {ExpiredAccountNotice} from './ExpiredAccountNotice';
 import type {MaintenanceContext} from '../../../packages/core/src/maintenance-conversations';
 import {Thinking,LoadingSkeleton,LoadError} from './LoadingState';
 import {SidebarDivider} from './SidebarDivider';
@@ -28,6 +29,7 @@ import './kapian.css';
 import './graphite.css';
 import './refinement.css';
 import './page-layout.css';
+import './dialogs.css';
 
 type View='accounts'|'apis'|'agents'|'proxy'|'activity'|'usage'|'cleanup'|'settings';
 const empty:LocalAgentSnapshot={state:'stopped',loginState:'idle',port:8317,logs:[],accounts:[],models:[],accountError:undefined,lastError:undefined,quotas:{},quotaBusy:false,providers:[],login:undefined};
@@ -75,6 +77,10 @@ function App(){
   if(localError||!pending&&!local.accountsLoading&&!local.apiRoutesSyncing&&!local.quotaBusy&&!['starting','stopping'].includes(local.state))return;
   const timer=setTimeout(()=>void refresh().catch(()=>{}),1500);return()=>clearTimeout(timer);
  },[local,localError,refresh]);
+ // Read updated account state after a source failure. The backend refreshes only the affected source.
+ const observedSourceFailure=useRef('');
+ const sourceFailureId=overview.activity?.recent.find(call=>call.status===401||call.error?.code?.startsWith('source_'))?.id;
+ useEffect(()=>{if(!sourceFailureId||sourceFailureId===observedSourceFailure.current)return;observedSourceFailure.current=sourceFailureId;void refresh().catch(()=>{});},[sourceFailureId,refresh]);
  const previousLoginStatus=useRef<string|undefined>(undefined);
  const previousAccountsLoading=useRef(false);
  const accountIDs=local.accounts.map(account=>account.id).sort().join(',');
@@ -128,6 +134,7 @@ function App(){
    <nav aria-label="更多" className="tfSideFoot">{secondary.map(navButton)}</nav>
   </aside>
   <SidebarDivider/>
+  <ExpiredAccountNotice local={local} disabled={busy||!localLoaded} onChanged={refresh}/>
   <main className="tfMain">
    {busy&&<div className="tfOperationFeedback"><Thinking label="正在处理操作"/></div>}
    <div className="tfRequestStatus">{view!=='agents'&&localError&&<LoadError message={localError} retry={()=>refresh().catch(()=>{})}/>}</div>

@@ -8,17 +8,18 @@ const {tmpdir}=require('node:os');
 const assert=require('node:assert/strict');
 (async()=>{
  const root=await mkdtemp(join(tmpdir(),'tokenflow-desktop-status-'));app.setPath('userData',root);app.on('window-all-closed',()=>{});await app.whenReady();app.dock?.hide();
- let connected=true,cliSignedIn=false,fail=false;
+ let connected=true,cliSignedIn=false,fail=false,mappingUpdateRequired=true,configurationChanged=false;
  const choice={sourceId:'source',model:'claude/fixture'};
  const local={state:'running',loginState:'idle',port:8317,logs:[],accounts:[{id:'source',provider:'claude',label:'fixture@example.test',status:'active',disabled:false,unavailable:false,models:[choice.model]}],models:[{id:choice.model,provider:'claude'}],quotas:{},quotaBusy:false,providers:[]};
  const target={id:'claude',name:'Claude Code',installation:{installed:true,version:'1.0'},exists:true,revision:'fixture',pids:[],connection:null,configurationState:'unmanaged',backups:[]};
- const desktop=()=>({revision:'fixture',connected,mode:connected?'3p':'1p',backup:connected?{state:'applied'}:null,selections:connected?[choice]:[],unavailableReason:'',pids:[],automaticRestart:false,installation:{installed:true,version:'1.0'}});
+ const desktop=()=>({revision:'fixture',connected,mode:connected?'3p':'1p',configurationChanged,mappingUpdateRequired,backup:connected||configurationChanged?{state:'applied'}:null,selections:connected||configurationChanged?[choice]:[],unavailableReason:'',pids:[],automaticRestart:false,installation:{installed:true,version:'1.0'}});
  const server=createServer(async(req,res)=>{
   const path=new URL(req.url,'http://localhost').pathname;
   if(path.startsWith('/api/')){
    res.setHeader('content-type','application/json');
    if(path==='/api/claude-desktop'&&fail){res.statusCode=503;res.end(JSON.stringify({error:'fixture unavailable'}));return;}
    if(path==='/api/claude-desktop/restore')connected=false;
+   if(path==='/api/claude-desktop/connect'){mappingUpdateRequired=false;configurationChanged=false;connected=true;}
    const value=path.startsWith('/api/claude-desktop')?desktop():path==='/api/local-agent'?local:path==='/api/a2a'?{targets:[target]}:path==='/api/a2a/program-updates'?{updates:{}}:path==='/api/native-accounts/claude'?{revision:'fixture',accounts:[],pids:[],backup:null,loginState:cliSignedIn?'signed-in':'signed-out',...(cliSignedIn?{accountId:'cli-account',email:'cli@example.test'}:{})}:path.startsWith('/api/native-accounts/')||path==='/api/codex-accounts'?{revision:'fixture',accounts:[],pids:[],backup:null}:path==='/api/usage/overview'?{rows:[],combinedRows:[],allRows:[],nativeRows:[],coverage:[],scanning:false}:path==='/api/gateway-keys'?{keys:[]}:path==='/api/gateway/activity'?{recent:[]}:path==='/api/activity/traces'?{records:[]}:path==='/api/maintenance'?{status:'idle',messages:[]}:{};
    res.end(JSON.stringify(value));return;
   }
@@ -36,6 +37,13 @@ const assert=require('node:assert/strict');
   await wait('document.querySelector(".tfPanel [aria-label=\\"启用网关模型\\"]")?.checked===true');
   assert.equal(await evaluate(`${dot}.getAttribute("aria-label")`),'使用中');
   assert.equal(await evaluate(`${dot}.classList.contains("ok")`),true);
+  assert.equal(await evaluate('document.querySelector(".tfPanel").innerText.includes("旧版菜单名称可能与子代理型号冲突")'),true);
+  await click('重新应用');await wait('!!document.querySelector("dialog[open]")');await click('应用');
+  await wait('!document.querySelector("dialog[open]")&&!document.querySelector(".tfPanel").innerText.includes("旧版菜单名称可能与子代理型号冲突")');
+  connected=false;configurationChanged=true;await win.reload();
+  await wait('document.querySelector(".tfPanel")?.innerText.includes("Claude Desktop 接入配置已被修改")');
+  assert.equal(await evaluate('document.querySelector(".tfPanel [aria-label=\\"启用网关模型\\"]").checked'),false);
+  await click('重新应用');await click('应用');await wait('!document.querySelector("dialog[open]")&&document.querySelector(".tfPanel [aria-label=\\"启用网关模型\\"]")?.checked===true');
   await click('Claude CLI');await wait('!document.querySelector(".tfPanel[aria-label=\\"Claude Desktop\\"]")');
   assert.equal(await evaluate(`${dot}.getAttribute("aria-label")`),'未接入');
   await click('Claude Desktop');await wait('document.querySelector(".tfPanel [aria-label=\\"启用网关模型\\"]")?.checked===true');
@@ -46,6 +54,6 @@ const assert=require('node:assert/strict');
   await click('Claude Desktop');await wait('!!document.querySelector(".tfPanel[aria-label=\\"Claude Desktop\\"]")');
   fail=true;await wait(`${dot}.getAttribute("aria-label")==="有问题"`);
   fail=false;connected=true;await click('重试');await wait(`${dot}.getAttribute("aria-label")==="使用中"`);
-  console.log('PASS: desktop connection controls the dot; CLI state stays separate; restore, errors and retry update the shared status.');
+  console.log('PASS: legacy mapping and external drift can be reapplied; desktop dot, separate CLI state, restore, errors and retry update correctly.');
  }finally{win.destroy();server.close();server.closeAllConnections();await rm(root,{recursive:true,force:true});}
 })().then(()=>app.exit(0),error=>{console.error(error);app.exit(1);});

@@ -298,7 +298,14 @@ function nativeConfig(target:Target,current:string|null,record:Record):string|nu
    if(config.agents){const agents={...object(config.agents)};delete agents.default_subagent_model;delete agents.default_subagent_reasoning_effort;if(Object.keys(agents).length)config.agents=agents;else delete config.agents;}
    if(config.model_providers){const providers={...object(config.model_providers)};delete providers.token_flow;delete providers.openai;if(Object.keys(providers).length)config.model_providers=providers;else delete config.model_providers;}
   };
-  clean(doc);const profile=codexProfile(doc);if(profile)clean(profile);
+  const profile=codexProfile(doc);
+  // A user can change profiles while connected. Earlier gateway profiles must
+  // also stop selecting TokenFlow after its provider and client key are removed.
+  clean(doc);
+  if(profile)clean(profile);
+  if(isObject(doc.profiles))for(const candidate of Object.values(doc.profiles)){
+   if(isObject(candidate)&&candidate.model_provider==='token_flow')clean(candidate);
+  }
  }else if(target==='claude'){
   for(const key of ['model','availableModels','modelPicker','apiKeyHelper','forceLoginMethod','forceLoginOrgUUID','forceLoginGatewayUrl'])delete doc[key];
   if(doc.env){const env={...object(doc.env)};
@@ -309,7 +316,7 @@ function nativeConfig(target:Target,current:string|null,record:Record):string|nu
   if(doc.providers){const providers={...object(doc.providers)};delete providers['token-flow'];doc.providers=providers;}
  }else if(target==='deepseek'){
   const entry=doc['llm-pi-ai'];if(entry?.config?.providers){const providers={...object(entry.config.providers)};delete providers['token-flow'];entry.config.providers=providers;}
-  const defaults=doc['agent-default-model'];if(defaults?.config){delete defaults.config.provider;delete defaults.config.model;}
+  const defaults=doc['agent-default-model'];if(defaults?.config?.provider==='token-flow'){delete defaults.config.provider;delete defaults.config.model;}
  }
  return encodeConfig(target,doc);
 }
@@ -570,8 +577,8 @@ export class AgentConnections {
     const record=(await this.records()).find(r=>r.id===id&&r.state!=='restored');if(!record)throw conflict('接入记录不存在或已还原，请刷新。');
     const current=await readConfig(this.paths[record.target]);
     let reason='';try{if(mode==='native')nativeConfig(record.target,current,record);else this.restoreText(record,current);}catch(error){reason=error instanceof Error?error.message:'无法确认原配置，请检查后重试。';}
-    let destination:{kind:'official'|'custom'|'default';provider:string;model?:string}|undefined;
-    if(mode==='native')destination={kind:'official',provider:record.target==='codex'?'openai':record.target};
+    let destination:{kind:'official'|'custom'|'default'|'disconnect';provider:string;model?:string}|undefined;
+    if(mode==='native')destination={kind:record.target==='codex'||record.target==='claude'?'official':'disconnect',provider:record.target==='codex'?'openai':record.target};
     else if(record.target==='codex'){
       const original=parse(record.before??''),effective={...original,...codexProfile(original)};
       const provider=typeof effective.model_provider==='string'?effective.model_provider:'openai';

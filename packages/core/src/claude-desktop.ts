@@ -1,5 +1,5 @@
 import {execFile} from 'node:child_process';
-import {promisify} from 'node:util';
+import {promisify,isDeepStrictEqual} from 'node:util';
 import {homedir,userInfo} from 'node:os';
 import {join,win32,posix,dirname} from 'node:path';
 import {mkdir,open,rm,lstat} from 'node:fs/promises';
@@ -61,7 +61,7 @@ export class ClaudeDesktopConnections{
  private paths(id:string){return {meta:join(this.directory,'configLibrary','_meta.json'),mode:join(this.directory,'claude_desktop_config.json'),profile:join(this.directory,'configLibrary',`${id}.json`)};}
  private async journal(){const text=await this.secrets.get(secretName);if(!text)return null;try{const j=journalSchema.parse(JSON.parse(text));if(j.directory!==this.directory)throw Error();return j;}catch{throw conflict('Claude Desktop 接入备份与当前目录不匹配，未修改配置。');}}
  private save(j:Journal){return this.secrets.set(secretName,JSON.stringify(j));}
- async route(){const j=await this.journal();return j&&j.state!=='restored'?{keyId:j.keyId,selections:j.selections,modelAliases:j.modelAliases}:null;}
+ async route(){const j=await this.journal();return j&&j.state!=='restored'?{keyId:j.keyId,selections:j.selections,fastModel:j.fastModel,modelAliases:j.modelAliases}:null;}
  private async read(id:string){const paths=this.paths(id);return {meta:await readConfig(paths.meta),mode:await readConfig(paths.mode),profile:await readConfig(paths.profile)};}
  private async policy(){
   if(this.secrets.canEncrypt&&!this.secrets.canEncrypt()||this.secrets.persistent===false)throw conflict('系统安全存储不可用，无法保存原配置备份。');
@@ -72,7 +72,12 @@ export class ClaudeDesktopConnections{
   const journal=await this.journal(),state=await this.read(journal?.id??'00000000-0000-0000-0000-000000000000');
   const meta=parse(state.meta),mode=parse(state.mode);let unavailableReason='';try{await this.policy();}catch(e){unavailableReason=e instanceof Error?e.message:'无法检查 Claude Desktop 配置';}
   const active=journal&&journal.state!=='restored'?journal:null;
-  return {revision:digest(state),mode:mode.deploymentMode??'1p',connected:!!active&&meta.appliedId===active.id&&!meta.hybridPointer&&mode.deploymentMode==='3p',backup:active?{state:active.state,createdAt:active.createdAt}:null,selections:active?.selections??[],fastModel:active?.fastModel,keyId:active?.keyId,unavailableReason,pids:await (this.options.processes??claudeDesktopProcesses)()};
+  const mappingUpdateRequired=!!active&&claudeDesktopPlan(active.selections,{},active.fastModel).visible.some(item=>active.modelAliases?.[item.name]!==item.model);
+  const selectorsMatch=!!active&&meta.appliedId===active.id&&!meta.hybridPointer&&mode.deploymentMode==='3p';
+  let profileMatches=false;
+  if(active&&state.profile!==null)try{profileMatches=isDeepStrictEqual(parse(state.profile),parse(active.after.profile));}catch{/* Invalid external profiles can still be explicitly reapplied. */}
+  const configurationChanged=!!active&&active.state==='applied'&&(!selectorsMatch||!profileMatches);
+  return {revision:digest(state),mode:mode.deploymentMode??'1p',connected:selectorsMatch&&profileMatches,configurationChanged,mappingUpdateRequired,backup:active?{state:active.state,createdAt:active.createdAt}:null,selections:active?.selections??[],fastModel:active?.fastModel,keyId:active?.keyId,unavailableReason,pids:await (this.options.processes??claudeDesktopProcesses)()};
  }
  async check(revision:string){await this.policy();const state=await this.status();if(state.revision!==revision)throw conflict('Claude Desktop 配置已变化，请刷新后重试。');return state;}
  private async locked<T>(work:()=>Promise<T>){

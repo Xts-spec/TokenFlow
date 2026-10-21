@@ -19,7 +19,6 @@ html,body,#root{height:100%;overflow:hidden;overscroll-behavior:none}
 .nativeWindows .tfTitlebar{left:0;right:auto;width:env(titlebar-area-width,calc(100% - 138px));height:40px;background:transparent}
 .nativeWindows .tfMain{margin-top:40px}
 .nativeWindows .tfSide{padding-top:56px}
-:root[data-platform=win32] :is(.tfDialog:not(.tfRestartDialog),.tfPicker){top:40px;height:calc(100dvh - 40px)}
 .tfNotifications{pointer-events:none;position:fixed;inset:12px 16px auto auto;margin:0;padding:8px;border:0;background:transparent;color:var(--text);width:min(376px,calc(100vw - 32px));max-height:calc(100dvh - 80px);overflow:auto;overscroll-behavior:contain;-webkit-app-region:no-drag}
 .tfNotifications:popover-open{display:flex;flex-direction:column;gap:12px}
 .nativeMac .tfNotifications{top:44px}
@@ -179,7 +178,6 @@ button.tfRowButton:hover:not(:disabled){}
 .tfCode b{font-size:18px;letter-spacing:.12em;color:var(--text)}
 .tfInline{display:flex;gap:8px;margin-top:8px}
 .tfInline input{min-width:0;flex:1}
-.tfPicker{width:min(760px,92vw);max-height:min(760px,85dvh);padding:0;border:0;border-radius:14px;box-shadow:0 24px 60px #0f172a33;flex-direction:column;overflow:hidden}
 .tfPicker[open]{display:flex}
 .tfPicker::backdrop{background:#0f172a33}
 .tfPicker>header{display:flex;align-items:center;justify-content:space-between;padding:16px 18px 10px}
@@ -229,7 +227,6 @@ button.tfRowButton:hover:not(:disabled){}
 .tfPickQuotaDetails summary{cursor:pointer;width:fit-content;padding:4px 0}
 .tfPickQuotaDetails .quota{margin-top:8px}
 @media(max-width:620px){.tfPickOptions{grid-template-columns:minmax(0,1fr)}
-.tfPicker{width:calc(100vw - 24px)}
 .tfPickBody{padding:4px 12px 16px}
 .tfPickRow{gap:8px}
 .tfPickQuota b{font-size:10px}
@@ -332,7 +329,6 @@ to{opacity:1;transform:none}
 .tfRestartOptions{display:flex;flex-wrap:wrap;gap:10px;min-width:0}
 .tfRestartOptions label{min-width:0;max-width:100%}
 .tfRestartOptions select{max-width:100%}
-.tfDialog{padding:0;border:1px solid var(--line);border-radius:16px;background:var(--surface);color:var(--text);width:min(520px,calc(100vw - 32px));max-height:calc(100dvh - 48px);overflow:auto;box-shadow:0 20px 80px color-mix(in srgb,var(--text) 15%,transparent)}
 /* Native window drag regions behind a modal otherwise swallow pointer and wheel input. */
 .tfDialog{-webkit-app-region:no-drag}
 .tfDialog::backdrop{background:color-mix(in srgb,var(--text) 24%,transparent)}
@@ -645,12 +641,10 @@ to{opacity:1;transform:none}
 .tfHeatmapTooltip{position:fixed;z-index:110;pointer-events:none;display:grid;gap:4px;padding:10px 12px;border-radius:12px;background:#202226;color:#f6f7fa;font-size:12px;line-height:1.35;box-shadow:0 4px 16px #18202c22;transform:translateY(-100%);font-variant-numeric:tabular-nums}
 .tfHeatmapTooltip strong{font-weight:500}
 .tfKeysHead{justify-content:flex-end}
-.tfDialog,.tfPicker{inset:0 0 0 200px;margin:0;width:calc(100vw - 200px);height:100dvh;max-width:none;max-height:none;border:0;border-left:1px solid var(--line);border-radius:0;box-shadow:none;background:var(--surface);color:var(--text);overscroll-behavior:contain}
 .tfPicker .tfPickBody{overscroll-behavior:contain}
 .tfDialog[open],.tfPicker[open]{animation:tfPageEnter .2s ease-out}
 .tfDialog::backdrop,.tfPicker::backdrop{background:color-mix(in srgb,var(--text) 8%,transparent)}
-.nativeMac .tfDialog,.nativeMac .tfPicker,.tfDialog.tfNativeMacDialog,.tfPicker.tfNativeMacDialog{top:40px;height:calc(100dvh - 40px)}
-.tfDialogContent{padding:32px clamp(24px,4vw,56px);min-height:100%;box-sizing:border-box}
+.tfDialogContent{padding:24px;min-height:0;box-sizing:border-box}
 .tfDialogContent>header{position:sticky;top:-32px;z-index:2;background:var(--surface);padding:16px 0;margin-bottom:24px}
 .tfDialogLead{max-width:70ch}
 .tfDetailBody{align-content:start;gap:24px}
@@ -682,7 +676,7 @@ to{transform:translate(0)}
 }
 @media(prefers-reduced-motion:reduce){.tfDialog[open],.tfPicker[open]{animation:none}
 }
-@media(max-width:700px){.tfDialog,.tfPicker{inset:0;margin:0;width:100vw;height:100dvh}
+@media(max-width:700px){
 .tfDialogContent{padding:24px 20px}
 .tfDialogContent>header{top:-24px}
 .tfKeyManage{bottom:0;flex-wrap:wrap}
@@ -810,39 +804,21 @@ to{transform:translate(0)}
 .tfDialogHeaderActions,.tfDetailManage,.tfAccountManage{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .tfAccountTop{flex-wrap:wrap}
 .tfAccountManage{margin-left:auto}
-.tfDialog.tfSettingsDetail{inset:0;margin:0;width:100vw;height:100dvh;border:0;border-radius:0;animation:none!important}
-.tfDialog.tfSettingsDetail.tfNativeMacDialog{top:40px;height:calc(100dvh - 40px)}
-.tfSettingsDetail .tfDialogContent{max-width:1120px;margin:0 auto;padding:24px 32px 40px}
-.tfSettingsDetail .tfDialogContent>header{top:-24px;margin-bottom:24px;gap:20px}
-.tfSettingsDetail .tfDialogContent>header h2{font-size:20px}
-.tfSettingsDetail .tfDetailManage p{margin:0;font-size:12px}
 .tfConnectionModels{margin-top:8px}
 .tfConnectionModels h3{font-size:14px;margin:0}
-.tfSettingsDetail .tfKeyModels{padding:0;margin:16px 0;list-style:none;display:grid;gap:8px}
-.tfSettingsDetail .tfKeyModels>li{display:flex;align-items:center;gap:16px;padding:12px 0;border:0}
-.tfSettingsDetail .tfKeyModels .tfDragTitle{flex:1;min-width:0;margin:0}
-.tfSettingsDetail .tfKeyModels strong{font-size:13px;overflow-wrap:anywhere}
 .tfAccountModelDetail .tfAccountModels{border:0;margin:0;padding:0}
 .tfAccountModelDetail .tfAccountModels ul{max-height:none;overflow:visible}
 .tfAccountModelDetail .tfAccountModels li.tfDragRow{display:flex;align-items:center;gap:12px;border:0;padding:12px 0}
 .tfAccountModelDetail .tfAccountModels li strong{flex:1;min-width:0;font-size:13px;overflow-wrap:anywhere}
-.tfSettingsDetail .tfDetailTabs{border:0;margin-bottom:24px}
-.tfSettingsDetail .tfModelsHead{margin-bottom:12px}
-.tfSettingsDetail .tfModelsHead p{margin:0}
-.tfSettingsDetail .tfDetailBody{display:grid;gap:20px}
 .tfProviderTitle{flex-wrap:wrap}
-@media(max-width:700px){.tfSettingsDetail .tfDialogContent{padding:20px 16px}
-.tfSettingsDetail .tfDialogContent>header{top:-20px;align-items:flex-start;flex-wrap:wrap}
+@media(max-width:700px){
 .tfDialogHeaderActions{margin-left:auto}
 .tfAccountManage,.tfDetailManage{gap:8px}
 }
-.tfPicker{inset:0;margin:0;width:100vw;height:100dvh;animation:none!important}
 .tfPicker[open]{animation:none}
-.tfPicker.tfNativeMacDialog{top:40px;height:calc(100dvh - 40px)}
-.tfPicker>header,.tfPicker .tfPickBody,.tfPickerFooter{padding-left:max(20px,calc((100vw - 1056px)/2));padding-right:max(20px,calc((100vw - 1056px)/2))}
-.tfPicker>.tfSearch{margin-left:max(20px,calc((100vw - 1056px)/2));margin-right:max(20px,calc((100vw - 1056px)/2))}
+
+
 .tfAccountTop>.tfRowText{flex:0 1 auto}
-.tfSettingsDetail .tfDialogHeaderActions{flex-shrink:0}
 .tfAccountManage .toggle{white-space:nowrap}
 .tfAgentColumns{align-items:start}
 .tfHeatmap button.hoverWeek{outline:2px solid var(--accent);outline-offset:1px;box-shadow:0 0 0 3px #2563eb18}
@@ -934,9 +910,7 @@ to{transform:translate(0)}
 .tfAccountColumns .tfCatalogModelName{overflow:hidden;min-width:0;max-height:none}
 .tfAccountColumns .tfQuotaSide .quotaWindow{display:flex!important;visibility:visible!important}
 .tfAccountColumns .quotaWindowDetails b,.tfAccountColumns .quotaWindowDetails small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* Desktop sheets leave the previous page visible and keep their own scroll. */
-.tfDialog,.tfDialog.tfSettingsDetail,.tfPicker{inset:0 0 0 auto;width:min(760px,58vw);height:100dvh;max-width:none;max-height:none;margin:0;border:0;border-left:1px solid var(--line);border-radius:0;animation:none!important;padding:24px}
-.tfDialog.tfNativeMacDialog,.tfPicker.tfNativeMacDialog{top:40px;height:calc(100dvh - 40px)}
+
 .tfDialog::backdrop,.tfPicker::backdrop{background:#17243b08}
 .tfPicker .tfPickOptions{grid-template-columns:minmax(0,1fr)}
 .tfRepairHead .tfModelChip{overflow:hidden;text-overflow:ellipsis;display:block}
@@ -952,7 +926,7 @@ to{transform:translate(0)}
 .tfRepairModelOptions button[aria-pressed=true]{color:var(--accent);background:var(--accent-soft)}
 .tfRepairModelMenu .tfHint{padding:12px}
 @media(max-width:950px){.tfAgentColumns.hasLogin,.tfAgentColumns.hasLogin.active-accounts,.tfAgentColumns.hasLogin.active-models,.tfAccountColumns,.tfAccountColumns.active-quota,.tfAccountColumns.active-models{grid-template-columns:minmax(0,1fr)}}
-@media(max-width:700px){.tfDialog,.tfDialog.tfSettingsDetail,.tfPicker{width:100vw}.tfRepairModelMenu{max-width:calc(100vw - 24px)}}
+@media(max-width:700px){.tfRepairModelMenu{max-width:calc(100vw - 24px)}}
 /* Gateway cards pack naturally; metadata and actions each keep their own space. */
 .tfGatewaySection .tfLines{align-content:start;grid-auto-rows:max-content;gap:8px}
 .tfGatewaySection .tfDragRow .tfLine{grid-template-columns:20px minmax(0,1fr) auto;align-items:center;padding:8px;gap:8px}
@@ -960,8 +934,7 @@ to{transform:translate(0)}
 .tfGatewaySection .tfRowText{flex:1;min-width:0;line-height:1.5}
 .tfGatewaySection .tfActions{grid-column:auto;margin-left:0;padding:0;gap:12px;white-space:nowrap}
 .tfGatewaySection .tfActions button{min-height:30px;padding:4px 6px}
-/* Restart is a short confirmation popup, independent of the detail sheets. */
-.tfDialog.tfRestartDialog,.tfDialog.tfRestartDialog.tfNativeMacDialog{inset:0;margin:auto;width:min(440px,calc(100vw - 32px));height:fit-content;max-height:calc(100dvh - 64px);padding:0;border:1px solid var(--line);border-radius:16px}
+
 .tfRestartDialog .tfDialogContent{min-height:0;padding:24px}
 .tfRestartDialog .tfDialogContent>header{position:static;margin-bottom:16px;padding:0}
 .tfRestartDialog .tfDialogContent>header h2{font-size:16px}

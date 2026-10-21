@@ -67,6 +67,16 @@ it('checks the socket peer rather than forwarded headers and normalizes mapped a
   expect((await access.app.inject({ url: '/v1/models', remoteAddress: '192.168.1.24', headers: { ...headers, 'x-forwarded-for': '192.168.1.23', forwarded: 'for=192.168.1.23' } })).statusCode).toBe(403);
 });
 
+it('keeps source IP restrictions separate for each exported key',async()=>{
+ const {access,keys,save}=await setup();await save(true,await freePort());
+ const a=await keys.create(gatewayKeyInput.parse({name:'a',access:'lan',models:['codex/test'],allowedIPs:['192.168.1.23']}),true);
+ const b=await keys.create(gatewayKeyInput.parse({name:'b',access:'lan',models:['codex/test']}),true);
+ const call=(apiKey:string,remoteAddress:string)=>access.app.inject({url:'/v1/models',remoteAddress,headers:{authorization:`Bearer ${apiKey}`,'x-forwarded-for':'192.168.1.23'}});
+ expect((await call(a.apiKey,'::ffff:192.168.1.23')).statusCode).toBe(200);
+ expect((await call(a.apiKey,'192.168.1.24')).statusCode).toBe(403);
+ expect((await call(b.apiKey,'192.168.1.24')).statusCode).toBe(200);
+});
+
 it('persists explicit settings, supports port changes and re-enable, and starts the saved entrance on restart', async () => {
   const { root, access, keys, headers, save } = await setup();
   const first = await freePort(), second = await freePort();

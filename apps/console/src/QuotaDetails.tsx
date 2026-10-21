@@ -13,7 +13,9 @@ const resetLabel = (iso: string,concise=false) => {
 };
 
 export function quotaErrorMessage(error='') {
- if(/\b(?:401|403)\b|授权.*(?:失效|过期)|登录.*过期/i.test(error))return '登录状态已失效，请重新授权后刷新额度。';
+ if(/invalid_grant|refresh_token_(?:revoked|reused|expired)|授权.*(?:失效|过期)|登录.*(?:失效|过期)/i.test(error))return '登录授权已失效，请重新授权。';
+ if(/\b401\b/.test(error))return '额度查询未通过认证，可刷新或重新授权。';
+ if(/\b403\b/.test(error))return '额度查询权限受限，请检查账号权限。';
  if(/\b429\b|请求过于频繁/i.test(error))return '查询太频繁，请稍后刷新额度。';
  if(/\b5\d\d\b|网络|连接|超时|timeout|fetch failed|ECONN|ENOTFOUND/i.test(error))return '网络暂时不稳定，额度更新失败，请稍后刷新。';
  return '暂时无法更新额度，请稍后刷新。';

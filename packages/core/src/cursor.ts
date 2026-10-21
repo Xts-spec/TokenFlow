@@ -84,7 +84,7 @@ class CursorAccount {
  snapshot():{accounts:LocalAccount[];models:LocalModel[];login?:CursorLogin;quotas:Record<string,AccountQuota>}{
   const c=this.credential;const expired=!!c?.apiKeyExpiresAtMs&&c.apiKeyExpiresAtMs<=Date.now();const enabled=!!c&&!c.disabled&&!expired;
   const models=enabled&&Date.now()-this.catalogVerifiedAt<15*60000?this.models.map(m=>({id:`cursor/${m.id}`,provider:'cursor' as const,displayName:m.displayName,capabilities:{text:true,tools:true,images:false}})):[];
-  return {accounts:c?[{id:this.id!,provider:'cursor',label:c.email||`Cursor SDK 账号 ${this.id!.slice(0,8)}`,status:expired?'授权已过期':this.catalogStatus==='loading'?'模型同步中':this.error?(this.models.length?'使用上次模型目录':'模型同步失败'):'active',modelError:this.error,disabled:c.disabled,unavailable:expired,models:models.map(m=>m.id)}]:[],models,login:this.login,
+  return {accounts:c?[{id:this.id!,provider:'cursor',label:c.email||`Cursor SDK 账号 ${this.id!.slice(0,8)}`,status:expired?'授权已过期':this.catalogStatus==='loading'?'模型同步中':this.error?(this.models.length?'使用上次模型目录':'模型同步失败'):'active',modelError:this.error,disabled:c.disabled,unavailable:expired,authenticationRequired:expired,models:models.map(m=>m.id)}]:[],models,login:this.login,
    quotas:c?{[this.id!]:this.quota&&this.quota.accountId===this.id?this.quota:{accountId:this.id!,provider:'cursor' as const,status:'ok' as const,observedAt:this.observedAt,windows:[],note:'正在查询 Cursor 官方用量与额度…'}}:{}};
  }
  assertSource(id:string,model:string){if(!this.owns(id)||!this.snapshot().models.some(m=>m.id===model))throw failure('Cursor 账号或模型当前不可用。',409);return `cursor:${id}`;}

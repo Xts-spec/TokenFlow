@@ -35,6 +35,7 @@ export function sourceSelectionState(local:LocalAgentSnapshot,selection:{sourceI
 export function sourceSelectionNotice(local:LocalAgentSnapshot,selections:readonly {sourceId:string;model:string}[],sources:AvailableSourceModels=sourceOptions(local)){
  const states=selections.map(choice=>sourceSelectionState(local,choice,sources));
  if(states.includes('loading'))return '正在加载账号授权与模型列表，已保留所选模型。';
- if(states.includes('unknown'))return '暂时无法确认部分来源的模型列表，已保留选择，可稍后刷新。';
+ // A pending catalog alone does not need a persistent warning.
+ if(states.includes('unknown'))return '';
  return '';
 }

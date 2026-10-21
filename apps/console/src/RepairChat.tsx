@@ -1,7 +1,8 @@
+import {useDialogDismiss} from './dialog-dismiss';
 import { apiModelRoute } from '../../shared/api-endpoint';
 import type {MaintenanceContext,MaintenanceConversation} from '../../../packages/core/src/maintenance-conversations';
 import {repairPages,repairAgents,repairScopeLabel,repairSuggestions,repairContextForAgent,repairSuggestionPrompt,type RepairPage} from './repair-context';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { LocalAgentSnapshot } from '../../../packages/core/src/cliproxy';
 import type { MaintenanceChain, MaintenanceReadiness, MaintenanceSelection } from '../../../packages/core/src/gateway-maintenance';
 import type { RepairProposal } from '../../../packages/core/src/maintenance-approval';
@@ -21,10 +22,10 @@ const proposalStates:Record<string,string>={reviewing:'审核中…',executing:'
 const call=<T=Snapshot,>(path:string,body:unknown={},method='POST')=>requestJSON<T>(path,{method,headers:{'content-type':'application/json'},body:JSON.stringify(body)});
 const get=<T=Snapshot,>(path:string)=>requestJSON<T>(path);
 
-/** Resident bottom-right chat: hiding it keeps the conversation; a new session id starts a fresh one. */
+/** Centered repair conversation; closing it keeps the conversation until a new session starts. */
 export function RepairChat({local,session,selectedAgent,page='agents',selectionContext,range,accountContext,open,onToggle,onNew}:{page?:RepairPage;selectionContext?:MaintenanceContext;range?:MaintenanceContext['range'];accountContext?:{provider?:string;sourceId?:string};local:LocalAgentSnapshot;session?:RepairSession;selectedAgent?:string;open:boolean;onToggle:(open:boolean)=>void;onNew:()=>void}){
  const log=useRef<HTMLDivElement>(null);
- const panel=useRef<HTMLElement>(null);const modelButton=useRef<HTMLButtonElement>(null);
+ const panel=useRef<HTMLDialogElement>(null);const modelButton=useRef<HTMLButtonElement>(null);
  const [state,setState]=useState<Snapshot>({status:'idle',messages:[]});const [plan,setPlan]=useState<Plan>();
  const [prompt,setPrompt]=useState('');const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [picking,setPicking]=useState(false);
  const [ready,setReady]=useState(true);
@@ -62,14 +63,12 @@ export function RepairChat({local,session,selectedAgent,page='agents',selectionC
  },[session?.id]);
  useEffect(()=>{if(open)log.current?.scrollTo({top:log.current.scrollHeight,behavior:'smooth'});},[open,state.messages.length,state.liveText,state.proposal?.status]);
 
- useEffect(()=>{
-  if(!open){setPicking(false);return;}
-  const outside=(event:PointerEvent)=>{
-   if(!(event.target instanceof Element)||panel.current?.contains(event.target)||event.target.closest('.tfRepairModelMenu,dialog[open]')||document.querySelector('dialog[open]'))return;
-   setPicking(false);onToggle(false);
-  };
-  document.addEventListener('pointerdown',outside);return()=>document.removeEventListener('pointerdown',outside);
- },[open,onToggle]);
+ const dismiss=useDialogDismiss(()=>{if(picking)setPicking(false);else onToggle(false);});
+ useLayoutEffect(()=>{
+  const dialog=panel.current;if(!dialog||!open){setPicking(false);return;}
+  const opener=document.activeElement instanceof HTMLElement?document.activeElement:null;
+  dialog.showModal();return()=>{if(dialog.open)dialog.close();if(opener?.isConnected)opener.focus({preventScroll:true});};
+ },[open]);
 
  const thinking=state.status==='running';const checking=state.readiness?.status==='checking';
  const proposalBusy=['reviewing','executing'].includes(state.proposal?.status??'');
@@ -117,8 +116,8 @@ export function RepairChat({local,session,selectedAgent,page='agents',selectionC
  }}><optgroup label="本地 Agent">{Object.entries(targetNames).map(([id,name])=><option key={id} value={`agent:${id}`}>{name}</option>)}</optgroup><optgroup label="TokenFlow">{Object.entries(repairPages).filter(([id])=>id!=='agents').map(([id,name])=><option key={id} value={id}>{id==='accounts'&&providerLabel?`${providerLabel} 账号授权`:name}</option>)}</optgroup></select><Icon name="chevron" size={12}/></span>;
  const shownMessages=past?.messages??state.messages;
  return <>
-  {!open&&<button className={`tfRepairFab ${attention?'busy':''}`} aria-label="打开维修师傅" aria-expanded={false} aria-controls="tf-repair-panel" onClick={()=>onToggle(true)}><span className="tfRepairFabLabel" aria-hidden="true">维修师傅</span><Icon name="wrench" size={18}/></button>}
-  <section id="tf-repair-panel" ref={panel} className="tfRepair" hidden={!open} aria-labelledby="repair-title" onKeyDown={event=>{if(event.key==='Escape'&&!picking)onToggle(false);}}>
+  {!open&&<button className={`tfRepairFab ${attention?'busy':''}`} aria-label="打开维修师傅" title="维修师傅" aria-expanded={false} aria-controls="tf-repair-panel" onClick={()=>onToggle(true)}><span className="tfRepairFabLabel" aria-hidden="true">维修师傅</span><Icon name="wrench" size={18}/></button>}
+  <dialog id="tf-repair-panel" ref={panel} className="tfRepair" aria-labelledby="repair-title" onCancel={event=>{event.preventDefault();if(picking)setPicking(false);else onToggle(false);}} {...dismiss}>
    <header className="tfRepairHead">
     <div className="tfRepairIdentity"><h2 id="repair-title">维修师傅</h2>
      <button ref={modelButton} aria-label="选择维修模型" title={selected?modelLabel(local,selected.model):'选择维修模型'} aria-haspopup="dialog" aria-expanded={picking} className={`tfModelChip ${selected?'':'warn'}`} disabled={busy||thinking||checking||proposalBusy} onClick={()=>setPicking(value=>!value)}><span>{selected?modelLabel(local,selected.model):'选择维修模型'}</span><Icon name="chevron" size={12}/></button>
@@ -173,7 +172,7 @@ export function RepairChat({local,session,selectedAgent,page='agents',selectionC
     {thinking?<button type="button" onClick={()=>void act(async()=>{setState(await call<Snapshot>('/api/maintenance/stop'));})}>停止</button>
     :<button className="primary" disabled={!canSend||!prompt.trim()} aria-label="发送"><Icon name="send" size={16}/></button>}
    </form></>}
-  </section>
+  </dialog>
   {open&&picking&&<RepairModelMenu local={local} anchor={modelButton} current={selected} isDisabled={directOnly} onPick={pick} onClose={()=>setPicking(false)}/>}
  </>;
 }

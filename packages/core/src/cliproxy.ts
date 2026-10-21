@@ -44,7 +44,7 @@ const accountSchema = z.object({
 const modelSchema = z.object({id: z.string(), display_name: z.string().optional(), type: z.string().optional(), owned_by: z.string().optional(), supportedInputModalities:z.array(z.string()).optional()});
 const apiCallSchema = z.object({status_code: z.number().int(), header: z.record(z.array(z.string())).default({}), body: z.string().default('')});
 export function revokedCredential(file:{status?:string;status_message?:string}){return file.status==='error'&&/\b(?:invalid_grant|refresh_token_revoked|refresh_token_reused|refresh_token_expired)\b/i.test(file.status_message??'');}
-export type LocalAccount = {id: string; provider: string; label: string; nativeClients?:string[]; status: string; disabled: boolean; unavailable: boolean; retryable?:boolean; isDuplicate?: boolean;preferredCredentialId?:string;credentialCount?:number; modelError?:string; models?: string[]};
+export type LocalAccount = {id: string; provider: string; label: string; nativeClients?:string[]; status: string; disabled: boolean; unavailable: boolean; retryable?:boolean; authenticationRequired?:boolean; isDuplicate?: boolean;preferredCredentialId?:string;credentialCount?:number; modelError?:string; models?: string[]};
 /** `provider` 为承接该模型的登录 Provider；未知类型（如 Gemini API Key）为空。 */
 // Unknown capabilities remain unknown; never infer vision from a model name.
 function modelImageCapabilities(model:z.infer<typeof modelSchema>,provider:string){
@@ -342,18 +342,8 @@ export class CLIProxyManager {
     try {
       const result = z.object({files: z.array(accountSchema)}).parse(await this.request('/auth-files'));
       if(providerScope)result.files=result.files.filter(file=>(file.provider??file.type)===providerScope);
-      // Only explicit terminal OAuth refresh errors prove revocation; quota 401/403 and duplicate labels do not.
-      const removed=new Set<string>();
-      for(const file of result.files.filter(revokedCredential)){
-        if(file.name.includes('/')||file.name.includes('\\'))continue;
-        try{
-          const raw=await readConfig(join(this.root,'cliproxy','auth',file.name));if(raw===null)continue;
-          const archive=join(this.root,'revoked-credentials');await mkdir(archive,{recursive:true,mode:0o700});await chmod(archive,0o700);
-          await writeFile(join(archive,`${createHash('sha256').update(file.name+raw).digest('hex')}.json`),raw,{mode:0o600});
-          await this.request(`/auth-files?name=${encodeURIComponent(file.name)}`,'DELETE');removed.add(file.name);
-        }catch{/* Keep the credential if archival or removal fails; never log its contents. */}
-      }
-      result.files=result.files.filter(file=>!removed.has(file.name)&&!file.runtime_only);
+      // Keep expired grants visible until the user confirms removal. Quota errors alone are not revocation.
+      result.files=result.files.filter(file=>!file.runtime_only);
       const retained=providerScope?this.accounts.filter(account=>account.provider!==providerScope):[];
       const retainedIDs=new Set(retained.map(account=>account.id));
       const names = new Map([...this.names].filter(([id])=>retainedIDs.has(id)));
@@ -381,6 +371,7 @@ export class CLIProxyManager {
         credentials.set(id,{raw:identity,modified:file.modtime});
         const expired=typeof identity.access_token==='string'&&!!identity.access_token&&credentialPreference(identity)[0]===0;
         const uid=credentialSubject(identity)??file.uid;
+        const authenticationRequired=expired||revokedCredential(file);
         let profileEmail=provider==='qoder'&&uid?qoderProfiles[uid]?.email:undefined;
         if(provider==='qoder'&&uid&&!credentialEmail(file.email)&&!credentialEmail(identity.email)&&file.auth_index!==undefined&&!file.disabled&&!expired){
           const checkedAt=qoderProfiles[uid]?.checkedAt??0;
@@ -407,7 +398,8 @@ export class CLIProxyManager {
           status: file.status ?? 'unknown',
           ...(provider==='doubao'?{modelError:'旧接入将豆包与 MarsCode 混用，现已停用；原记录保留。',models:[]}:{}),
           disabled: file.disabled ?? false,
-          unavailable: expired||file.unavailable||false,
+          unavailable: authenticationRequired||file.unavailable||false,
+          authenticationRequired,
           // Runtime errors/cooldowns are not revoked credentials. The sidecar owns their retry deadlines.
           retryable: !expired&&!file.disabled&&!revokedCredential(file)&&(Number.isFinite(Date.parse(file.next_retry_after??''))||(file.status==='error'&&!file.unavailable)),
         };
@@ -436,7 +428,7 @@ export class CLIProxyManager {
       const catalog = new Map<string, LocalModel>(providerScope?this.models.filter(model=>model.provider!==providerScope).map(model=>[model.id,model]):[]);
 
       // 1. 从每个已启用账号的凭据文件目录建立模型发现
-      await Promise.all(accounts.filter(a => !a.disabled && isLoginProvider(a.provider)&&(!providerScope||a.provider===providerScope)).map(async account => {
+      await Promise.all(accounts.filter(a => !a.disabled && !a.authenticationRequired && isLoginProvider(a.provider)&&(!providerScope||a.provider===providerScope)).map(async account => {
         const provider = account.provider as LoginProviderId;
         try {
           // Sidecar catalog states do not expose upstream HTTP status. Retry opaque
@@ -551,6 +543,7 @@ export class CLIProxyManager {
     // /models hides models during some cooldowns. An already scoped request must
     // still reach the pinned sidecar, which enforces retry deadlines and auth.
     if(this.state!=='running'||!account||account.disabled||(!retryKnownModel&&account.unavailable&&!account.retryable)||!account.models?.includes(model)||(!retryKnownModel&&!this.models.some(m=>m.id===model))||!authID)
+    if(account?.authenticationRequired)throw Object.assign(new Error('来源账号的登录授权已失效，请在账号授权中重新登录或确认移除。'),{statusCode:401,code:'source_auth_expired'});
       throw Object.assign(new Error('源账号或模型当前不可用，请刷新授权；不会切换到其他账号。'),{statusCode:409});
     return authID;
   }
@@ -661,6 +654,18 @@ export class CLIProxyManager {
     if (!name) throw new Error('账号已变更，请刷新账号列表');
     const records:Record<string,unknown>[]=[];
     for(const candidate of this.credentialGroups.get(id)??[id]){const name=this.names.get(candidate);if(name){const raw=await readConfig(join(this.root,'cliproxy','auth',name));if(raw)records.push(JSON.parse(raw));await this.request(`/auth-files?name=${encodeURIComponent(name)}`,'DELETE');}delete this.quotas[candidate];}
+  async removeExpiredAccount(id:string){
+    const previous=this.snapshot().accounts.find(a=>a.id===id);
+    if(previous&&isLoginProvider(previous.provider))await this.refreshAccounts(previous.provider,false);
+    const account=this.snapshot().accounts.find(a=>a.id===id);
+    if(!account?.authenticationRequired)throw Object.assign(new Error('此账号没有已确认失效的授权，请刷新后检查。'),{statusCode:409});
+    if(this.cursor.owns(id)){await this.cursor.remove(id);return this.snapshot();}
+    const expired=(this.credentialGroups.get(id)??[id]).filter(candidate=>this.accounts.find(a=>a.id===candidate)?.authenticationRequired);
+    const records:Record<string,unknown>[]=[];
+    for(const candidate of expired){const name=this.names.get(candidate);if(!name)continue;const raw=await readConfig(join(this.root,'cliproxy','auth',name));if(raw){records.push(JSON.parse(raw));const archive=join(this.root,'revoked-credentials');await mkdir(archive,{recursive:true,mode:0o700});await chmod(archive,0o700);await writeFile(join(archive,`${createHash('sha256').update(name+raw).digest('hex')}.json`),raw,{mode:0o600});}await this.request(`/auth-files?name=${encodeURIComponent(name)}`,'DELETE');delete this.quotas[candidate];}
+    if(records.length)await this.credentialHistory.forget(account.provider,records);
+    return this.refreshAccounts();
+  }
     if(records.length)await this.credentialHistory.forget(this.accounts.find(a=>a.id===id)!.provider,records);
     this.log(`已删除账号凭据：${name}`);
     return this.refreshAccounts();

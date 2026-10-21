@@ -316,15 +316,17 @@ it('retries failed namespace registration instead of caching it as successful',a
  await expect.poll(()=>manager.snapshot().models.map(m=>m.id),{timeout:5000}).toContain('codex/gpt-6-astra');
  expect(manager.snapshot().accountError).toBeUndefined();
 });
-it('archives and removes explicitly revoked credentials while retaining quota errors and duplicate valid accounts',async()=>{
+it('keeps explicitly revoked credentials visible for confirmation without treating quota errors as expired',async()=>{
  const {manager,root}=await setup();const {readFile,readdir,realpath}=await import('node:fs/promises');
  // safe credential reads reject symlink ancestors; use the canonical temp path.
  await mkdir(join(root,'cliproxy/auth'),{recursive:true});
  const files=[{name:'revoked.json',provider:'codex',email:'same@example.test',status:'error',status_message:'refresh_token_revoked'},{name:'valid.json',provider:'codex',email:'same@example.test',status:'active'},{name:'quota.json',provider:'codex',email:'quota@example.test',status:'error',status_message:'HTTP 401'}];
  await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify(files));await writeFile(join(root,'cliproxy/auth/revoked.json'),'{"refresh_token":"fixture-secret"}');
  const canonical=await realpath(root);const clean=new CLIProxyManager(canonical,binary,'fixture-key',manager.port);cleanup.push(()=>clean.shutdown());await clean.start();
- expect(clean.snapshot().accounts.map(a=>a.label).sort()).toEqual(['quota@example.test','same@example.test']);
- const archive=await readdir(join(root,'revoked-credentials'));expect(archive).toHaveLength(1);expect(await readFile(join(root,'revoked-credentials',archive[0]),'utf8')).toBe('{"refresh_token":"fixture-secret"}');expect(JSON.stringify(clean.snapshot())).not.toContain('fixture-secret');
+ expect(clean.snapshot().accounts).toHaveLength(3);
+ const revoked=clean.snapshot().accounts.find(a=>a.authenticationRequired)!;expect(revoked).toBeDefined();
+ expect(clean.snapshot().accounts.find(a=>a.label==='quota@example.test')?.authenticationRequired).not.toBe(true);
+ expect(await readFile(join(root,'cliproxy/auth/revoked.json'),'utf8')).toBe('{"refresh_token":"fixture-secret"}');expect(JSON.stringify(clean.snapshot())).not.toContain('fixture-secret');
 });
 
 it('does not reimport a browser-authorized Codex account under a second filename on startup',async()=>{

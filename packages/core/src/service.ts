@@ -1,3 +1,4 @@
+import {sourceFailure} from './source-failure.js';
 import {providerUsage} from './gateway-observation.js';
 import {CursorLocalLogin} from './cursor-local.js';
 import { apiModelRoute } from '../../../apps/shared/api-endpoint.js';
@@ -15,7 +16,7 @@ import {CodexThreadMigration} from './codex-thread-migration.js';
 import {PiTerminalLifecycle} from './pi-terminal-lifecycle.js';
 import {ClaudeTerminalLifecycle} from './claude-terminal-lifecycle.js';
 import {ClaudeDesktopConnections,type ClaudeDesktopOptions} from './claude-desktop.js';
-import {claudeDesktopModelLimit} from '../../../apps/shared/claude-desktop-models.js';
+import {claudeDesktopModelLimit,claudeBuiltInFamily} from '../../../apps/shared/claude-desktop-models.js';
 import {removeKnownGatewayHelpNotice} from './gateway-help-notice.js';
 import { LocalMaintenance } from './local-maintenance.js';
 import { ApiSources, parseApiSourceInput, apiModelID } from './api-sources.js';
@@ -104,6 +105,12 @@ export async function createDesktopService(options:ServiceOptions) {
     if(apiSources.has(id)){if(proxy.snapshot().state!=='running')throw Object.assign(new Error('网关未启动'),{statusCode:409});apiSources.assert(id,model);if(!proxy.apiModelAvailable(model))throw new RunnerCoreError('API 模型路由暂不可用，请重新保存来源或重启网关。',{code:'api_model_unavailable',statusCode:409});return '';}
     return proxy.sourceAuth(id,model,retryKnownModel);
   };
+  const failureRefreshes=new Map<string,number>();
+  const refreshFailedSource=(id:string)=>{
+    const account=proxy.snapshot().accounts.find(a=>a.id===id);
+    if(!account||account.disabled||account.authenticationRequired||!isLoginProvider(account.provider)||Date.now()-(failureRefreshes.get(id)??0)<60000)return;
+    failureRefreshes.set(id,Date.now());void proxy.refreshAccounts(account.provider,false).catch(()=>{});
+  };
   // Saving a pinned selection does not require a successful live availability check.
   // Keep source ownership validation separate from execution-time authorization.
   const validateSavedSelections=async(selections:ModelSelection[],retained:ModelSelection[]=[])=>{
@@ -178,7 +185,7 @@ export async function createDesktopService(options:ServiceOptions) {
       if(localRun.active&&localRun.runs[0]?.kind==='upgrade'&&!['/api/maintenance/stop','/api/maintenance/local/stop'].includes(route))return reply.code(409).send({error:'升级正在执行，请等待完成后启动维修或修改权限。'});
     }
     const backgroundRefresh=route==='/api/local-agent/:action'&&['refresh','quota'].includes((req.params as {action:string}).action);
-    if(!backgroundRefresh&&((req.method==='PUT'&&(route==='/api/settings'||route==='/api/local-agent/gateway'||route==='/api/sources/:id'))||(req.method==='DELETE'&&(route==='/api/local-agent/accounts/:id'||route==='/api/sources/:id'||route==='/api/maintenance/selection'))||(req.method==='POST'&&['/api/maintenance/local/upgrade','/api/sources','/api/sources/quick','/api/sources/:id/models','/api/sources/:id/check','/api/native-accounts/:provider/switch','/api/native-accounts/:provider/restore','/api/codex-accounts/switch','/api/codex-accounts/restore','/api/claude-desktop/connect','/api/claude-desktop/restore','/api/claude-desktop/official','/api/claude-desktop/restart','/api/a2a/connect','/api/a2a/codex-migration/restore','/api/a2a/program','/api/a2a/restart','/api/a2a/restore','/api/a2a/delete','/api/a2a/import','/api/providers/probe','/api/local-agent/:action','/api/local-agent/login/:action','/api/local-agent/accounts/:id','/api/local-agent/import-local/:provider'].includes(route??'')))) {
+    if(!backgroundRefresh&&((req.method==='PUT'&&(route==='/api/settings'||route==='/api/local-agent/gateway'||route==='/api/sources/:id'))||(req.method==='DELETE'&&(route==='/api/local-agent/accounts/:id'||route==='/api/local-agent/accounts/:id/expired'||route==='/api/sources/:id'||route==='/api/maintenance/selection'))||(req.method==='POST'&&['/api/maintenance/local/upgrade','/api/sources','/api/sources/quick','/api/sources/:id/models','/api/sources/:id/check','/api/native-accounts/:provider/switch','/api/native-accounts/:provider/restore','/api/codex-accounts/switch','/api/codex-accounts/restore','/api/claude-desktop/connect','/api/claude-desktop/restore','/api/claude-desktop/official','/api/claude-desktop/restart','/api/a2a/connect','/api/a2a/codex-migration/restore','/api/a2a/program','/api/a2a/restart','/api/a2a/restore','/api/a2a/delete','/api/a2a/import','/api/providers/probe','/api/local-agent/:action','/api/local-agent/login/:action','/api/local-agent/accounts/:id','/api/local-agent/import-local/:provider'].includes(route??'')))) {
       if(localMaintenance.snapshot().active)return reply.code(409).send({error:'本地诊断或升级正在运行，请等待完成后修改配置。'});
       if(mutationOwner)return reply.code(409).send({code:'configuration_busy',error:'正在等待另一个启动或配置操作完成，尚未应用本次更改。'});
       mutationOwner=req.id;
@@ -239,8 +246,8 @@ export async function createDesktopService(options:ServiceOptions) {
   const cursorNativeUsage=await CursorNativeUsage.open(root,()=>proxy.cursor.nativeUsageReaders());
   // A managed Agent uses the model selected here even if an existing conversation retains an older model ID.
   // Bind by saved connection key, never by its editable display name or by an arbitrary single-model key.
-  const fixedRoutes=new Map<string,{target:Target|'claude-desktop';sourceId:string;model:string;selections?:ModelSelection[];modelAliases?:Record<string,string>}>((await connections.status()).flatMap(t=>t.connection?.state==='applied'?[[t.connection.keyId,{target:t.id,sourceId:t.connection.sourceId,model:t.connection.model,selections:t.connection.selections,modelAliases:t.connection.modelAliases}] as const]:[]));
-  const desktopRoute=await claudeDesktop.route().catch(()=>null);if(desktopRoute?.keyId&&desktopRoute.selections[0])fixedRoutes.set(desktopRoute.keyId,{target:'claude-desktop',...desktopRoute.selections[0],selections:desktopRoute.selections,modelAliases:desktopRoute.modelAliases});
+  const fixedRoutes=new Map<string,{target:Target|'claude-desktop';sourceId:string;model:string;fastModel?:string;selections?:ModelSelection[];modelAliases?:Record<string,string>}>((await connections.status()).flatMap(t=>t.connection?.state==='applied'?[[t.connection.keyId,{target:t.id,sourceId:t.connection.sourceId,model:t.connection.model,fastModel:t.connection.fastModel,selections:t.connection.selections,modelAliases:t.connection.modelAliases}] as const]:[]));
+  const desktopRoute=await claudeDesktop.route().catch(()=>null);if(desktopRoute?.keyId&&desktopRoute.selections[0])fixedRoutes.set(desktopRoute.keyId,{target:'claude-desktop',...desktopRoute.selections[0],fastModel:desktopRoute.fastModel,selections:desktopRoute.selections,modelAliases:desktopRoute.modelAliases});
   const codexContext=new CodexContext(root,connections.paths.codex,gatewayContext);
   const codexContextScopes=async()=>((await connections.status()).find(t=>t.id==='codex')?.backups??[]).flatMap(record=>(record.selections??[record]).map(item=>({owner:record.keyId,source:item.sourceId,model:item.model})));
   const codexLifecycle=new CodexSwitchLifecycle(()=>options.agentProcesses?options.agentProcesses('codex'):agentProcesses('codex'));
@@ -416,7 +423,7 @@ export async function createDesktopService(options:ServiceOptions) {
     try{
       const local=await localSnapshot(),catalog=local.models;
       const record=await connections.apply({...input,modelLabels:Object.fromEntries(selections.map(item=>[item.model,modelLabel(catalog,item.model,local.apiSources)])),keyId:created.key.id,key:created.apiKey,origin});
-      fixedRoutes.set(record.keyId,{target:record.target,sourceId:record.sourceId,model:record.model,selections:record.selections,modelAliases:record.modelAliases});
+      fixedRoutes.set(record.keyId,{target:record.target,sourceId:record.sourceId,model:record.model,fastModel:record.fastModel,selections:record.selections,modelAliases:record.modelAliases});
       if(input.replaceId){const previous=(await connections.status()).flatMap(t=>t.backups).find(r=>r.id===input.replaceId);if(previous){fixedRoutes.delete(previous.keyId);if(gatewayKeys.list().some(k=>k.id===previous.keyId))await gatewayKeys.remove(previous.keyId);}}
       if(input.target==='codex')await codexThreads.migrate(input.model,selections.map(item=>item.model));
       const verification=await connections.review(record.id);if(!verification.checks.every(c=>c.ok))throw new Error('写入后的配置复查未通过，接入记录和备份已保留，请生成维修方案。');return {...record,verification};
@@ -443,7 +450,7 @@ export async function createDesktopService(options:ServiceOptions) {
   const proposeRestore=async(id:string,chain?:MaintenanceChain)=>{
     const target=(await connections.status()).find(t=>t.backups.some(b=>b.id===id));
     if(!target||chain&&(target.id!==chain.target||chain.connectionId&&chain.connectionId!==id))throw new Error('只能还原当前选定链路的接入记录。');
-    const code=JSON.stringify({operation:'restore_connection',id,target:target.id,path:target.path,revision:target.revision,runningProcesses:target.pids,allowRunning:true,restore:'停用网关并使用官方或客户端默认配置，撤销对应 Key；保留登录、无关设置和备份',after:'复查配置，重启目标 Agent'},null,2);
+    const code=JSON.stringify({operation:'restore_connection',id,target:target.id,path:target.path,revision:target.revision,runningProcesses:target.pids,allowRunning:true,restore:target.id==='codex'||target.id==='claude'?'切回官方服务并撤销网关 Key；保留登录、无关设置和备份':'只移除 TokenFlow 网关模型并撤销对应 Key；保留其他 API、账号和备份',after:'复查配置，重启目标 Agent'},null,2);
     return approval.propose(`停用 ${target.name} 网关`,code,()=>restoreConnection(id,{revision:target.revision,allowRunning:true}));
   };
   const readMaintenanceUsage=async(context:MaintenanceContext,query:MaintenanceUsageQuery={})=>{
@@ -592,7 +599,7 @@ export async function createDesktopService(options:ServiceOptions) {
       const credential=input.sourceId?nativeCredentialSchema.parse(await proxy.nativeCredential('claude',input.sourceId,input.model)):undefined;
       if(credential&&!(credential.scopes??credential.scope?.split(/\s+/)??['user:inference']).includes('user:inference'))throw Object.assign(new Error('账号没有 Claude Code 推理权限，请重新授权。'),{statusCode:409});
       const target=(await connections.status()).find(t=>t.id==='claude');
-      if(credential)await nativeAccounts.claude.preflightSwitch(input,credential,target?.connection?claudeSettingsState(await connections.restoration(target.connection.id)):undefined);
+      if(credential)await nativeAccounts.claude.preflightSwitch(input,credential,target?.connection?claudeSettingsState(await connections.restoration(target.connection.id,'native')):undefined);
       else await nativeAccounts.claude.preflightRestore(input.revision);
       const work=async()=>{
         const state=await nativeStatus('claude');if(state.revision!==input.revision||state.pids.length)throw Object.assign(new Error('Claude Code 登录或进程已变化，请退出其他会话后重试。'),{statusCode:409});
@@ -651,7 +658,7 @@ export async function createDesktopService(options:ServiceOptions) {
       const local=await localSnapshot();
       await claudeDesktop.connect({revision:input.revision,selections:input.selections,fastModel:input.fast?.model,origin:`http://${req.headers.host}`,keyId:created.key.id,key:created.apiKey,labels:Object.fromEntries(input.selections.map(s=>[s.model,modelLabel(local.models,s.model,local.apiSources)]))});saved=true;
       const applied=await claudeDesktop.route();
-      fixedRoutes.set(created.key.id,{target:'claude-desktop',...input.selections[0],selections:input.selections,modelAliases:applied?.modelAliases});
+      fixedRoutes.set(created.key.id,{target:'claude-desktop',...input.selections[0],fastModel:applied?.fastModel,selections:input.selections,modelAliases:applied?.modelAliases});
       if(prior.keyId){fixedRoutes.delete(prior.keyId);if(gatewayKeys.list().some(k=>k.id===prior.keyId))await gatewayKeys.remove(prior.keyId);}
     });}catch(error){const current=await claudeDesktop.status().catch(()=>null);if(!saved&&current?.keyId!==created.key.id)await gatewayKeys.remove(created.key.id);if(saved)throw Object.assign(new Error('Claude Desktop 模型配置已保存，重新打开未确认。请手动打开 Claude Desktop；原登录和恢复备份保留。'),{statusCode:409});throw error;}
     return {...await claudeDesktopStatus(),message:process.platform==='linux'?'配置已保存，请重新打开 Claude Desktop。':'Claude Desktop 已重新打开，请在新会话确认模型。'};
@@ -783,7 +790,9 @@ export async function createDesktopService(options:ServiceOptions) {
   app.get('/api/gateway-keys', async()=>({keys:gatewayKeys.list()}));
   const scopedInput = async (body: unknown, existingId?: string, modelOnly=false) => {
     const existing=existingId?gatewayKeys.list().find(key=>key.id===existingId):undefined;
-    const input = gatewayKeyInput.parse({...((existing)?{access:existing.access,agents:existing.agents,tokenLimit:existing.tokenLimit,sourceId:existing.sourceId,modelSources:existing.modelSources}:{}),...(typeof body==='object'&&body?body:{})});
+    const parsed=gatewayKeyInput.safeParse({...((existing)?{access:existing.access,allowedIPs:existing.allowedIPs,agents:existing.agents,tokenLimit:existing.tokenLimit,sourceId:existing.sourceId,modelSources:existing.modelSources}:{}),...(typeof body==='object'&&body?body:{})});
+    if(!parsed.success){if(parsed.error.issues.some(issue=>issue.path[0]==='allowedIPs'))throw new RunnerCoreError('来源 IP 请填写完整的 IPv4 或 IPv6 地址。',{statusCode:400,code:'invalid_source_ip'});throw parsed.error;}
+    const input=parsed.data;
     if(input.access==='lan'&&existing&&!existing.exported&&(!modelOnly||existing.sourceId||existing.modelSources))throw Object.assign(new Error('本地 Agent 的专用 Key 仅供本机使用，请在 API 代理中创建访问密钥。'),{statusCode:400});
     const previous = existingId ? gatewayKeys.list().find(key=>key.id===existingId)?.models ?? [] : [];
     const local=await localSnapshot();
@@ -804,14 +813,37 @@ export async function createDesktopService(options:ServiceOptions) {
     else if(pending.length)await validateSavedSelections(pending);
     return input;
   };
+  // Listener changes and key writes form one serialized operation. A failed bind must not leave an unseen key.
+  let keyAccessTask:Promise<unknown>=Promise.resolve();
+  const migrateLANPolicy=async()=>{
+    const current=access.snapshot();
+    if(!current.allowedIPs.length)return;
+    await gatewayKeys.inheritLANIPs(current.allowedIPs);
+    await access.update({enabled:current.enabled,port:current.port,allowedIPs:[]});
+  };
+  const changeExportedKey=<T>(needsLAN:boolean,work:()=>Promise<T>):Promise<T>=>{
+    const task=keyAccessTask.catch(()=>{}).then(async()=>{
+      if(needsLAN)await migrateLANPolicy();
+      const before=access.snapshot();let started=false;
+      if(needsLAN&&(!before.enabled||!before.running)){await access.update({enabled:true,port:before.port,allowedIPs:before.allowedIPs});started=true;}
+      let result:T;
+      try{result=await work();}catch(error){if(started&&!gatewayKeys.list().some(k=>k.exported&&k.enabled&&k.access==='lan'))await access.update({enabled:before.enabled,port:before.port,allowedIPs:before.allowedIPs}).catch(()=>{});throw error;}
+      if(!gatewayKeys.list().some(k=>k.exported&&k.enabled&&k.access==='lan')&&access.snapshot().enabled){const current=access.snapshot();await access.update({enabled:false,port:current.port,allowedIPs:current.allowedIPs});}
+      return result;
+    });keyAccessTask=task;return task;
+  };
   app.post('/api/gateway-keys', async(req,reply)=>{
-    const created=await gatewayKeys.create(await scopedInput(req.body),true);
-    const keyStored=options.secrets.persistent!==false;
-    if(keyStored)try{await options.secrets.set(`gateway-key-${created.key.id}`,created.apiKey);}catch{
-      await gatewayKeys.remove(created.key.id);
-      throw Object.assign(new Error('Key 未生成：系统加密存储不可用，请解锁后重试。'),{statusCode:409});
-    }
-    reply.header('cache-control','no-store');return {...created,keyStored};
+    const input=await scopedInput(req.body);
+    const result=await changeExportedKey(input.enabled&&input.access==='lan',async()=>{
+      const created=await gatewayKeys.create(input,true);
+      const keyStored=options.secrets.persistent!==false;
+      if(keyStored)try{await options.secrets.set(`gateway-key-${created.key.id}`,created.apiKey);}catch{
+        await gatewayKeys.remove(created.key.id);
+        throw Object.assign(new Error('Key 未生成：系统加密存储不可用，请解锁后重试。'),{statusCode:409});
+      }
+      return {...created,keyStored};
+    });
+    reply.header('cache-control','no-store');return {...result,gatewayAccess:access.snapshot()};
   });
   app.post('/api/gateway-keys/:id/reveal',async(req,reply)=>{
     const id=z.string().uuid().parse((req.params as {id:string}).id);
@@ -832,22 +864,22 @@ export async function createDesktopService(options:ServiceOptions) {
   };
   app.put('/api/gateway-keys/:id/models',async req=>{
     const id=z.string().uuid().parse((req.params as {id:string}).id);
-    const {selections,access}=z.object({selections:z.array(z.object({sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(3).max(300)}).strict()).max(2000),access:z.enum(['local','lan']).optional()}).strict().parse(req.body);
+    const {selections,access:keyAccess,allowedIPs}=z.object({selections:z.array(z.object({sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(3).max(300)}).strict()).max(2000),access:z.enum(['local','lan']).optional(),allowedIPs:gatewayKeyInput.shape.allowedIPs}).strict().parse(req.body);
     if(new Set(selections.map(item=>item.model)).size!==selections.length)throw Object.assign(new Error('同一模型只能选择一个来源账号'),{statusCode:400});
     return updateKey(id,async()=>{
       const existing=gatewayKeys.list().find(key=>key.id===id);
       if(!existing)throw Object.assign(new Error('Key 不存在'),{statusCode:404});
       if(!existing.exported&&(existing.sourceId||existing.modelSources))throw Object.assign(new Error('此 Key 由本地 Agent 或维修流程管理，请在对应入口修改模型。'),{statusCode:409});
-      const input=await scopedInput({name:existing.name,purpose:existing.purpose,enabled:existing.enabled,access:access??existing.access,sourceId:undefined,models:selections.map(item=>item.model),modelSources:Object.fromEntries(selections.map(item=>[item.model,item.sourceId]))},id,true);
-      return gatewayKeys.updateModels(id,input.models,input.modelSources??{},input.access);
+      const input=await scopedInput({name:existing.name,purpose:existing.purpose,enabled:existing.enabled,access:keyAccess??existing.access,allowedIPs:allowedIPs??existing.allowedIPs,sourceId:undefined,models:selections.map(item=>item.model),modelSources:Object.fromEntries(selections.map(item=>[item.model,item.sourceId]))},id,true);
+      return changeExportedKey(input.enabled&&input.access==='lan',()=>gatewayKeys.updateModels(id,input.models,input.modelSources??{},input.access,input.allowedIPs));
     });
   });
   app.put('/api/gateway-keys/:id', async req=>{
     const id=z.string().uuid().parse((req.params as {id:string}).id);
-    return updateKey(id,async()=>gatewayKeys.update(id,await scopedInput(req.body,id)));
+    return updateKey(id,async()=>{const input=await scopedInput(req.body,id);return changeExportedKey(input.enabled&&input.access==='lan',()=>gatewayKeys.update(id,input));});
   });
   app.post('/api/gateway-keys/:id/reset-usage',async req=>gatewayKeys.resetUsage(z.string().uuid().parse((req.params as {id:string}).id)));
-  app.delete('/api/gateway-keys/:id', async req=>{const id=z.string().uuid().parse((req.params as {id:string}).id);const result=await gatewayKeys.remove(id);await options.secrets.remove?.(`gateway-key-${id}`);return result;});
+  app.delete('/api/gateway-keys/:id', async req=>{const id=z.string().uuid().parse((req.params as {id:string}).id);return changeExportedKey(false,async()=>{const result=await gatewayKeys.remove(id);await options.secrets.remove?.(`gateway-key-${id}`);return result;});});
   const sourceDependencies=async(id:string)=>{
     const targets=(await connections.status()).filter(t=>t.connection&&(t.connection.selections??[t.connection]).some(item=>item.sourceId===id)).map(t=>({id:t.id,name:t.name,model:t.connection!.model}));
     const keys=gatewayKeys.list().filter(k=>k.sourceId===id||Object.values(k.modelSources??{}).includes(id)||k.models.some(m=>m.startsWith(`api-${id}/`))).map(k=>({id:k.id,name:k.name,models:k.models}));
@@ -981,6 +1013,10 @@ export async function createDesktopService(options:ServiceOptions) {
     const id=z.string().regex(/^[a-f0-9]{24}$/).parse((req.params as {id:string}).id);
     return localOperation(()=>proxy.setAccountEnabled(id,enabled));
   });
+  app.delete('/api/local-agent/accounts/:id/expired',async req=>{
+    const id=z.string().regex(/^[a-f0-9]{24}$/).parse((req.params as {id:string}).id);
+    return proxy.removeExpiredAccount(id);
+  });
   app.delete('/api/local-agent/accounts/:id',async req=>{
 
     const id=z.string().regex(/^[a-f0-9]{24}$/).parse((req.params as {id:string}).id);
@@ -994,7 +1030,18 @@ export async function createDesktopService(options:ServiceOptions) {
   const access=await GatewayAccess.open(root,gatewayKeys);
   app.get('/api/gateway/access',async()=>access.snapshot());
   app.put('/api/gateway/access',async req=>access.update(gatewayAccessInput.parse(req.body)));
-  app.addHook('onReady',async()=>{await access.start();});
+  app.addHook('onReady',async()=>{
+    if(gatewayKeys.list().some(key=>key.exported&&key.enabled&&key.access==='lan')){
+      // A failed migration keeps the old entrance policy in force.
+      await migrateLANPolicy().catch(()=>{});await access.start();
+    }
+    else if(access.snapshot().enabled){
+      const current=access.snapshot();
+      // Older versions had a separate global switch. Keys now decide whether
+      // this entrance is needed; stale settings must not reopen it on startup.
+      await access.update({enabled:false,port:current.port,allowedIPs:current.allowedIPs}).catch(()=>{});
+    }
+  });
   app.addHook('preClose',async()=>{await access.close();});
   // Both API entrances share routing, model permissions, streaming and metering.
   for(const path of ['models','responses','responses/compact','chat/completions','messages','messages/count_tokens']){
@@ -1008,6 +1055,19 @@ export async function createDesktopService(options:ServiceOptions) {
       if(compatible.changed)reply.header('X-Token-Flow-Compatibility','claude-code-help-v1');
     }
     const fixed=client&&fixedRoutes.get(client.id);
+    if(path!=='models'&&client&&fixed&&(fixed.target==='claude'||fixed.target==='claude-desktop')){
+      const requested=z.object({model:z.string().min(1).max(300)}).parse(req.body).model;
+      const family=!client.models.includes(requested)&&claudeBuiltInFamily(requested);
+      if(family){
+        const model=family==='fast'?fixed.fastModel??fixed.modelAliases?.['claude-haiku-4-5']??fixed.model:fixed.model;
+        const alias=requested.replace(/\[1m\]$/i,'');
+        // Old profiles reused built-in ids for menu rows. The same request could
+        // mean a menu selection or a subagent: never guess and send it elsewhere.
+        if(fixed.target==='claude-desktop'&&fixed.modelAliases?.[alias]&&fixed.modelAliases[alias]!==model)return reply.code(409).send({error:{type:'model_mapping_conflict',message:'Claude Desktop 旧版菜单映射与内置子代理型号冲突。请在 TokenFlow 重新应用所选模型，并在旧对话中重新选择一次模型；对话内容保留。'}});
+        req.body={...(req.body as Record<string,unknown>),model};
+        reply.header('X-Token-Flow-Model',model);
+      }
+    }
     if(path!=='models'&&fixed?.target==='codex'&&client){
       const requested=z.object({model:z.string().min(1).max(300)}).parse(req.body).model;
       const qualified=`codex/${requested}`;
@@ -1062,7 +1122,7 @@ export async function createDesktopService(options:ServiceOptions) {
           const sourceId=client.modelSources[model];
           if(client.models.includes(model)){
             if(!sourceId){record(403);return reply.code(403).send({error:{message:'Model is not configured for this Agent',type:'model_not_allowed'}});}
-            try{selectedAuth=resolveSource(sourceId,model,true);}catch{record(503);return reply.code(503).send({error:{message:'Selected source account is unavailable',type:'source_unavailable'}});}
+            try{selectedAuth=resolveSource(sourceId,model,true);}catch{refreshFailedSource(sourceId);const issue=sourceFailure(proxy.snapshot(),sourceId,model);callError={code:issue.type,message:issue.message};record(issue.status);return reply.code(issue.status).send({error:{message:issue.message,type:issue.type}});}
           }
         }
       }else if(client.sourceId){
@@ -1071,7 +1131,7 @@ export async function createDesktopService(options:ServiceOptions) {
           for(let index=available.length-1;index>=0;index--)try{sourceAuth(available[index].id);}catch{available.splice(index,1);}
         }else{
           const model=z.object({model:z.string().min(1).max(300)}).parse(req.body).model;
-          if(client.models.includes(model))try{selectedAuth=sourceAuth(model);}catch{record(503);return reply.code(503).send({error:{message:'Selected source account is unavailable',type:'source_unavailable'}});}
+          if(client.models.includes(model))try{selectedAuth=sourceAuth(model);}catch{refreshFailedSource(client.sourceId!);const issue=sourceFailure(proxy.snapshot(),client.sourceId!,model);callError={code:issue.type,message:issue.message};record(issue.status);return reply.code(issue.status).send({error:{message:issue.message,type:issue.type}});}
         }
       }
       if(path==='models'){
@@ -1124,6 +1184,7 @@ export async function createDesktopService(options:ServiceOptions) {
       }:send;
       const response=bridgeContext?await gatewayContext.response(path,req.body as {model:string},client?.id??'workspace',client?.modelSources?.[model]??client?.sourceId??apiSource?.id??upstreamURL,dispatch,fixed?.target==='codex'?{scope:codexContextScope,normalize:portableCodexItem,recover:async item=>codexContext.recover(item,await codexContextScopes())}:undefined,{onCompaction:report=>{compaction=report;},onUsageIncomplete:()=>{contextUsageIncomplete=true;if(compaction)compaction={...compaction,unmetered:true};}}):await dispatch(path,req.body);
       if(!response.ok){
+        if(response.status===401){const failedSource=client?.modelSources?.[model!]??client?.sourceId;if(failedSource)refreshFailedSource(failedSource);}
         await settle({inputTokens:null,outputTokens:null},response.status>=500);
         const error=upstreamError(response.status,await readUpstreamError(response));
         callError={code:error.type==='source_policy_blocked'?'source_policy_blocked':error.code??error.type,message:error.message};record(response.status);

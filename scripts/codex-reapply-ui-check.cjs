@@ -22,9 +22,11 @@ const assert=require('node:assert/strict');
    if(path==='/api/a2a/restore'){
     let body='';for await(const chunk of req)body+=chunk;payload=JSON.parse(body);attempts++;
     if(mode==='restore-stale'||mode==='restore-migration'){res.statusCode=409;res.end(JSON.stringify({code:mode==='restore-stale'?'configuration_conflict':'codex_migration_failed',error:mode==='restore-stale'?'配置已变化，请重新检查':'对话来源处理失败'}));return;}
+    if(target.id!=='codex')target.connection=null;
     res.end(JSON.stringify(connection));return;
    }
    if(path==='/api/a2a/connect'){
+    await new Promise(r=>setTimeout(r,500));
     let body='';for await(const chunk of req)body+=chunk;payload=JSON.parse(body);attempts++;
     if(mode==='busy'&&attempts===1){res.statusCode=409;res.end(JSON.stringify({code:'configuration_busy',error:'尚未应用，等待配置操作'}));return;}
     if(mode==='stale'||mode==='migration'){res.statusCode=409;res.end(JSON.stringify({code:mode==='stale'?'invalid_request':'codex_migration_failed',error:mode==='stale'?'配置已变化':'旧对话来源迁移失败'}));return;}
@@ -45,6 +47,9 @@ const assert=require('node:assert/strict');
  try{
   await win.loadURL(`http://127.0.0.1:${server.address().port}`);
   await wait(`!!(${reapply})`);await evaluate(`document.querySelector('input[aria-label="启用网关模型"]').click()`);
+  await wait('!!document.querySelector("dialog[open] .tfMigrationProgress")');
+  assert.equal(await evaluate('document.querySelectorAll("dialog[open]").length'),1);
+  assert.equal(await evaluate('!!document.querySelector("dialog[open] button[aria-label=关闭]:disabled")'),true);
   await wait('document.body.textContent.includes("旧对话已迁移并自动重新打开")');
   assert.equal(attempts,2);assert.deepEqual(payload,{allowRunning:true,restartCodex:true,target:'codex',selections:[choice],...choice,revision:target.revision,replaceId:connection.id,rewrite:true,tokenLimit:null});
   assert.equal(await evaluate(history),false);
@@ -83,6 +88,16 @@ const assert=require('node:assert/strict');
    }
    assert.equal(attempts,1);assert.equal(payload.restoreHistory,true);assert.equal(payload.revision,'fixture-revision');
   }
+  for(const [id,name] of [['workbuddy','WorkBuddy'],['workbuddy-ai','WorkBuddyAI'],['qoder','Qoder'],['deepseek','DeepSeek Harness'],['pi','Pi Agent']]){
+   target.id=id;target.name=name;target.connection=connection;target.configurationState='configured';mode='restore-success';attempts=0;
+   await win.reload();await wait(`document.querySelector('input[aria-label="启用网关模型"]')?.checked===true`);
+   assert.equal(await evaluate('[...document.querySelectorAll(".tfPanelHead button")].some(e=>["切回官方","恢复原配置","停用网关"].includes(e.textContent.trim()))'),false,`${name} should use only the gateway toggle`);
+   await evaluate(`document.querySelector('input[aria-label="启用网关模型"]').click()`);
+   await wait('document.body.textContent.includes("已移除 TokenFlow 网关模型")');
+   assert.equal(attempts,1);assert.equal(payload.restartCodex,false);assert.equal(payload.restoreHistory,false);
+   assert.equal(await evaluate('!!document.querySelector("dialog[open]")'),false);
+  }
+  target.id='codex';target.name='Codex';target.connection=connection;
   for(const screenshotMode of ['restore-success','restore-invalid']){
   mode=screenshotMode;target.configurationState='changed';await win.reload();await wait(`!!(${reapply})`);
   await evaluate('window.desktop={platform:"darwin"}');await click('切回官方');await wait('[...document.querySelectorAll("dialog[open] button")].some(e=>!e.disabled&&(e.textContent.trim()==="切回官方并重启"||e.textContent.trim()==="重新检查"))');

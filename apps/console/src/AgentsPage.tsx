@@ -125,6 +125,7 @@ function AgentPanel({onRefreshAccounts,clientSwitch,target,update,login,local,us
  const [exitMessage,setExitMessage]=useState('');const retryMigration=useRef<()=>unknown>(()=>{});
  const [migrationProgress,setMigrationProgress]=useState(target.threadMigration);
 
+ const insertedGateway=['workbuddy','workbuddy-ai','qoder','deepseek','pi'].includes(target.id);
  const desktopRestart=!!target.restartSupported&&['codex','qoder','workbuddy','workbuddy-ai','deepseek'].includes(target.id);
  const configurationSaved=(restarted=false)=>{setRestartPending(desktopRestart&&!restarted);setRestartError('');setRestartOpen(desktopRestart&&!restarted);};
  const [busy,setBusy]=useState(false);const lock=useRef(false);const [picking,setPicking]=useState(false);const [open,setOpen]=useState('');
@@ -223,7 +224,7 @@ function AgentPanel({onRefreshAccounts,clientSwitch,target,update,login,local,us
   if(!id)throw new Error('接入记录已变化，请刷新后重试。');
   await requestJSON('/api/a2a/restore',post({id,revision:preview?.revision??next!.revision,allowRunning:true,restartCodex,restoreHistory:history}),600000);
   setRestoreOpen(false);saveDraft(models,false);if(promptRestart||restartCodex)configurationSaved(restartCodex);else setRestartPending(desktopRestart);
-  return restartCodex?'Codex 已切回官方服务并重新打开，当前网关连接已停用。':`${target.name} 已停用网关并切回客户端默认配置，${desktopRestart?'重启':'下次启动'}后生效。`;
+  return restartCodex?'Codex 已切回官方服务并重新打开，当前网关连接已停用。':insertedGateway?`${target.name} 已移除 TokenFlow 网关模型，其他 API 配置保留，${desktopRestart?'重启':'下次启动'}后生效。`:`${target.name} 已切回官方服务，${desktopRestart?'重启':'下次启动'}后生效。`;
  },approved,!history);
  const repairHistory=()=>onRepair({target:'codex',...(connection?{sourceId:connection.sourceId,model:connection.model,connectionId:connection.id}:{})},'codex-history');
  const restart=()=>run(async()=>{
@@ -252,19 +253,17 @@ function AgentPanel({onRefreshAccounts,clientSwitch,target,update,login,local,us
    <ProviderIcon provider={target.id} size={40}/>
    <div><div className="tfAgentTitle"><h2>{target.name}</h2>{clientSwitch}<button className="tfAgentUpdate" disabled={busy} aria-label={`${target.installation.installed?'更新':'安装'} ${target.name}`} title={updateAvailable?`有新版本 ${update.latestVersion}，点击更新`:target.installation.installed?'下载最新版':'安装官方客户端'} onClick={()=>target.installation.installed?void manageProgram('update'):askProgram('install')}><Icon name="download" size={15}/>{updateAvailable&&<span className="tfUpdateDot" role="img" aria-label="有可用更新"/>}</button>{target.installation.installed&&<span className="tfAgentVersion">已安装{target.installation.version?` · ${target.installation.version}`:''}</span>}</div><UsageFold loaded={usage.loaded} error={usage.error} onRetry={usage.reload} title={`${target.name} 用量`} rows={allAgentRows} range="today"/></div>
    <div className="tfRow">
-    {!models.length&&!(login&&hasNativeLogin(login))&&<button type="button" className="textButton" disabled={busy||!running||!!target.error||!available.length} onClick={()=>setPicking(true)}><Icon name="plus" size={15}/>选择模型</button>}
+    {!models.length&&!(login&&hasNativeLogin(login))&&<button type="button" className="iconButton" aria-label="选择模型" title="选择模型" disabled={busy||!running||!!target.error||!available.length} onClick={()=>setPicking(true)}><Icon name="plus" size={16}/></button>}
     {desktopRestart&&<button type="button" className="textButton" disabled={busy||!target.installation.installed} onClick={()=>{setRestartError('');setRestartOpen(true);}}>{restartPending?'重启生效':'重启…'}</button>}
-    {connection&&<button type="button" disabled={busy} onClick={()=>{if(target.id==='codex')openRestore();else void restore();}}>{target.id==='pi'||target.id==='deepseek'?'停用网关':'切回官方'}</button>}
+    {connection&&!insertedGateway&&<button type="button" disabled={busy} onClick={()=>{if(target.id==='codex')openRestore();else void restore();}}>切回官方</button>}
     {!!problem&&<button type="button" className="primary" disabled={busy} onClick={repair}>维修</button>}
    </div>
   </header>
-  {busy&&!exitMessage&&target.id==='codex'&&switching.current&&(!migrationProgress||migrationProgress.phase==='idle')&&<p className="tfHint" role="status">正在应用 Codex 更改，请稍候…</p>}
-  {busy&&!exitMessage&&migrationProgress&&migrationProgress.phase!=='idle'&&<p className="tfHint" role="status">{migrationProgress.phase==='backup'?'正在备份旧对话…':`${migrationProgress.phase==='restoring'?'正在还原':'正在迁移'}旧对话 ${migrationProgress.done} / ${migrationProgress.total}`}，完成后将自动重新打开 Codex。</p>}
   <FlowDialog className="tfRestartDialog tfRestoreConfigDialog" open={restoreOpen} title="切回 Codex 官方服务" busy={busy} showBusyIndicator={false} onClose={closeRestore}>
    <p className="tfDialogLead">{restoreBlocked?'暂时无法切回官方服务，请检查下方原因。':'停用 TokenFlow 网关，直接使用 Codex 官方接口和默认模型。'}</p>
    {restoreLoading&&<p className="tfHint" role="status">正在检查当前配置和恢复目标…</p>}
 
-   {restorePreview?.canRestore&&!restoreError&&<p className="tfHint">保留当前登录账号。对话会同步到官方来源，必要时整理兼容格式；聊天内容和备份保留，不恢复以前的第三方接口配置。</p>}
+   {restorePreview?.canRestore&&!restoreError&&<p className="tfHint">保留登录账号、对话内容和备份，同时还原官方模型菜单与子代理路由。</p>}
    {restorePreview&&!restorePreview.canRestore&&<p className="tfError" role="alert">{restorePreview.reason} 当前配置尚未修改。</p>}
    {restoreError&&<p className="tfError" role="alert">{restoreError.message}</p>}
    {restoreError?.code==='codex_migration_failed'&&<button type="button" className="textButton" disabled={busy} onClick={()=>{closeRestore();repairHistory();}}>检查对话来源</button>}
@@ -272,12 +271,12 @@ function AgentPanel({onRefreshAccounts,clientSwitch,target,update,login,local,us
    {restoreBlocked&&desktopRestart&&<p className="tfHint">如需让 Codex 重新加载当前已保存的配置，可以单独重启。重启不会恢复备份、修改登录账号或处理对话，也不会解决配置冲突。</p>}
    <footer><button disabled={busy} onClick={closeRestore}>取消</button>{(restoreError||restorePreview&&!restorePreview.canRestore)&&<button disabled={busy||restoreLoading} onClick={()=>void loadRestorePreview()}>重新检查</button>}{!restoreBlocked&&<button className="primary" disabled={busy||restoreLoading||!restorePreview?.canRestore} onClick={()=>void restore(true,true,true)}>{busy?'正在切换…':desktopRestart?'切回官方并重启':'切回官方'}</button>}{restoreBlocked&&desktopRestart&&<button className="primary" disabled={busy||restoreLoading||!target.installation.installed} onClick={()=>{closeRestore();setRestartError('');setRestartOpen(true);}}>使用当前配置重启…</button>}</footer>
   </FlowDialog>
-  <FlowDialog className="tfRestartDialog" open={!!exitMessage} title={desktopRestart?'重启 Codex 并应用更改':'先退出 Codex，保留旧对话'} onClose={()=>setExitMessage('')} busy={busy} showBusyIndicator={false}>
+  <FlowDialog className="tfRestartDialog" open={!!exitMessage||busy&&switching.current&&target.id==='codex'&&!restoreOpen} title={desktopRestart?'重启 Codex 并应用更改':'先退出 Codex，保留旧对话'} onClose={()=>setExitMessage('')} busy={busy} showBusyIndicator={false}>
    {busy?<div className="tfMigrationProgress" aria-busy="true">
     <Thinking label="正在应用 Codex 更改"/>
     <p className="tfMigrationStage" role="status">{migrationProgress?.lifecyclePhase==='stopping'?'正在退出 Codex…':migrationProgress?.lifecyclePhase==='opening'?'正在重新打开 Codex…':migrationProgress?.phase==='backup'?`正在备份旧对话 ${migrationProgress.done} / ${migrationProgress.total}…`:migrationProgress?.phase==='migrating'||migrationProgress?.phase==='restoring'?`正在${migrationProgress.phase==='restoring'?'还原':'迁移'}旧对话 ${migrationProgress.done} / ${migrationProgress.total}…`:migrationProgress?.lifecyclePhase==='changing'?'正在应用配置并检查需要处理的对话…':'正在准备应用更改…'}</p>
     {!!migrationProgress?.total&&migrationProgress.lifecyclePhase!=='stopping'&&migrationProgress.lifecyclePhase!=='opening'&&migrationProgress.phase!=='idle'&&<progress max={migrationProgress.total} value={migrationProgress.done} aria-label="旧对话处理进度"/>}
-    <p className="tfMigrationAdvice">切换后的首次回复可能较慢：模型需要重新读取历史，长对话还可能需要整理上下文。请等待完成，避免连续重试。</p>
+
    </div>:<>
     <p className="tfDialogLead">{exitMessage}</p>
     <p className="tfHint">{desktopRestart?'请先保存工作。确认后会尝试退出 Codex，确认退出后才应用更改并重新打开。若无法退出，请按提示手动处理。':'请完全退出 Codex 后继续。'}</p>
@@ -317,7 +316,7 @@ function AgentPanel({onRefreshAccounts,clientSwitch,target,update,login,local,us
 
   <div className={`tfAgentColumns${login&&hasNativeLogin(login)&&models.length?' hasLogin':''}`}>
   {login&&hasNativeLogin(login)&&<section className="tfAgentSection tfOfficialAccounts" aria-label="官方登录账号">
-   <header className="tfAgentSectionHead"><div className="tfGatewayTitle"><h3>官方登录账号</h3>{!models.length&&<button type="button" className="tfAddButton" disabled={busy||!running||!!target.error||!available.length} onClick={()=>setPicking(true)}><Icon name="plus" size={15}/>添加模型</button>}</div><NativeLoginStatus name={target.name} login={login} onRefresh={onRefreshAccounts}>{(desktopOfficial||target.id==='claude')&&login.status?.backup&&<button className="textButton" disabled={busy} onClick={()=>void restoreOfficial()}>恢复原登录</button>}</NativeLoginStatus></header>
+   <header className="tfAgentSectionHead"><div className="tfGatewayTitle"><h3>官方登录账号</h3>{!models.length&&<button type="button" className="iconButton" aria-label="添加模型" title="添加模型" disabled={busy||!running||!!target.error||!available.length} onClick={()=>setPicking(true)}><Icon name="plus" size={16}/></button>}</div><NativeLoginStatus name={target.name} login={login} onRefresh={onRefreshAccounts}>{(desktopOfficial||target.id==='claude')&&login.status?.backup&&<button className="textButton" disabled={busy} onClick={()=>void restoreOfficial()}>恢复原登录</button>}</NativeLoginStatus></header>
   <ul className="tfLines" aria-label={`${target.name} 官方登录账号`}>
    <UnpooledNativeAccount provider={target.id} login={login}/>
    {accounts.map(account=>{
@@ -340,8 +339,7 @@ function AgentPanel({onRefreshAccounts,clientSwitch,target,update,login,local,us
   </section>}
   {login&&hasNativeLogin(login)&&models.length>0&&<ColumnDivider storageKey="token-flow.layout.agent-split" label="调整账号与网关模型宽度"/>}
   {models.length>0&&<section className="tfAgentSection tfGatewaySection" aria-label="网关模型">
-   <header className="tfAgentSectionHead"><div className="tfGatewayTitle"><h3>网关模型</h3><button className="tfAddButton" disabled={busy||!running||!!target.error||(!available.length&&!models.length)} onClick={()=>setPicking(true)}><Icon name="plus" size={15}/>{available.length||models.length?(models.length?'管理所选模型':'选择模型'):'先添加账号或 API 接口'}</button>{draftDirty&&<small className="tfPendingModels">待应用</small>}</div><label className="toggle"><input type="checkbox" role="switch" aria-label="启用网关模型" checked={gatewayPending??(!!connection&&target.configurationState==='configured'&&!draftDirty)} disabled={busy||!running||(!connection&&!models.length)} onChange={event=>{const enabled=event.target.checked;if(!enabled)saveDraft(models);setGatewayPending(enabled);void Promise.resolve(enabled?applySelected(shownModels):target.id==='codex'?openRestore():restore(false)).finally(()=>setGatewayPending(undefined));}}/><span>启动</span></label></header>
-   <p className="tfHint">启动时会替换冲突的接口与模型设置，保留登录账号和其他设置。{target.id==='codex'&&desktopRestart?'Codex 会自动重启，请先保存工作。':''}</p>
+   <header className="tfAgentSectionHead"><div className="tfGatewayTitle"><h3>网关模型</h3><button className="iconButton" aria-label={models.length?'管理所选模型':'选择模型'} title={models.length?'管理所选模型':'选择模型'} disabled={busy||!running||!!target.error||(!available.length&&!models.length)} onClick={()=>setPicking(true)}><Icon name="plus" size={16}/></button>{draftDirty&&<small className="tfPendingModels">待应用</small>}</div><label className="toggle"><input type="checkbox" role="switch" aria-label="启用网关模型" checked={gatewayPending??(!!connection&&target.configurationState==='configured'&&!draftDirty)} disabled={busy||!running||(!connection&&!models.length)} onChange={event=>{const enabled=event.target.checked;if(!enabled)saveDraft(models);setGatewayPending(enabled);void Promise.resolve(enabled?applySelected(shownModels):target.id==='codex'?openRestore():restore(false)).finally(()=>setGatewayPending(undefined));}}/><span>启动</span></label></header>
    {target.id==='claude'&&<p className="tfHint">自定义模型菜单需要 Claude Code 2.1.242 或更新版本；旧版可用 /model 模型ID 切换。接入多个模型时选择默认模型和快速模型。子代理跟随当前会话；审批和快速请求使用快速模型。IDE 与终端共享此登录配置。</p>}
   <ul className="tfLines" aria-label={`${target.name} 网关模型`}>
    {shownModels.map(choice=>{
