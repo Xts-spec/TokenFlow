@@ -75,7 +75,7 @@ export class DesktopAccounts {
   const state=await this.snapshot(await this.path());let identity=await this.identity(state);
   if(!identity&&this.provider==='qoder'&&this.options.crypto){const revision=digest(state);if(this.identityCache?.revision!==revision)this.identityCache={revision,value:this.identity(state,true)};identity=await this.identityCache.value;}
   if(!identity||this.provider!=='qoder'&&workbuddyLoginTarget(identity.domain)!==this.provider)return null;
-  return {provider:this.provider,accountId:identity.accountId,email:identity.email??null,...(identity.enterpriseId?{organizationId:identity.enterpriseId}:{})};
+  return {provider:this.provider,accountId:identity.accountId,email:identity.email??null,displayName:identity.displayName,...(identity.enterpriseId?{organizationId:identity.enterpriseId}:{})};
  }
  async status(refresh=false){const path=await this.path(),state=await this.snapshot(path),journal=await this.journal();
   let identity=await this.identity(state)??(journal&&journal.state!=='restored'&&journal.path===path&&digest(state)===digest(journal.after)?journal.identity:null),readError='';

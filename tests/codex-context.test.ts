@@ -1,4 +1,5 @@
 import {DatabaseSync} from 'node:sqlite';
+import {createHash} from 'node:crypto';
 import {it,expect,afterEach} from 'vitest';
 import {mkdtemp,mkdir,writeFile,readFile,readdir,rm,realpath} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -11,6 +12,28 @@ async function fixture(){const root=await mkdtemp(join(await realpath(tmpdir()),
 const history=[{type:'message',role:'user',content:[{type:'input_text',text:'Preserve requirements'}]},{type:'function_call',call_id:'one',name:'read',arguments:'{}'},{type:'function_call_output',call_id:'one',output:'original tool result'}];
 const checkpoint=(token:string)=>({type:'compacted',payload:{message:'',replacement_history:[history[0],{type:'compaction',encrypted_content:token}],window_number:2}});
 const rollout=(token:string)=>[...history.map(payload=>({type:'response_item',payload})),checkpoint(token),{type:'response_item',payload:{type:'message',role:'user',content:'Future turn must not leak into a fork'}}].map(v=>JSON.stringify(v)).join('\n')+'\n';
+it('excludes historical tool declarations and their legacy malformed messages from recovered wire input',async()=>{
+ const f=await fixture();const tools=[{type:'function',name:'current_tool',parameters:{type:'object'}}];
+ const declarations=[{type:'additional_tools',role:'developer',tools:[{type:'function',name:'old_tool'}]},{type:'message',role:'developer',tools:[{type:'function',name:'legacy_tool'}]}];
+ const encrypted=f.context.encodeCheckpoint([...declarations,...history],codexContextScope);
+ let called=false;
+ const send=async(_path:string,body:any)=>{
+  called=true;expect(body.tools).toEqual(tools);expect(body.input).toEqual(history);
+  for(const item of body.input)if(item.type==='message')expect(Array.isArray(item.content)).toBe(true);
+  return Response.json({id:'wire-safe',status:'completed',output:[]});
+ };
+ await f.context.response('responses',{model:'codex/test',tools,input:[{type:'compaction',encrypted_content:encrypted}]},'key','source',send,{scope:codexContextScope,normalize:portableCodexItem,recover:item=>f.migration.recover(item,[])});
+ expect(called).toBe(true);
+});
+it('normalizes legacy assistant text from encrypted checkpoints and cached official windows',async()=>{
+ const f=await fixture();const legacy=[...history,{type:'message',role:'assistant',content:'saved task summary'}];
+ const expected=[...history,{type:'message',role:'assistant',content:[{type:'output_text',text:'saved task summary'}]}];
+ const encrypted=f.context.encodeCheckpoint(legacy,codexContextScope);
+ expect(await f.migration.recover({type:'compaction',encrypted_content:encrypted},[])).toEqual(expected);
+ const token='cached-official-window';await mkdir(join(f.root,'codex-context-cache'),{recursive:true});
+ await writeFile(join(f.root,'codex-context-cache',createHash('sha256').update(token).digest('hex')),encrypted);
+ expect(await f.migration.recover({type:'compaction',encrypted_content:token},[])).toEqual(expected);
+});
 it('recovers an official opaque window from exact local history, encrypts its cache and excludes future turns',async()=>{
  const f=await fixture();await writeFile(f.file,rollout('official-ciphertext'));
  const recovered=await f.migration.recover({type:'compaction',encrypted_content:'official-ciphertext'},[]);
@@ -18,6 +41,14 @@ it('recovers an official opaque window from exact local history, encrypts its ca
  const names=await readdir(join(f.root,'codex-context-cache'));expect(await readFile(join(f.root,'codex-context-cache',names[0]!),'utf8')).not.toContain('original tool result');
  await expect(f.migration.recover({type:'compaction',encrypted_content:'unknown'},[])).rejects.toThrow('无法恢复');
  expect(await readFile(f.file,'utf8')).toBe(rollout('official-ciphertext'));
+});
+it('never merges a neighboring conversation when recovering an exact checkpoint',async()=>{
+ const f=await fixture();await writeFile(f.file,rollout('wanted'));
+ const neighbor=join(f.file.slice(0,f.file.lastIndexOf('/')),'rollout-other.jsonl');
+ const other=rollout('other-token').replaceAll('Preserve requirements','UNRELATED_CONVERSATION');
+ await writeFile(neighbor,other);
+ expect(await f.migration.recover({type:'compaction',encrypted_content:'wanted'},[])).toEqual(history);
+ expect(await readFile(neighbor,'utf8')).toBe(other);
 });
 it('blocks live rollout rewrites, migrates legacy gateway checkpoints with backups, and is idempotent',async()=>{
  const f=await fixture();const scope={owner:'old-key',source:'qoder-account',model:'qoder/m'};
@@ -62,7 +93,7 @@ it('summarizes a recovered long window in bounded calls while keeping constraint
  for(let i=0;i<15;i++)input.push({type:'function_call',call_id:`c${i}`,name:'read',arguments:'{}'},{type:'function_call_output',call_id:`c${i}`,output:i<10?'中'.repeat(10000):'recent result'});
  const requests:any[]=[];const send=async(_p:string,b:any)=>{requests.push(b);return Response.json({status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'Earlier reads completed; preserve API; continue current task.'}]}],usage:{input_tokens:10,output_tokens:2,total_tokens:12}});};
  const result=await(await f.context.response('responses',{model:'workbuddy/m',input,store:false},'new-key','new-source',send,{scope:codexContextScope,recover:i=>f.migration.recover(i,[])})).json();
- const summaries=requests.filter(r=>r.instructions?.startsWith('Summarize the supplied'));expect(summaries.length).toBeGreaterThan(2);
+ const summaries=requests.filter(r=>r.instructions?.startsWith('Summarize the supplied'));expect(summaries.length).toBe(1);expect(summaries[0].input[0].content).toContain("middle omitted");
  for(const r of summaries)expect(Buffer.byteLength(r.input[0].content)).toBeLessThan(50*1024);
  const forwarded=requests.at(-1).input;expect(forwarded[0]).toEqual(input[0]);expect(forwarded.slice(-8)).toEqual(input.slice(-8));expect(JSON.stringify(forwarded).length).toBeLessThan(10000);expect(result.output[0].type).toBe('compaction');
 });
@@ -84,6 +115,37 @@ it('materializes inline automatic-compaction items before native resume and pres
  const rows=(await readFile(f.file,'utf8')).split('\n').map(l=>JSON.parse(l));
  expect(rows.at(-2)).toEqual({timestamp:inline.timestamp,ordinal:10,type:'compacted',payload:{message:'',replacement_history:history}});expect(rows.at(-1)).toEqual(tail);
  expect(await f.migration.prepareOfficial([],async()=>[])).toEqual({migrated:0});
+});
+it('continues across two gateway compactions and materializes the latest checkpoint for official resume',async()=>{
+ const f=await fixture();const migration={scope:codexContextScope,normalize:portableCodexItem,recover:(item:Record<string,unknown>)=>f.migration.recover(item,[])};
+ const work=(prefix:string)=>Array.from({length:20},(_,i)=>[
+  {type:'function_call',call_id:prefix+i,name:'read',arguments:'{}'},
+  {type:'function_call_output',call_id:prefix+i,output:'old output '.repeat(500)},
+ ]).flat();
+ const original=[{role:'developer',content:'Preserve API compatibility.'},{role:'user',content:'GOAL_MARKER'},...work('first-'),{role:'user',content:'Finish first round.'}];
+ let round=1;const summaries:string[]=[];
+ const send=async(_path:string,body:Record<string,unknown>)=>{
+  const summary=typeof body.instructions==='string'&&body.instructions.startsWith('Summarize the supplied');
+  if(summary)summaries.push(JSON.stringify(body.input));
+  return Response.json({status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:summary?`ROUND_${round}_SUMMARY: GOAL_MARKER; preserve API; NEW_CONSTRAINT remains active.`:`ROUND_${round}_ANSWER`}]}],usage:{input_tokens:100,output_tokens:10}});
+ };
+ const first=await(await f.context.response('responses',{model:'qoder/m',input:original,context_management:[{type:'compaction',compact_threshold:100}]},'key','source',send,migration)).json();
+ const between=[{role:'user',content:'NEW_CONSTRAINT: never change billing.ts.'},...work('second-'),{role:'user',content:'Continue second round.'}];
+ round=2;const restarted=await GatewayContext.open(f.root);
+ const second=await(await restarted.response('responses',{model:'qoder/m',input:[...original,...first.output,...between],context_management:[{type:'compaction',compact_threshold:100}]},'key','source',send,migration)).json();
+ expect(summaries).toHaveLength(2);expect(summaries[1]).toContain('ROUND_1_SUMMARY');expect(summaries[1]).toContain('NEW_CONSTRAINT');
+ const after={type:'message',role:'user',content:[{type:'input_text',text:'AFTER_SECOND_COMPACTION'}]};
+ const saved=[{type:'session_meta',payload:{model_provider:'token_flow'}},...[...original,...first.output,...between,...second.output,after].map(payload=>({type:'response_item',payload:payload.type?payload:{type:'message',...payload}}))].map(row=>JSON.stringify(row)).join('\n')+'\n';
+ await writeFile(f.file,saved);const restored=new CodexContext(f.root,join(f.root,'codex/config.toml'),restarted);
+ await expect(restored.prepareOfficial([],async()=>[1])).rejects.toThrow('先退出 Codex');expect(await readFile(f.file,'utf8')).toBe(saved);
+ expect(await restored.prepareOfficial([],async()=>[])).toEqual({migrated:1});
+ const rows=(await readFile(f.file,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
+ const latest=rows.filter(row=>row.type==='compacted').at(-1).payload.replacement_history;
+ expect(JSON.stringify(latest)).toContain('ROUND_2_SUMMARY');expect(JSON.stringify(latest)).toContain('NEW_CONSTRAINT');
+ expect(latest.some((item:any)=>item.type==='compaction')).toBe(false);expect(rows.at(-1).payload).toEqual(after);
+ for(const item of latest.filter((item:any)=>item.type==='function_call_output'))expect(latest.some((call:any)=>call.type==='function_call'&&call.call_id===item.call_id)).toBe(true);
+ const batch=(await readdir(join(f.root,'codex-context-backups')))[0]!;expect(await readFile(join(f.root,'codex-context-backups',batch,'0.jsonl'),'utf8')).toBe(saved);
+ expect(await restored.prepareOfficial([],async()=>[])).toEqual({migrated:0});
 });
 it('does not reinterpret unrelated official checkpoints while switching the local login',async()=>{
  const f=await fixture();const original=JSON.stringify({type:'compacted',payload:{message:'',replacement_history:[{type:'item_reference',id:'official-item'},{type:'compaction',encrypted_content:'unrelated-official-state'}]}})+'\n';

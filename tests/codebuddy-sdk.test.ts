@@ -134,6 +134,28 @@ it('separates Messages system instructions from role-tagged tool history',()=>{
  const parsed=parseCodeBuddyInput('messages',{model:'workbuddy/test',system:[{type:'text',text:'CALLER_POLICY'}],messages:[{role:'user',content:'Read'},{role:'assistant',content:[{type:'tool_use',id:'call1',name:'read',input:{}}]},{role:'user',content:[{type:'tool_result',tool_use_id:'call1',content:'CLIENT_RESULT'}]}]});
  expect(parsed.systemPrompt).toBe('CALLER_POLICY');expect(parsed.prompt).not.toContain('CALLER_POLICY');expect(parsed.prompt).toContain('call1');expect(parsed.prompt).toContain('CLIENT_RESULT');
 });
+it('continues a long Claude history containing prior-provider thinking through the WorkBuddy SDK',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'sdk-claude-history-'));let called=0;
+ const thinkingAt=new Set([149,151,153,157,159]);
+ const messages=Array.from({length:161},(_,index)=>({role:index%2?'assistant':'user',content:thinkingAt.has(index)?[
+  {type:'thinking',thinking:`PRIOR_PROVIDER_THINKING_${index}`,signature:'OPAQUE_PROVIDER_SIGNATURE'},
+  {type:'text',text:`VISIBLE_HISTORY_${index}`},
+ ]:[{type:'text',text:`VISIBLE_HISTORY_${index}`}]}));
+ const body={model:'workbuddy/deepseek-v4.1-flash',messages,tools:[{name:'read',input_schema:{type:'object'}}]};
+ const before=JSON.stringify(body);
+ const sdk=new WorkBuddySDKProvider(root,async()=>({type:'workbuddy',access_token:'fixture'}),async input=>{
+  called++;for(const index of thinkingAt)expect(input.prompt).toContain(`VISIBLE_HISTORY_${index}`);
+  expect(input.prompt).not.toMatch(/PRIOR_PROVIDER_THINKING|OPAQUE_PROVIDER_SIGNATURE/);
+  expect(input.tools[0].name).toBe('read');
+  return {model:input.model,text:'continued',calls:[],failed:false};
+ });
+ try{
+  const response=await sdk.response('chosen','messages',body,new AbortController().signal);
+  const result=await response.json();
+  expect(response.status,JSON.stringify(result)).toBe(200);expect(called).toBe(1);
+  expect(result.content).toEqual([{type:'text',text:'continued'}]);expect(JSON.stringify(body)).toBe(before);
+ }finally{await sdk.close();await rm(root,{recursive:true,force:true});}
+});
 it.each(['responses','chat/completions','messages'])('delivers live %s text before SDK completion without replaying it',async path=>{
  const root=await mkdtemp(join(tmpdir(),'sdk-live-stream-'));let finish!:()=>void;
  const gate=new Promise<void>(resolve=>{finish=resolve;});
@@ -175,4 +197,21 @@ it('returns a timeout when the SDK exhausts safe idle recovery without leaking t
  const sdk=new WorkBuddySDKProvider(root,async()=>({type:'workbuddy',access_token:'private'}),async()=>{throw Object.assign(new Error('private details'),{name:'SDKIdleError'});});
  try{const response=await sdk.response('chosen','messages',{model:'workbuddy/test',messages:[{role:'user',content:'hello'}]},new AbortController().signal);expect(response.status).toBe(504);const body=await response.json();expect(body.error.code).toBe('workbuddy_timeout');expect(JSON.stringify(body)).not.toContain('private');}
  finally{await sdk.close();await rm(root,{recursive:true,force:true});}
+});
+
+it.each(['text_mismatch','missing_result','context_limit','tool_schema','sdk_execution'] as const)('keeps the safe SDK %s reason through buffered and streaming failures',async reason=>{
+ const root=await mkdtemp(join(tmpdir(),'sdk-diagnostic-'));
+ const sdk=new WorkBuddySDKProvider(root,async()=>({type:'workbuddy',access_token:'private-token'}),async input=>{
+  input.onDiagnostic?.({event:'failure',elapsedMs:1,reason,origin:'exception',fingerprint:'a'.repeat(64)});
+  throw new Error('PRIVATE_PROMPT Bearer private-token');
+ });
+ try{
+  for(const stream of [false,true]){
+   const response=await sdk.response('chosen','messages',{model:'workbuddy/test',messages:[{role:'user',content:'PRIVATE_PROMPT'}],stream},new AbortController().signal);
+   const wire=await response.text();
+   expect(wire).toContain(`workbuddy_${reason}`);
+   expect(wire).not.toMatch(/PRIVATE_PROMPT|private-token|fingerprint/);
+   if(!stream)expect(response.status).toBe(502);
+  }
+ }finally{await sdk.close();await rm(root,{recursive:true,force:true});}
 });

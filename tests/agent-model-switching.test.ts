@@ -103,7 +103,7 @@ it.each(['codex', 'claude'] as const)('%s preserves the original login through a
       const current = await currentTarget();
       const restored = await service.app.inject({ method: 'POST', url: '/api/a2a/restore', headers, payload: { id: current.connection.id, revision: current.revision, allowRunning: true } });
       expect(restored.statusCode, restored.body).toBe(200);
-      expect(await readFile(paths[target], 'utf8')).toBe(nativeBeforeGateway);
+      const native=JSON.parse(nativeBeforeGateway);delete native.model;expect(JSON.parse(await readFile(paths[target], 'utf8'))).toEqual(native);
     }
     await switchAccount(0);
     expect((await currentTarget()).connection).toBeNull();
@@ -114,7 +114,7 @@ it.each(['codex', 'claude'] as const)('%s preserves the original login through a
     expect(restored.statusCode, restored.body).toBe(200);
     expect(restored.json()).toMatchObject({ email: 'original@example.test', backup: null, gatewayConnected: false });
     if (target === 'codex') {
-      expect(await readFile(paths[target], 'utf8')).toBe(originalConfig);
+      expect(parse(await readFile(paths[target], 'utf8'))).toEqual(parse(originalConfig));
       expect(await readFile(authPath, 'utf8')).toBe(originalAuth);
     } else {
       expect(JSON.parse(await readFile(paths[target], 'utf8'))).toEqual(JSON.parse(originalConfig));

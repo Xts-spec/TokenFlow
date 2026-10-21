@@ -7,10 +7,11 @@ import { createServer } from 'node:net';
 import { CLIProxyManager, validateAuthorizationURL } from '../packages/core/src/cliproxy.js';
 import { createDesktopService } from '../packages/core/src/service.js';
 import {quotaProviders} from '../packages/core/src/quota/index.js';
+import {loginProviderSchema} from '../packages/core/src/login/index.js';
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => {for (const fn of cleanup.splice(0).reverse()) await fn();});
 const binary = resolve('tests/fixtures/fake-cliproxy.mjs');
-it('preserves official image capabilities and keeps image-dropping adapters text-only',async()=>{
+it('preserves official image declarations without overriding Qoder as text-only',async()=>{
  const {manager,root}=await setup();
  await mkdir(join(root,'cliproxy'),{recursive:true});
  await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([
@@ -21,7 +22,7 @@ it('preserves official image capabilities and keeps image-dropping adapters text
  expect(models.find(m=>m.id==='workbuddy/deepseek-v4.1-flash')?.capabilities?.images).toBe(true);
  expect(models.find(m=>m.id==='workbuddy/text-only')?.capabilities?.images).toBe(false);
  expect(models.find(m=>m.id==='workbuddy/unknown')?.capabilities).toBeUndefined();
- expect(models.find(m=>m.id==='qoder/vision-base-model')?.capabilities?.images).toBe(false);
+ expect(models.find(m=>m.id==='qoder/vision-base-model')?.capabilities?.images).toBe(true);
 });
 it('identifies WorkBuddy and Qoder accounts from safe stored metadata when sidecar labels are generic',async()=>{
  const {manager,root}=await setup();
@@ -65,6 +66,32 @@ async function setup(timeout = 5000) {
   const fixture=async(body?: unknown) => (await fetch(`http://127.0.0.1:${port}/fixture`, {method:body?'POST':'GET',body:body?JSON.stringify(body):undefined})).json();
   return {manager,root,port,opened,fixture};
 }
+it('resolves Qoder email from its own official profile without changing credentials or accepting another account',async()=>{
+ const {manager,root,fixture}=await setup();
+ await mkdir(join(root,'cliproxy/auth'),{recursive:true});
+ const files=[
+  {name:'qoder-personal.json',provider:'qoder',label:'qoder',status:'active',auth_index:'personal',profile:{id:'personal-id',email:'personal@example.test',access_token:'must-not-persist'}},
+  {name:'qoder-other.json',provider:'qoder',label:'qoder',status:'active',auth_index:'other',profile:{id:'wrong-id',email:'wrong@example.test'}},
+  {name:'qoder-personal-disabled.json',provider:'qoder',label:'qoder',status:'active',disabled:true,auth_index:'personal-disabled',profile:{}},
+ ];
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify(files));
+ const credential=JSON.stringify({uid:'personal-id',access_token:'private-token-not-for-display'});
+ await writeFile(join(root,'cliproxy/auth/qoder-personal.json'),credential);
+ await writeFile(join(root,'cliproxy/auth/qoder-personal-disabled.json'),credential);
+ await writeFile(join(root,'cliproxy/auth/qoder-other.json'),JSON.stringify({uid:'other-id',access_token:'other-token'}));
+ await manager.start();
+ expect(manager.snapshot().accounts.map(a=>a.label)).toEqual(['personal@example.test','账号 other-id','personal@example.test']);
+ expect(await readFile(join(root,'cliproxy/auth/qoder-personal.json'),'utf8')).toBe(credential);
+ const cached=await readFile(join(root,'qoder-profiles.json'),'utf8');
+ expect(cached).toContain('personal@example.test');expect(cached).not.toMatch(/must-not-persist|private-token|wrong@example/);
+ const calls=(await fixture()).apiCalls.filter((c:{url:string})=>c.url.endsWith('/userinfo')).length;
+ await manager.refreshAccounts();
+ expect((await fixture()).apiCalls.filter((c:{url:string})=>c.url.endsWith('/userinfo'))).toHaveLength(calls);
+ await manager.stop();
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify(files.map(file=>({...file,profile:{}}))));
+ await manager.start();
+ expect(manager.snapshot().accounts.find(a=>a.label==='personal@example.test')).toBeDefined();
+});
 it('auto-starts, opens only official OAuth, confirms automatic callback and restores saved accounts on restart',async () => {
   const {manager,opened,fixture}=await setup();
   let snapshot=await manager.login('codex');expect(snapshot.state).toBe('running');expect(snapshot.loginState).toBe('waiting_for_browser');expect(opened[0]).toMatch(/^https:\/\/auth.openai.com\/oauth\/authorize/);
@@ -240,9 +267,7 @@ it('connects ZCode through polling and Trae through its separate callback flow',
   expect(manager.snapshot().accounts.some(a => a.provider==='zcode')).toBe(true);
   expect(manager.snapshot().models.some(m => m.provider==='zcode')).toBe(true);
   expect(() => validateAuthorizationURL('https://chat.z.ai.evil.test/api/oauth/authorize','zcode')).toThrow();
-  expect(validateAuthorizationURL('https://bigmodel.cn/login?redirect_uri=https%3A%2F%2Fzcode.z.ai%2Fapi%2Fv1%2Foauth%2Fcli%2Fcallback%2Fbigmodel','zcode-bigmodel').hostname).toBe('bigmodel.cn');
-  expect(() => validateAuthorizationURL('https://bigmodel.cn/login?redirect_uri=https%3A%2F%2Fevil.test%2Fcb','zcode-bigmodel')).toThrow();
-  expect(() => validateAuthorizationURL('https://bigmodel.cn.evil.test/login','zcode-bigmodel')).toThrow();
+  expect(loginProviderSchema.safeParse('zcode-bigmodel').success).toBe(false);
 
   // Trae (validates nested state in redirect_url)
   const traeSnap=await manager.login('trae');
@@ -441,4 +466,28 @@ it('imports two members of one Codex workspace independently and keeps separate 
  const names=(await import('node:fs/promises')).readdir;const files=(await names(join(root,'cliproxy/auth'))).filter(n=>n.startsWith('local-codex-'));
  expect(files).toHaveLength(3);expect(manager.snapshot().accounts.filter(a=>a.provider==='codex'&&!a.isDuplicate)).toHaveLength(2);
  await manager.importCredential('codex',first,true);expect((await names(join(root,'cliproxy/auth'))).filter(n=>n.startsWith('local-codex-'))).toHaveLength(3);
+});
+
+it.each(['timeout','tls','unknown'])('distinguishes an authorization %s failure from a stopped local agent',async kind=>{
+ const {manager}=await setup();await manager.start();const realFetch=globalThis.fetch;
+ const mock=vi.spyOn(globalThis,'fetch').mockImplementation(async(url,init)=>{
+  if(String(url).includes('/workbuddy-auth-url')){
+   if(kind==='timeout')throw new DOMException('The operation timed out','TimeoutError');
+   if(kind==='unknown')return Response.json({error:'opaque-failure secret-token'},{status:502});
+   return Response.json({error:'Client network socket disconnected before secure TLS connection was established secret-token'},{status:502});
+  }
+  return realFetch(url,init);
+ });
+ try{const state=await manager.login('workbuddy-overseas');expect(state.state).toBe('running');expect(state.login?.status).toBe('failed');expect(state.login?.message).toContain(kind==='timeout'?'超时':kind==='tls'?'TLS':'HTTP 502');expect(state.login?.message).not.toContain('无法连接 Local Agent');expect(state.login?.message).not.toContain('secret-token');if(kind==='unknown'){expect(state.login?.message).toContain('尚未生成授权链接');expect(state.login?.message).not.toContain('请检查对应厂商的网络与代理');}}finally{mock.mockRestore();}
+});
+
+it('retries an unavailable official catalog twice, forcing a fresh lookup after the cached failure',async()=>{
+ const {manager,root}=await setup();await mkdir(join(root,'cliproxy'),{recursive:true});
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'kimi.json',provider:'kimi',status:'active',models:['current']}]));
+ const original=(manager as any).request.bind(manager);const paths:string[]=[];
+ vi.spyOn(manager as any,'request').mockImplementation(async (...args:any[])=>{
+  const value=await original(...args);if(String(args[0]).startsWith('/auth-files/models')){paths.push(args[0]);return {...value,catalog:{status:paths.length<3?'unavailable':'live'}};}return value;
+ });
+ await manager.start();expect(paths).toHaveLength(3);expect(paths.slice(1).every(path=>path.endsWith('refresh=true'))).toBe(true);
+ expect(manager.snapshot().accounts[0].models).toEqual(['kimi/current']);expect(manager.snapshot().accounts[0].modelError).toBeUndefined();
 });

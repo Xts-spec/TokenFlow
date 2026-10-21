@@ -16,7 +16,7 @@ import type { UsageData } from './usage-data';
 import {officialLoginHeld} from '../../shared/native-login-identity';
 import { clientOptions, loginNames, useNativeLogin, type LoginProvider } from './native-login';
 import { Icon } from './Icons';
-import {UsageFold,modelManufacturer} from './UsagePanel';
+import {UsageFold,UsageSummary,SourceUsage,ModelUsage,modelManufacturer} from './UsagePanel';
 import {DragHandle,dropOrder,orderModels,useModelOrder} from './display-order';
 import { ProviderIcon } from './ProviderIcon';
 import type { Notify } from './notify';
@@ -49,7 +49,7 @@ function LoginProgress({local,disabled,actions}:{local:LocalAgentSnapshot;disabl
  if(!login||login.status==='idle'||dismissed===login.id)return null;
  const dismiss=()=>{setDismissed(login.id);try{localStorage.setItem('token-flow.login.dismissed',login.id);}catch{}};
  const pending=pendingStates.includes(login.status);
- const label=local.providers.find(p=>p.id===login.provider)?.label??(login.provider==='workbuddy-overseas'?'WorkBuddy 国际版':login.provider==='zcode-bigmodel'?'ZCode（智谱 BigModel）':login.provider==='claude-manual'?'Claude（授权码）':login.provider);
+ const label=local.providers.find(p=>p.id===login.provider)?.label??(login.provider==='workbuddy-overseas'?'WorkBuddy 国际版':login.provider==='claude-manual'?'Claude（授权码）':login.provider);
  return <FlowDialog open title={login.status==='completed'?`${label} 已连接`:`连接 ${label}`} className="tfLoginDialog" onClose={()=>{if(pending)void actions.login('cancel',{id:login.id});dismiss();}}><div className="tfLogin">
   <div className="tfLoginHead"><ProviderIcon provider={login.provider} size={32}/><div><strong>{login.status==='completed'?'账号与模型已保存':login.status==='starting'?'正在准备授权':login.status==='verifying'?'正在验证账号':pending?'请在浏览器完成授权':'授权未完成'}</strong>{pending&&<Thinking label={login.status==='verifying'?'正在验证账号':'正在等待授权'}/>}</div></div>
   <p className="tfLoginMessage" role={pending?'status':login.status==='completed'?'status':'alert'}>{login.status==='waiting_for_browser'?login.flow==='code'?'登录官方页面并确认授权，然后把页面显示的授权码粘贴到下方。':'登录官方页面并确认授权，完成后会自动保存账号并刷新模型。':login.message}</p>
@@ -97,7 +97,7 @@ export function AccountsPage({local,usage,disabled,actions,notify,onContext}:{lo
  useEffect(()=>{onContext?.({provider:provider?.id,sourceId:account?.id});},[provider?.id,account?.id,onContext]);
  const chooseProvider=(id:string)=>{setTab(id);try{localStorage.setItem(tabKey,id);}catch{/* Only remembers the open platform. */}};
  // Follow a newly started authorization once; manual platform browsing stays available afterwards.
- useEffect(()=>{if(local.login&&pendingStates.includes(local.login.status)){const id=local.login.provider;chooseProvider(id==='workbuddy-overseas'?'workbuddy':id==='zcode-bigmodel'?'zcode':id==='claude-manual'?'claude':id);if(id==='workbuddy'||id==='workbuddy-overseas')setClients(previous=>({...previous,workbuddy:id==='workbuddy-overseas'?'workbuddy-ai':'workbuddy'}));}},[local.login?.id]);
+ useEffect(()=>{if(local.login&&pendingStates.includes(local.login.status)){const id=local.login.provider;chooseProvider(id==='workbuddy-overseas'?'workbuddy':id==='claude-manual'?'claude':id);if(id==='workbuddy'||id==='workbuddy-overseas')setClients(previous=>({...previous,workbuddy:id==='workbuddy-overseas'?'workbuddy-ai':'workbuddy'}));}},[local.login?.id]);
  const officialConfirm=useOfficialLoginConfirm();
  const switchLogin=async(provider:LoginProvider,id:string,label:string)=>{
   if((provider==='workbuddy'||provider==='workbuddy-ai'||provider==='qoder'||provider==='qoder-ide'||provider==='claude')&&!await officialConfirm.confirm(provider==='claude'?'Claude Code 终端':loginNames[provider]))return;
@@ -127,10 +127,10 @@ export function AccountsPage({local,usage,disabled,actions,notify,onContext}:{lo
      {importable.has(provider.id)&&<button disabled={locked} onClick={()=>void actions.importLocal(client==='workbuddy-ai'?'workbuddy-ai':provider.id).then(()=>login?.refresh(true))}>{provider.id==='cursor'&&login?.nativeCurrent?'复用本机账号':'从本机导入'}</button>}
      <button className="primary" aria-label={`添加 ${client?loginNames[client]:provider.label} 账号`} disabled={locked} onClick={()=>void actions.connect(client==='workbuddy-ai'?'workbuddy-overseas':provider.id)}><Icon name="plus" size={14}/>{provider.id==='zcode'?'添加 Z.ai 账号':'添加账号'}</button>
      {provider.id==='claude'&&<button title="不使用本机回调端口：在官方页面复制授权码后粘贴回来" disabled={locked} onClick={()=>void actions.connect('claude-manual')}>授权码登录</button>}
-     {provider.id==='zcode'&&<button aria-label="添加智谱 BigModel 账号" disabled={locked} onClick={()=>void actions.connect('zcode-bigmodel')}><Icon name="plus" size={14}/>添加 BigModel 账号</button>}
     </div>
    </header>
-   {(()=>{const coverage=usage.coverage.find(item=>item.target===(client==='workbuddy-ai'?client:provider.id));return coverage&&coverage.status!=='ready'?<p className="tfHint">{coverage.status==='unsupported'?'此客户端直连用量尚未采集；上方用量仅包含已记录的 TokenFlow 请求。':coverage.status==='scanning'?'正在读取本机直连用量…':'未找到可读取的客户端直连记录；上方用量仅包含已采集的请求。'}</p>:null;})()}
+   {(()=>{const coverage=usage.coverage.find(item=>item.target===(client==='workbuddy-ai'||client==='qoder-ide'?client:provider.id));return coverage&&coverage.status!=='ready'?<p className="tfHint">{coverage.status==='unsupported'?'此客户端直连用量尚未采集；上方用量仅包含已记录的 TokenFlow 请求。':coverage.status==='scanning'?'正在读取本机直连用量…':'未找到可读取的客户端直连记录；上方用量仅包含已采集的请求。'}</p>:null;})()}
+   <p className="tfHint">按消费账号汇总所有已采集客户端的用量；自定义 API 归其实际来源。{provider.id==='qoder'?'Qoder 与 Qoder IDE 共用账号统计；':''}未确认账号的历史消费单独列出。</p>
    {variants&&client&&<SwitchTabs label="账号客户端" value={client} options={variants} disabled={locked} onChange={id=>setClients(previous=>({...previous,[provider.id]:id}))}/>}
    {!account&&!accountsLoading&&login&&client&&<div className="tfAccountTabs"><UnpooledNativeAccount provider={client} login={login} compact/></div>}
    {!account&&!accountsLoading&&nativeLogin}
@@ -149,6 +149,7 @@ export function AccountsPage({local,usage,disabled,actions,notify,onContext}:{lo
      const quota=local.quotas[account.id];
      const shownModels=orderModels(account.models??[],id=>modelLabel(local,id),modelOrder==='manual'?'manual':'name',modelRanks);
      return <div id={`account-panel-${account.id}`} role="tabpanel" aria-labelledby={`account-tab-${account.id}`} className={`tfAccountDetail ${account.disabled?'off':''}`}>
+      <UsageFold title={`${account.label} 已确认用量`} rows={usage.allRows.filter(row=>row.day===localDay(new Date())&&row.sourceId===account.id)} range="today" loaded={usage.loaded} error={usage.error} onRetry={usage.reload}/>
       <div className="tfAccountTop">
        {nativeLogin}
        <div className="tfAccountManage"><label className="toggle" title={account.disabled?'启用':'停用'}><input type="checkbox" checked={!account.disabled} disabled={locked||local.state!=='running'} onChange={()=>void actions.toggle(account.id,account.disabled)}/><span>启用</span></label>
@@ -167,8 +168,11 @@ export function AccountsPage({local,usage,disabled,actions,notify,onContext}:{lo
      </div>;
     })()}
    </>}
-
-
+   <details className="tfUsageDetails"><summary>按消费账号与模型查看用量</summary>
+    <UsageSummary rows={usage.combinedRows.filter(row=>spentByPlatform(row,provider))} range={usage.range} onRange={usage.setRange} loaded={usage.loaded} hint="此处汇总本平台官方账号的已采集消费。无账号证据的记录计入平台总量，单独显示，不归给当前登录账号。"/>
+    <SourceUsage local={local} rows={usage.combinedRows.filter(row=>spentByPlatform(row,provider))} showQuota={false} empty="暂无已采集的账号用量"/>
+    <ModelUsage local={local} rows={usage.combinedRows.filter(row=>spentByPlatform(row,provider))} empty="暂无已采集的模型用量"/>
+   </details>
   </section>}
  </div>;
 }

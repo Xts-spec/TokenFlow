@@ -23,7 +23,8 @@
     "test:sidecar-pin": "node scripts/test-sidecar-pin.mjs",
     "test:sidecar-qoder": "node scripts/test-sidecar-qoder.mjs",
     "test:sidecar-agents": "node scripts/test-sidecar-qoder.mjs",
-    "test:claude-compat": "go -C upstream/CLIProxyAPI test ./internal/translator/codex/claude ./internal/translator/openai/claude && npm run test:sidecar-agents",
+    "test:claude-compat": "go -C upstream/CLIProxyAPI test ./internal/translator/codex/claude ./internal/translator/openai/claude && npm run test:sidecar-agents && npm run test:sidecar-codex-claude",
+    "test:sidecar-codex-claude": "node scripts/test-sidecar-codex-claude.mjs",
     "package:mac:arm64": "npm run clean:package && node scripts/build-sidecar.mjs darwin-arm64 && npm run build && electron-builder --mac --arm64 --dir --publish never",
     "package:mac:intel": "npm run clean:package && node scripts/build-sidecar.mjs darwin-x64 && npm run build && electron-builder --mac --x64 --dir --publish never",
     "clean:package": "node scripts/clean-package.mjs"
@@ -60,7 +61,7 @@
     "zod": "^3.24.2"
   },
   "build": {
-    "buildVersion": "10.15.26.15",
+    "buildVersion": "10.15.26.32",
     "appId": "local.browseragent.desktop",
     "productName": "TokenFlow",
     "files": [

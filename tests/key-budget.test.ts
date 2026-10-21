@@ -33,9 +33,9 @@ it('counts partial usage, blocks unknown consumption, honors zero limit and supp
 });
 it('migrates old keys without resetting secrets or scopes, refuses invalid limits and protocol bypass',async()=>{
  const {root,store}=await setup();const {key,apiKey}=await store.create(input());
- const old=JSON.parse(await readFile(join(root,'gateway-keys.json'),'utf8'));for(const field of ['agents','tokenLimit','usedTokens','unmeteredRequests','pending'])delete old[0][field];
+ const old=JSON.parse(await readFile(join(root,'gateway-keys.json'),'utf8'));for(const field of ['access','agents','tokenLimit','usedTokens','unmeteredRequests','pending'])delete old[0][field];
  await writeFile(join(root,'gateway-keys.json'),JSON.stringify(old));const migrated=await GatewayKeys.open(root);
- expect(migrated.authenticate(apiKey)).toMatchObject({id:key.id,tokenLimit:null,usedTokens:0,agents:['codex','claude','openai']});
+ expect(migrated.authenticate(apiKey)).toMatchObject({id:key.id,access:'local',tokenLimit:null,usedTokens:0,agents:['codex','claude','openai']});
  for(const tokenLimit of [-1,0.5,Infinity,1e15])expect(()=>input({tokenLimit})).toThrow();
  await migrated.update(key.id,input({agents:['claude']}));await expect(migrated.reserve(key.id,'codex/model','responses')).rejects.toMatchObject({statusCode:403});
  await expect(migrated.reserve(key.id,'other/model','messages')).rejects.toMatchObject({statusCode:403});

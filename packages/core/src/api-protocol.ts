@@ -1,6 +1,7 @@
 import { normalizeApiBaseURL, protocolFromURL } from '../../../apps/shared/api-endpoint.js';
 import { providerSchema } from './providers.js';
 import { RunnerCoreError } from './errors.js';
+import {providerUsage} from './gateway-observation.js';
 
 export type SourceProtocol='responses'|'chat'|'messages';
 const PATHS:Record<SourceProtocol,string>={responses:'responses',chat:'chat/completions',messages:'messages'};
@@ -20,6 +21,7 @@ export function validateQuickSource(input:{baseURL:string;apiKey?:string;model:s
 }
 
 type Probe={ok:boolean;status:number|null;message:string};
+export type ProtocolProbeUsage=ReturnType<typeof providerUsage>&{protocol:SourceProtocol;model:string;startedAt:string;durationMs:number;status:number};
 const clip=(value:string,key:string)=>(key.length>=8?value.split(key).join('***'):value).replace(/\s+/g,' ').slice(0,160);
 async function readLimited(response:Response,limit=256*1024){
  const reader=response.body?.getReader();if(!reader)return '';
@@ -38,14 +40,19 @@ function request(protocol:SourceProtocol,model:string,key:string,tokenField='max
  if(protocol==='chat')return {headers:{Authorization:`Bearer ${key}`},body:{model,messages:[{role:'user',content:prompt}],[tokenField]:16}};
  return {headers:{'x-api-key':key,'anthropic-version':'2023-06-01'},body:{model,max_tokens:16,messages:[{role:'user',content:prompt}]}};
 }
-async function probe(protocol:SourceProtocol,base:string,key:string,model:string,signal:AbortSignal):Promise<Probe>{
+async function probe(protocol:SourceProtocol,base:string,key:string,model:string,signal:AbortSignal,onUsage?:(usage:ProtocolProbeUsage)=>void):Promise<Probe>{
  for(const tokenField of protocol==='chat'?['max_tokens','max_completion_tokens']:['']){
   const {headers,body}=request(protocol,model,key,tokenField||undefined);
   let response:Response;
+  const started=Date.now();
   try{response=await fetch(`${base}/${PATHS[protocol]}`,{method:'POST',headers:{...headers,'content-type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.any([signal,AbortSignal.timeout(10000)]),redirect:'error'});}
   catch{return {ok:false,status:null,message:signal.aborted?'已取消验证。':'无法连接或超时，请检查网络和 API 地址。'};}
   const text=await readLimited(response).catch(()=> '');
   let json:Record<string,unknown>={};try{json=JSON.parse(text);}catch{/* Non-JSON bodies are a mismatch, not a crash. */}
+  const usage=providerUsage(json.usage);
+  // Successful calls without usage remain unmeasured; rejected protocol attempts
+  // are counted only when the upstream actually reports token consumption.
+  if(response.ok||usage.inputTokens!==null||usage.outputTokens!==null)onUsage?.({...usage,protocol,model,startedAt:new Date(started).toISOString(),durationMs:Date.now()-started,status:response.status});
   if(response.ok)return shapes[protocol](json)?{ok:true,status:response.status,message:''}:{ok:false,status:response.status,message:'返回内容不是该协议的格式。'};
   const error=json.error as {message?:unknown}|string|undefined;
   const message=clip(typeof error==='string'?error:typeof error?.message==='string'?error.message:typeof json.message==='string'?json.message:'',key);
@@ -57,7 +64,7 @@ async function probe(protocol:SourceProtocol,base:string,key:string,model:string
 }
 
 /** Sends one tiny request per candidate protocol until one answers in the expected shape. */
-export async function detectProtocol(input:{baseURL:string;apiKey:string;model:string},signal:AbortSignal=new AbortController().signal):Promise<{protocol:SourceProtocol;baseURL:string}>{
+export async function detectProtocol(input:{baseURL:string;apiKey:string;model:string},signal:AbortSignal=new AbortController().signal,onUsage?:(usage:ProtocolProbeUsage)=>void):Promise<{protocol:SourceProtocol;baseURL:string}>{
  const {baseURL,models}=validateQuickSource(input);const model=models[0];
  const explicit=protocolFromURL(input.baseURL);
  const hinted=/anthropic|claude/i.test(`${baseURL} ${model}`);
@@ -68,7 +75,7 @@ export async function detectProtocol(input:{baseURL:string;apiKey:string;model:s
  const failures:Probe[]=[];
  for(const base of bases)for(const protocol of order){
   if(signal.aborted)throw bad('已取消验证。','api_source_cancelled');
-  const result=await probe(protocol,base,input.apiKey.trim(),model,signal);
+  const result=await probe(protocol,base,input.apiKey.trim(),model,signal,onUsage);
   if(result.ok)return {protocol,baseURL:base};
   if(signal.aborted)throw bad('已取消验证。','api_source_cancelled');
   failures.push(result);

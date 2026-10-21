@@ -40,7 +40,42 @@ it('gateway authenticates and pins compaction, charges summary usage, resumes hi
   expect(next.statusCode).toBe(200);expect(calls.at(-1)?.body).not.toHaveProperty('previous_response_id');expect(JSON.stringify(calls.at(-1)?.body.input)).toContain('Inspect next.');
   const keys=await GatewayKeys.open(root);expect(keys.authenticate(apiKey)).toMatchObject({usedTokens:30,unmeteredRequests:0,pendingRequests:0});
   const count=calls.length;
-  const bad=await service.app.inject({method:'POST',url:'/v1/responses/compact',headers,payload:{model:'codex/model',input:transcript}});expect(bad.statusCode).toBe(403);expect(calls).toHaveLength(count);
+  const bad=await service.app.inject({method:'POST',url:'/v1/responses/compact',headers,payload:{model:'codex/model',input:transcript}});expect(bad.statusCode).toBe(403);expect(bad.json().error.message).toContain('codex/model');expect(calls).toHaveLength(count);
  }
  const native=await service.app.inject({method:'POST',url:'/v1/responses/compact',headers:admin,payload:{model:'codex/model',input:transcript}});expect(native.statusCode).toBe(200);expect(calls.at(-1)?.path).toBe('/v1/responses/compact');
+});
+it('records paid summary details and settles them when continuation is rejected',async()=>{
+ const {root,port,service,admin}=await setup();const realFetch=globalThis.fetch;
+ vi.spyOn(globalThis,'fetch').mockImplementation(async(url,init)=>{
+  const parsed=new URL(String(url));if(parsed.port!==String(port)||parsed.pathname!=='/v1/responses')return realFetch(url,init);
+  const body=JSON.parse(String(init?.body));
+  if(body.instructions?.startsWith('Summarize the supplied'))return Response.json({status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'Kept compatibility. Tests passed.'}]}],usage:{input_tokens:100,output_tokens:10,total_tokens:110,input_tokens_details:{cached_tokens:80},output_tokens_details:{reasoning_tokens:4}}});
+  return Response.json({error:{message:'invalid request'}},{status:400});
+ });
+ const account=service.proxy.snapshot().accounts.find(a=>a.provider==='qoder')!;
+ const created=await service.app.inject({method:'POST',url:'/api/gateway-keys',headers:admin,payload:{name:'summary-billing',sourceId:account.id,models:['qoder/model'],agents:['codex'],tokenLimit:1000}});
+ const {apiKey,key}=created.json();
+ const response=await service.app.inject({method:'POST',url:'/v1/responses',headers:{host:admin.host,authorization:'Bearer '+apiKey},payload:{model:'qoder/model',input:transcript,context_management:[{type:'compaction',compact_threshold:100}]}});
+ expect(response.statusCode).toBe(400);expect(response.json().error.code).toBe('compaction_continuation_failed');
+ expect((await GatewayKeys.open(root)).authenticate(apiKey)).toMatchObject({usedTokens:110,pendingRequests:0,unmeteredRequests:0});
+ const traces=await service.app.inject({method:'GET',url:'/api/gateway/traces',headers:admin});
+ const row=traces.json().records?.find((r:{keyId:string})=>r.keyId===key.id)??traces.json().find?.((r:{keyId:string})=>r.keyId===key.id);
+ expect(row).toMatchObject({inputTokens:100,cachedTokens:80,outputTokens:10,reasoningTokens:4,compaction:{calls:1,inputTokens:100,outputTokens:10,cachedTokens:80,reasoningTokens:4,failed:false}});
+});
+it.each(['failed','error','truncated','missing-usage','error-body-disconnect','missing-body'])('settles known summary charges after a %s continuation stream',async failure=>{
+ const {root,port,service,admin}=await setup();const realFetch=globalThis.fetch;
+ vi.spyOn(globalThis,'fetch').mockImplementation(async(url,init)=>{
+  const parsed=new URL(String(url));if(parsed.port!==String(port)||parsed.pathname!=='/v1/responses')return realFetch(url,init);
+  const body=JSON.parse(String(init?.body));
+  if(body.instructions?.startsWith('Summarize the supplied'))return Response.json({status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'Kept compatibility. Tests passed.'}]}],usage:{input_tokens:100,output_tokens:10}});
+  if(failure==='error-body-disconnect')return new Response(new ReadableStream({start(controller){controller.error(Error('disconnect reading error'));}}),{status:500});
+  if(failure==='missing-body')return new Response(null,{headers:{'content-type':'text/event-stream'}});
+  const event=failure==='failed'?{type:'response.failed',response:{status:'failed',output:[],usage:null}}:failure==='error'?{type:'error',error:{message:'stream failed'}}:failure==='missing-usage'?{type:'response.completed',response:{status:'completed',output:[]}}:{type:'response.created',response:{status:'in_progress',output:[]}};
+  return new Response('data: '+JSON.stringify(event)+'\n\n',{headers:{'content-type':'text/event-stream'}});
+ });
+ const account=service.proxy.snapshot().accounts.find(a=>a.provider==='qoder')!;
+ const created=await service.app.inject({method:'POST',url:'/api/gateway-keys',headers:admin,payload:{name:'stream-billing',sourceId:account.id,models:['qoder/model'],agents:['codex'],tokenLimit:1000}});
+ const {apiKey}=created.json();
+ await service.app.inject({method:'POST',url:'/v1/responses',headers:{host:admin.host,authorization:'Bearer '+apiKey},payload:{model:'qoder/model',input:transcript,stream:true,context_management:[{type:'compaction',compact_threshold:100}]}});
+ expect((await GatewayKeys.open(root)).authenticate(apiKey)).toMatchObject({usedTokens:110,pendingRequests:0,unmeteredRequests:1});
 });

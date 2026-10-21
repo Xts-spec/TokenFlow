@@ -1,6 +1,18 @@
 import {describe,it,expect} from 'vitest';
 import {LocalUsageParser,mergeLocalUsageRows} from '../packages/core/src/local-usage.js';
 const timestamp='2026-10-12T08:00:00.000Z';
+it('uses Desktop third-party response models, not menu aliases, and excludes exact gateway matches',()=>{
+ const p=new LocalUsageParser('claude','desktop',{matchesResponse:id=>id==='gateway'});
+ for(const [id,requestedModel,responseModel]of [
+  ['sol','claude-haiku-4-7','gpt-6.1-sol'],
+  ['opus','claude-sonnet-4-8','claude-opus-5'],
+  ['missing','claude-sonnet-4-8',undefined],
+  ['gateway','claude-haiku-4-7','gpt-6.1-sol'],
+  ['routed','qoder/dfmodel','dfmodel'],
+ ])p.accept({type:'assistant',timestamp,entrypoint:'claude-desktop-3p',requestedModel,message:{id,model:responseModel,usage:{input_tokens:10,output_tokens:5}}});
+ expect(p.rows().map(r=>r.model)).toEqual(['gpt-6.1-sol','claude-opus-5','未标注模型']);
+ expect(p.rows().every(r=>r.target==='claude-desktop'&&r.channel==='api'&&!r.nativeAccountId)).toBe(true);
+});
 describe('local program token accounting',()=>{
  it('collects WorkBuddyAI separately and still excludes its imported gateway models',()=>{
   const p=new LocalUsageParser('workbuddy-ai','intl');for(const model of ['builtin','custom-local:antigravity/Gemini'])p.accept({id:model,timestamp,message:{usage:{input_tokens:20,output_tokens:5}},providerData:{messageId:model,requestModelId:model,rawUsage:{prompt_tokens:20,completion_tokens:5,prompt_tokens_details:{cached_tokens:10}}}});

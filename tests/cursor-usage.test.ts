@@ -57,3 +57,8 @@ it('accepts a protobuf empty bill with omitted zero defaults as an empty verifie
  transport(method=>method==='GetMe'?{email:'a@example.test'}:{});
  expect(await new CursorUsage('fixture-key').events(0,Date.now(),signal())).toEqual({email:'a@example.test',events:[],complete:true});
 });
+
+it('propagates temporary unified-balance failures to the bounded account refresh retry',async()=>{
+ transport(method=>{if(method==='GetXaiUserUsageSnapshot')throw Object.assign(new Error('temporary'),{status:503});return method==='GetPlanInfo'?{isMerged:true,planInfo:{planName:'Premium'}}:{};});
+ await expect(new CursorUsage('fixture-key').quota()).rejects.toMatchObject({status:503});
+});

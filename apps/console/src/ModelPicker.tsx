@@ -1,5 +1,5 @@
 import {Thinking} from './LoadingState';
-import { useLayoutEffect, useId, useRef, useState } from 'react';
+import { useLayoutEffect, useId, useRef, useState, type ReactNode } from 'react';
 import {createPortal} from 'react-dom';
 import type { LocalAgentSnapshot } from '../../../packages/core/src/cliproxy';
 import { modelGroups, type Choice, type ModelSourceGroup } from './flow-model';
@@ -13,7 +13,7 @@ import {useDialogDismiss} from './dialog-dismiss';
 const same=(a:Choice|undefined,b:Choice)=>!!a&&a.sourceId===b.sourceId&&a.model===b.model;
 const quotaText=(group:ModelSourceGroup)=>group.quota?.status==='error'?'额度查询失败':group.remaining===null?'额度暂未提供':`剩余 ${Math.round(group.remaining)}%`;
 
-export function ModelPicker({open,title,local,current,recent=[],isDisabled,onPick,onClose,selected,onConfirm,allowEmpty=false,confirmLabel='应用所选模型',embedded=false,busy=false,error='',closeOnConfirm=true,inlineSelection=false,onSelectionChange}:{inlineSelection?:boolean;onSelectionChange?:(choices:Choice[])=>void;open:boolean;title:string;local:LocalAgentSnapshot;current?:Choice;recent?:Choice[];isDisabled?:(choice:Choice)=>boolean;onPick?:(choice:Choice)=>void;onClose:()=>void;selected?:Choice[];onConfirm?:(choices:Choice[])=>void;allowEmpty?:boolean;confirmLabel?:string;embedded?:boolean;busy?:boolean;error?:string;closeOnConfirm?:boolean}){
+export function ModelPicker({open,title,local,current,recent=[],isDisabled,onPick,onClose,selected,onConfirm,allowEmpty=false,confirmLabel='应用所选模型',embedded=false,busy=false,error='',closeOnConfirm=true,inlineSelection=false,onSelectionChange,beforeSearch}:{beforeSearch?:ReactNode;inlineSelection?:boolean;onSelectionChange?:(choices:Choice[])=>void;open:boolean;title:string;local:LocalAgentSnapshot;current?:Choice;recent?:Choice[];isDisabled?:(choice:Choice)=>boolean;onPick?:(choice:Choice)=>void;onClose:()=>void;selected?:Choice[];onConfirm?:(choices:Choice[])=>void;allowEmpty?:boolean;confirmLabel?:string;embedded?:boolean;busy?:boolean;error?:string;closeOnConfirm?:boolean}){
  const dismiss=useDialogDismiss(onClose,busy);
  const [modelOrder,setModelOrder,modelRanks,moveModel]=useModelOrder();
  const dialog=useRef<HTMLDialogElement>(null);const [query,setQuery]=useState('');
@@ -45,6 +45,7 @@ export function ModelPicker({open,title,local,current,recent=[],isDisabled,onPic
  const nativeMac=(window as Window&{desktop?:{platform:string}}).desktop?.platform==='darwin';
  const content=<>
   {!inlineSelection&&<header>{embedded?<><button type="button" className="textButton tfPickerBack" disabled={busy} onClick={onClose}><Icon name="arrow" size={14}/>返回接入信息</button><h3>{title}</h3></>:<><h2>{title}</h2><button type="button" className="iconButton" aria-label="关闭" disabled={busy} onClick={onClose}><Icon name="close" size={16}/></button></>}</header>}
+  {beforeSearch}
   <label className="tfSearch"><Icon name="search" size={15}/><input type="search" disabled={busy} autoFocus placeholder="搜索厂商、账号或模型" aria-label="搜索厂商、账号或模型" value={query} onChange={event=>{setQuery(event.target.value);setExpanded({});}}/></label>
   <div className="tfPickerOrder" inert={busy}><ModelOrderControl value={modelOrder} onChange={setModelOrder}/></div>
   <div className="tfPickBody" inert={busy}>

@@ -14,7 +14,7 @@ export async function retryQuotaCall(call:()=>Promise<QuotaResponse>,signal:Abor
     }catch(error){
       signal.throwIfAborted();
       if(!(error instanceof QuotaTransportError))throw error;
-      if(attempt===5)throw new Error(`${error.message} 已尝试 5 次，请稍后重试或检查网络与代理。`);
+      if(attempt===3)throw new Error(`${error.message} 已尝试 3 次，可以切换网络后刷新试试。`);
       onRetry(attempt+1);
       await delay(1000*2**(attempt-1),undefined,{signal});
     }

@@ -47,7 +47,7 @@ function email(auth:string|null){try{return tokenEmail(JSON.parse(auth??'{}').to
 // account_id is the ChatGPT workspace, shared by everyone in a team; the email tells members apart.
 const sameLogin=(auth:string|null,accountId:string,mail:string|null)=>identity(auth)===accountId&&email(auth)===mail;
 
-const ownedFields=['model','model_provider','cli_auth_credentials_store','profile'] as const;
+const ownedFields=['model','model_provider','cli_auth_credentials_store','profile','openai_base_url'] as const;
 function sameValue(a:unknown,b:unknown):boolean {
   if(a===b)return true;
   if(!a||!b||typeof a!=='object'||typeof b!=='object')return false;
@@ -55,7 +55,7 @@ function sameValue(a:unknown,b:unknown):boolean {
   return Object.keys(x).length===Object.keys(y).length&&Object.keys(x).every(k=>Object.hasOwn(y,k)&&sameValue(x[k],y[k]));
 }
 function nativeRouting(config:Record<string,unknown>){
-  return (config.model_provider??'openai')==='openai'&&(config.cli_auth_credentials_store??'file')==='file'&&!config.profile;
+  return (config.model_provider??'openai')==='openai'&&(config.cli_auth_credentials_store??'file')==='file'&&!config.profile&&!config.openai_base_url;
 }
 function restoredConfig(current:string|null,journal:Journal){
   const now=parse(current??''),after=parse(journal.after.config),before=parse(journal.before.config??'');
@@ -149,7 +149,7 @@ export class CodexAccounts {
       // Prefer the running client's refreshed tokens when selecting the same native account.
       if(sameLogin(before.auth,c.account_id,tokenEmail(c.id_token))){const native=credential.safeParse(JSON.parse(before.auth!).tokens);if(native.success)c={...native.data,last_refresh:JSON.parse(before.auth!).last_refresh??undefined};}
       const config=parse(before.config??'');
-      config.model=input.model.slice('codex/'.length);config.model_provider='openai';config.cli_auth_credentials_store='file';delete config.profile;
+      config.model=input.model.slice('codex/'.length);config.model_provider='openai';config.cli_auth_credentials_store='file';delete config.profile;delete config.openai_base_url;
       const after={auth:JSON.stringify({auth_mode:'chatgpt',OPENAI_API_KEY:null,tokens:{access_token:c.access_token,refresh_token:c.refresh_token,id_token:c.id_token,account_id:c.account_id},last_refresh:c.last_refresh??null},null,2)+'\n',config:stringify(config)};
       // Retain the original login across repeated A -> B switches.
       const journal:Journal={before:previous?.state==='applied'?{...previous.before,config:restoredConfig(before.config,previous)}:before,after,accountId:c.account_id,createdAt:new Date().toISOString(),state:'prepared'};

@@ -171,6 +171,9 @@ export class ApiSources {
     let bytes=0;const chunks:Buffer[]=[];for await(const c of req){bytes+=c.length;if(bytes>LIMIT){fail(413,'Source request too large');return;}chunks.push(c);}
     const body=JSON.parse(Buffer.concat(chunks).toString());if(!s.models.includes(body.model)){fail(403,'Source model mismatch');return;}
     const {protocol,baseURL}=apiModelRoute(s,body.model);
+    // Chat streaming APIs commonly omit token usage unless explicitly requested.
+    // Apply at the relay so native and translated calls share the same accounting.
+    if(protocol==='chat'&&body.stream===true)body.stream_options={...(body.stream_options&&typeof body.stream_options==='object'&&!Array.isArray(body.stream_options)?body.stream_options:{}),include_usage:true};
     const allowed=protocol==='chat'?['chat/completions']:protocol==='responses'?['responses','responses/compact']:['messages','messages/count_tokens'];
     if(!allowed.includes(match![2])){fail(400,'Source protocol mismatch');return;}
     const key=await this.secrets.get(s.credentialRef);if(!key){fail(503,'Encrypted API credential unavailable');return;}

@@ -57,6 +57,7 @@ it('routes Cursor through the existing scoped API, meters tokens, isolates SDK t
  const keys=(await service.app.inject({url:'/api/gateway-keys',headers:admin})).json().keys;expect(keys[0].usedTokens).toBe(39);expect(keys[0].unmeteredRequests).toBe(0);
  const options=sdk.create.mock.calls[0][0];expect(options).toMatchObject({tools:[],mcpServers:{},agents:{},local:{settingSources:[]}});expect(options.local.cwd.startsWith(join(root,'cursor-runs'))).toBe(true);expect(sdk.close).toHaveBeenCalledTimes(3);
  const denied=await service.app.inject({method:'POST',url:'/v1/responses',headers:client,payload:{model:'cursor/fixture-model',input:'Read private files',tools:[{type:'web_search'}]}});expect(denied.statusCode).toBe(400);expect(denied.body).toContain('服务端工具');expect(sdk.create).toHaveBeenCalledTimes(3);
+ const failedTrace=(await service.app.inject({url:'/api/gateway/traces',headers:admin})).json().records.find((record:{status:number})=>record.status===400);expect(failedTrace.error).toMatchObject({code:'cursor_invalid_request',message:expect.stringContaining('tools.0')});
  const other=service.proxy.snapshot().accounts.find(a=>a.id!==account.id)!;const otherCreated=await service.app.inject({method:'POST',url:'/api/gateway-keys',headers:admin,payload:{name:'Second account',models:['cursor/fixture-model'],sourceId:other.id,tokenLimit:100}});expect(otherCreated.statusCode,otherCreated.body).toBe(200);const otherKey=otherCreated.json();
  const routed=await service.app.inject({method:'POST',url:'/v1/messages',headers:{...admin,authorization:`Bearer ${otherKey.apiKey}`},payload:{model:'cursor/fixture-model',messages:[{role:'user',content:'Bound account'}]}});expect(routed.statusCode).toBe(200);expect(sdk.create.mock.lastCall![0].apiKey).toBe('second-cursor-fixture');
  await service.proxy.setAccountEnabled(account.id,false);expect((await service.app.inject({method:'POST',url:'/v1/responses',headers:client,payload:{model:'cursor/fixture-model',input:'hi'}})).statusCode).toBe(503);
@@ -65,6 +66,65 @@ it('routes Cursor through the existing scoped API, meters tokens, isolates SDK t
 });
 it('exposes explicit text API limits',()=>{
  for(const body of [{input:[{role:'user',content:[{type:'input_image',image_url:'x'}]}]},{input:'hi',previous_response_id:'old'},{input:'hi',text:{format:{type:'json_schema'}}}])expect(()=>parseCursorInput('responses',{model:'cursor/x',...body})).toThrow();
+});
+it('forwards historical tool-result images through the SDK without losing tool identity or treating tool arguments as attachments',async()=>{
+ const {root,secrets}=await setup();await secrets.set('cursor-account',JSON.stringify({apiKey:'fixture'}));const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();
+ const data='aW1hZ2UtYnl0ZXM=',send=vi.fn().mockResolvedValue({cancel:sdk.cancel,wait:async()=>({status:'finished',result:'OK'})});
+ sdk.create.mockResolvedValue({close:sdk.close,send});
+ const body={model:'cursor/fixture-model',messages:[
+  {role:'assistant',content:[{type:'tool_use',id:'read-image',name:'Read',input:{example:{type:'image',source:{type:'base64',media_type:'image/jpeg',data:'keep-as-argument'}}}}]},
+  {role:'user',content:[{type:'tool_result',tool_use_id:'read-image',content:[{type:'image',source:{type:'base64',media_type:'image/jpeg',data}}]}]},
+  {role:'user',content:'Continue'},
+ ]};
+ const response=await provider.response('messages',body,new AbortController().signal);expect(response.status).toBe(200);
+ const input=send.mock.calls[0][0];expect(input.images).toEqual([{data,mimeType:'image/jpeg'}]);expect(input.text).toContain('read-image');expect(input.text).toContain('[Attached image 1]');expect(input.text).not.toContain(data);expect(input.text).toContain('keep-as-argument');
+});
+it('preserves attachment order across Responses tool outputs and Chat image URLs',()=>{
+ const model='cursor/fixture-model',data='aW1hZ2U=',url='https://images.example.test/image.png';
+ const response=parseCursorInput('responses',{model,input:[
+  {type:'function_call_output',call_id:'prior-read',output:[{type:'input_image',image_url:`data:image/png;base64,${data}`}]},
+  {role:'user',content:[{type:'input_image',image_url:url},{type:'input_text',text:'Compare both'}]},
+ ]});
+ expect(response.images).toEqual([{data,mimeType:'image/png'},{url}]);expect(response.prompt).toContain('prior-read');expect(response.prompt).toContain('[Attached image 2]');expect(response.prompt).not.toContain(data);
+ const chat=parseCursorInput('chat/completions',{model,messages:[{role:'user',content:[{type:'image_url',image_url:{url}},{type:'text',text:'Describe'}]}]});
+ expect(chat.images).toEqual([{url}]);expect(chat.prompt).toContain('Describe');
+});
+it('continues Claude tool history containing provider thinking and discovered tool references',async()=>{
+ const {root,secrets}=await setup();await secrets.set('cursor-account',JSON.stringify({apiKey:'fixture'}));const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();
+ const request={model:'cursor/fixture-model',messages:[
+  {role:'assistant',content:[{type:'thinking',thinking:'private prior reasoning',signature:'provider-signature'},{type:'redacted_thinking',data:'opaque-provider-data'},{type:'tool_use',id:'discover-1',name:'ToolSearch',input:{query:'lookup'}}]},
+  {role:'user',content:[{type:'tool_result',tool_use_id:'discover-1',content:[{type:'tool_reference',tool_name:'client_lookup'},{type:'text',text:'Tool ready'}]}]},
+  {role:'user',content:'Continue with the discovered tool'},
+ ],tools:[{name:'client_lookup',input_schema:{type:'object',properties:{}}}]};
+ const response=await provider.response('messages',request,new AbortController().signal);
+ expect(response.status,await response.clone().text()).toBe(200);
+ const parsed=parseCursorInput('messages',request);
+ expect(parsed.prompt).toContain('discover-1');expect(parsed.prompt).toContain('client_lookup');expect(parsed.prompt).toContain('Tool ready');
+ expect(parsed.prompt).not.toContain('private prior reasoning');expect(parsed.prompt).not.toContain('provider-signature');expect(parsed.prompt).not.toContain('opaque-provider-data');
+});
+it('reports only safe schema fields for unsupported Cursor requests before any network call',async()=>{
+ const {root,secrets}=await setup();await secrets.set('cursor-account',JSON.stringify({apiKey:'fixture'}));const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();
+ const response=await provider.response('messages',{model:'cursor/fixture-model',messages:[{role:'user',content:[{type:'document',source:{type:'url',url:'https://private.example/secret'}}]}]},new AbortController().signal);
+ expect(response.status).toBe(400);const text=await response.text();const result=JSON.parse(text);
+ expect(result.error).toMatchObject({code:'cursor_invalid_request',fields:['messages.0.content']});expect(text).not.toContain('private.example');expect(sdk.create).not.toHaveBeenCalled();
+});
+it('explains unsupported Desktop auto-permission safeguards without dropping them or calling the SDK',async()=>{
+ const {root,secrets}=await setup();await secrets.set('cursor-account',JSON.stringify({apiKey:'fixture'}));const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();
+ const response=await provider.response('messages',{model:'cursor/fixture-model',messages:[{role:'user',content:'Hi'}],safeguards:[{type:'dangerous_tool_use',classifier_context:{private:'never expose'}}]},new AbortController().signal);
+ expect(response.status).toBe(400);const data=await response.json();
+ expect(data.error).toMatchObject({code:'cursor_safeguards_unsupported',fields:['safeguards']});
+ expect(data.error.message).toContain('逐次');
+ expect(JSON.stringify(data)).not.toContain('never expose');expect(sdk.create).not.toHaveBeenCalled();
+});
+it.each([
+ [new TypeError('private network detail'),'cursor_network_error'],
+ [Object.assign(new Error('private timeout detail'),{code:'deadline_exceeded'}),'cursor_timeout'],
+ [Object.assign(new Error('private quota detail'),{status:429}),'cursor_rate_limited'],
+])('retains a safe upstream failure category across Cursor responses (%s)',async(error,code)=>{
+ const {root,secrets}=await setup();await secrets.set('cursor-account',JSON.stringify({apiKey:'fixture'}));const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();
+ sdk.create.mockRejectedValue(error);
+ const response=await provider.response('responses',{model:'cursor/fixture-model',input:'hello'},new AbortController().signal);
+ expect(response.status).toBe(502);const text=await response.text();expect(JSON.parse(text).error.code).toBe(code);expect(text).not.toContain('private');
 });
 it('accepts Claude Code adaptive thinking and context hints without claiming native Anthropic thinking support',()=>{
  const value=parseCursorInput('messages',{model:'cursor/grok-4.6',messages:[{role:'user',content:'continue'}],thinking:{type:'adaptive'},context_management:{edits:[{type:'clear_thinking_20251015',keep:'all'}]},output_config:{effort:'low'}});
@@ -128,6 +188,8 @@ it('connects Cursor to all local Agent targets and routes maintenance through th
   const written=await readFile(paths[target as keyof typeof paths],'utf8');if(target==='workbuddy')expect(JSON.parse(written)).toMatchObject([{id:'cursor/Fixture-model',name:'cursor/Fixture-model'}]);else expect(written).toContain(model);
  }
  const selected=await service.app.inject({method:'PUT',url:'/api/maintenance',headers,payload:{sourceId,model}});expect(selected.statusCode,selected.body).toBe(200);
+ expect(selected.json().readiness.status).toBe('unchecked');
+ expect((await service.app.inject({method:'POST',url:'/api/maintenance/check',headers,payload:{}})).statusCode).toBe(200);
  await expect.poll(async()=>(await service.app.inject({url:'/api/maintenance',headers})).json().readiness.status).toBe('ready');
  expect(sdk.create).toHaveBeenCalled();
 });
@@ -290,4 +352,38 @@ it('replaces an expired Cursor SDK grant on explicit local import and retains it
  const {root,secrets,values}=await setup();await secrets.set('cursor-account',JSON.stringify({apiKey:'expired-private',email:'native@example.test',apiKeyExpiresAtMs:1}));
  const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();await provider.importLocal();expect(sdk.localCreate).toHaveBeenCalledOnce();expect(provider.snapshot().accounts).toHaveLength(1);expect(provider.snapshot().models).toHaveLength(1);
  expect([...values.entries()].filter(([name])=>name.startsWith('grant-')).some(([,raw])=>raw.includes('expired-private'))).toBe(true);
+});
+
+it.each([
+ ['resource_exhausted','cursor_rate_limited'],['permission_denied','cursor_permission_denied'],
+ ['invalid_argument','cursor_request_rejected'],['unavailable','cursor_upstream_unavailable'],
+ ['internal','cursor_upstream_internal'],['deadline_exceeded','cursor_timeout'],['unauthenticated','cursor_authentication_failed'],
+])('classifies SDK RunError code %s after its name and status have been stripped',async(code,expected)=>{
+ const {root,secrets}=await setup();await secrets.set('cursor-account',JSON.stringify({apiKey:'fixture'}));const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();
+ sdk.create.mockResolvedValue({close:sdk.close,send:async()=>({cancel:sdk.cancel,wait:async()=>({status:'error',error:{code,message:'private upstream detail'}})})});
+ const response=await provider.response('responses',{model:'cursor/fixture-model',input:'hello'},new AbortController().signal);
+ const text=await response.text();expect(JSON.parse(text).error.code).toBe(expected);expect(text).not.toContain('private');
+});
+it('retries Cursor quota and catalog reads twice without generating a model response',async()=>{
+ const {root,secrets}=await setup();await secrets.set('cursor-account',JSON.stringify({apiKey:'fixture'}));
+ sdk.models.mockRejectedValue(new TypeError('fetch failed'));const fetcher=vi.spyOn(globalThis,'fetch').mockResolvedValueOnce(new Response(null,{status:503})).mockResolvedValueOnce(Response.json({items:[{id:'recovered',displayName:'Recovered'}]}));
+ sdk.quota.mockRejectedValueOnce(Object.assign(new Error('temporary'),{status:503})).mockRejectedValueOnce(new TypeError('fetch failed')).mockResolvedValue({plan:'Pro',windows:[]});
+ const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();
+ expect(sdk.models).toHaveBeenCalledOnce();expect(fetcher).toHaveBeenCalledTimes(2);expect(sdk.quota).toHaveBeenCalledTimes(3);expect(provider.snapshot().models[0].id).toBe('cursor/recovered');expect(sdk.create).not.toHaveBeenCalled();
+},10000);
+
+it('reports the actual serialized SDK model-not-found failure without retryable 502 or raw details',async()=>{
+ const {root,secrets}=await setup();await secrets.set('cursor-account',JSON.stringify({apiKey:'fixture'}));const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();
+ sdk.create.mockResolvedValue({close:sdk.close,send:async()=>({cancel:sdk.cancel,wait:async()=>({status:'error',error:'model not found: private upstream model details'})})});
+ const response=await provider.response('messages',{model:'cursor/fixture-model',messages:[{role:'user',content:'hello'}]},new AbortController().signal);
+ expect(response.status).toBe(400);const raw=await response.text();expect(JSON.parse(raw).error.code).toBe('cursor_model_not_found');expect(raw).not.toContain('private');
+});
+
+it.each(['string','object'])('reports Cursor model region restrictions from a serialized %s error without invalidating the account',async(shape)=>{
+ const {root,secrets}=await setup();await secrets.set('cursor-account',JSON.stringify({apiKey:'fixture'}));const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();
+ const message='Model not available This model provider is not supported in your region. Visit https://cursor.com/docs/account/regions for more information. PRIVATE';
+ sdk.create.mockResolvedValue({close:sdk.close,send:async()=>({cancel:sdk.cancel,wait:async()=>({status:'error',error:shape==='string'?message:{message}})})});
+ const response=await provider.response('messages',{model:'cursor/fixture-model',messages:[{role:'user',content:'hello'}]},new AbortController().signal);
+ expect(response.status).toBe(403);const raw=await response.text();expect(JSON.parse(raw).error).toMatchObject({code:'cursor_region_unsupported'});expect(raw).toContain('地区');expect(raw).not.toContain('PRIVATE');
+ expect(provider.snapshot().models.some(m=>m.id==='cursor/fixture-model')).toBe(true);
 });

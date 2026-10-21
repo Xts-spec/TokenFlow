@@ -1,3 +1,4 @@
+import {transientOfficialRead} from './official-refresh.js';
 import {z} from 'zod';
 import type {TokenUsage} from '@cursor/sdk';
 import type {QuotaReport,QuotaWindow} from './quota/types.js';
@@ -49,7 +50,7 @@ export class CursorUsage {
    // This snapshot is the unified Grok/Cursor weekly allowance, not the legacy
    // dollar ledger or the separate legacy Grok Bot allowance.
    let shared:z.infer<typeof unifiedResponse>|undefined;
-   try{shared=unifiedResponse.parse(await this.call('GetXaiUserUsageSnapshot'));}catch{/* Keep unavailable balances unknown; never substitute legacy amounts. */}
+   try{shared=unifiedResponse.parse(await this.call('GetXaiUserUsageSnapshot'));}catch(error){if(transientOfficialRead(error))throw error;/* Unsupported balances stay unknown; never substitute legacy amounts. */}
    windows.push({id:'cursor-models',label:'Cursor Models',usedPercent:shared?.usagePercent===undefined?null:Math.min(100,shared.usagePercent),resetsAt:iso(shared?.currentPeriodEndMs??plan.planInfo?.includedUsageResetsAt),note:'每周刷新 · 与 Grok 共用'});
    const balance=shared?.prepaidBalanceWithheld?undefined:shared?.prepaidBalanceCents;
    windows.push({id:'other-models',label:'Other Models',usedPercent:null,...(balance!==undefined?{remaining:balance/100,unit:'USD'}:{}),note:balance!==undefined?'预付费余额 · 也用于 Cursor Models 超额用量':'第三方模型按预付费余额计费；余额暂未提供，请查看官方账单。'});

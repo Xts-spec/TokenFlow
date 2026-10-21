@@ -7,18 +7,18 @@ import type {ResponseObservation} from './gateway-observation.js';
 import {appendGatewayResponseHashes,appendGatewayResponseRefs,type LegacyResponseRef} from './gateway-response-evidence.js';
 const counter=z.number().nonnegative();
 const toolSchema=z.object({id:z.string().max(64),name:z.string().max(128),status:z.enum(['pending','returned','error']),result:z.string().max(16384).optional(),truncated:z.boolean().optional(),returnedAt:z.string().optional()});
-const traceSchema=z.object({id:z.string().uuid(),runId:z.string().uuid(),keyId:z.string().max(80),agent:z.string().max(160),target:z.string().max(80),sourceId:z.string().max(80),model:z.string().max(300),protocol:z.string().max(80),startedAt:z.string(),durationMs:counter,status:counter,error:z.object({code:z.string().max(128),message:z.string().max(1024)}).optional(),inputTokens:counter.nullable(),cachedTokens:counter.nullable(),cacheWriteTokens:counter.nullable(),outputTokens:counter.nullable(),reasoningTokens:counter.nullable(),firstOutputMs:counter.optional(),generationMs:counter.optional(),responseRef:z.string().optional(),responseHash:z.string().regex(/^[a-f0-9]{64}$/).optional(),inputs:z.object({system:counter,user:counter,assistant:counter,tool:counter}),toolCallCount:counter.optional(),toolResultCount:counter.optional(),tools:z.array(toolSchema).max(64),results:z.array(toolSchema).max(64)});
+const traceSchema=z.object({id:z.string().uuid(),runId:z.string().uuid(),keyId:z.string().max(80),agent:z.string().max(160),target:z.string().max(80),sourceId:z.string().max(80),model:z.string().max(300),protocol:z.string().max(80),compaction:z.object({inputBytes:counter,outputBytes:counter,calls:counter,reused:counter,durationMs:counter,inputTokens:counter.nullable(),outputTokens:counter.nullable(),cachedTokens:counter.nullable(),cacheWriteTokens:counter.nullable().default(null),reasoningTokens:counter.nullable(),failed:z.boolean(),unmetered:z.boolean().default(false),cacheWriteFailed:z.boolean().optional()}).optional(),startedAt:z.string(),durationMs:counter,status:counter,error:z.object({code:z.string().max(128),message:z.string().max(1024)}).optional(),inputTokens:counter.nullable(),cachedTokens:counter.nullable(),cacheWriteTokens:counter.nullable(),outputTokens:counter.nullable(),reasoningTokens:counter.nullable(),firstOutputMs:counter.optional(),generationMs:counter.optional(),responseRef:z.string().optional(),responseHash:z.string().regex(/^[a-f0-9]{64}$/).optional(),inputs:z.object({system:counter,user:counter,assistant:counter,tool:counter}),toolCallCount:counter.optional(),toolResultCount:counter.optional(),tools:z.array(toolSchema).max(64),results:z.array(toolSchema).max(64)});
 export type GatewayTrace=z.infer<typeof traceSchema>;
 export type TraceSummary=Omit<GatewayTrace,'tools'|'results'> & {toolCalls:number;toolResults:number;toolNames:string[]};
 type RawResult={id:string;name:string;result:string;error:boolean;truncated:boolean};
 export type RequestTrace={inputs:GatewayTrace['inputs'];results:RawResult[];previousResponse?:string};
 const secretNames=/^(?:authorization|x-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|password|token|secret|client[_-]?secret)$/i;
-function redact(s:string){return s.replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi,'Bearer [已隐藏]').replace(/\bsk-[A-Za-z0-9_-]{12,}/g,'[密钥已隐藏]').replace(/((?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|authorization)["']?\s*[=:]\s*["']?)[^\s"',;}]+/gi,'$1[已隐藏]');}
+export function redactTraceText(s:string){return s.replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi,'Bearer [已隐藏]').replace(/\b(?:sk-|tfl_)[A-Za-z0-9_-]{12,}/g,'[密钥已隐藏]').replace(/(\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|authorization|token|secret|client[_-]?secret)["']?\s*[=:]\s*)(?:"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|[^\s"',;}]+)/gi,'$1[已隐藏]');}
 function resultText(value:unknown){
  // Attachments and binary payloads are summarized, never copied into trace storage.
  const clean=(v:unknown,depth=0):unknown=>{
   if(depth>8)return '[结构过深，已省略]';
-  if(typeof v==='string')return redact(v).slice(0,16384);
+  if(typeof v==='string')return redactTraceText(v).slice(0,16384);
   if(Array.isArray(v))return v.slice(0,64).map(item=>clean(item,depth+1));
   if(v&&typeof v==='object'){
    const data=v as Record<string,unknown>;
@@ -27,7 +27,7 @@ function resultText(value:unknown){
   }
   return v;
  };
- const output=typeof value==='string'?redact(value):JSON.stringify(clean(value))??'';
+ const output=typeof value==='string'?redactTraceText(value):JSON.stringify(clean(value))??'';
  return {result:output.slice(0,16384),truncated:output.length>16384};
 }
 /** Capture tool results after the latest human message; never save user/assistant message bodies. */
@@ -62,7 +62,7 @@ export class GatewayTraces{
  record(call:Omit<GatewayCall,'id'>,request:RequestTrace,response:ResponseObservation={tools:[]}){
   const id=randomUUID(),byTool=new Map<string,{record:GatewayTrace;tool:GatewayTrace['tools'][number]}>();for(const record of this.records)for(const tool of record.tools)if(!byTool.has(tool.id))byTool.set(tool.id,{record,tool});
   const parent=request.results.map(r=>byTool.get(this.ref(call.keyId,r.id))?.record).filter(Boolean).at(-1)??(request.inputs.user===0&&request.previousResponse?this.records.find(r=>r.keyId===call.keyId&&r.responseRef===this.ref(call.keyId,request.previousResponse!)):undefined);
-  const item:GatewayTrace={id,runId:parent?.runId??id,keyId:call.keyId,agent:call.agent,target:call.target??'key',sourceId:call.sourceId??'',model:call.model,protocol:call.protocol,startedAt:call.startedAt,durationMs:call.durationMs,status:call.status,...(call.error?{error:{code:redact(call.error.code).slice(0,128),message:redact(call.error.message).slice(0,1024)}}:{}),inputTokens:call.inputTokens,cachedTokens:call.cachedTokens??null,cacheWriteTokens:call.cacheWriteTokens??null,outputTokens:call.outputTokens,reasoningTokens:call.reasoningTokens??null,inputs:request.inputs,tools:[],results:[],...(response.responseId?{responseRef:this.ref(call.keyId,response.responseId),responseHash:createHash('sha256').update(`response:${response.responseId}`).digest('hex')}:{}),...(response.firstOutputAt===undefined?{}:{firstOutputMs:Math.min(call.durationMs,Math.max(0,response.firstOutputAt-Date.parse(call.startedAt))),generationMs:response.generationMs})};
+  const item:GatewayTrace={id,runId:parent?.runId??id,keyId:call.keyId,agent:call.agent,target:call.target??'key',sourceId:call.sourceId??'',model:call.model,protocol:call.protocol,startedAt:call.startedAt,durationMs:call.durationMs,status:call.status,...(call.compaction?{compaction:structuredClone(call.compaction)}:{}),...(call.error?{error:{code:redactTraceText(call.error.code).slice(0,128),message:redactTraceText(call.error.message).slice(0,1024)}}:{}),inputTokens:call.inputTokens,cachedTokens:call.cachedTokens??null,cacheWriteTokens:call.cacheWriteTokens??null,outputTokens:call.outputTokens,reasoningTokens:call.reasoningTokens??null,inputs:request.inputs,tools:[],results:[],...(response.responseId?{responseRef:this.ref(call.keyId,response.responseId),responseHash:createHash('sha256').update(`response:${response.responseId}`).digest('hex')}:{}),...(response.firstOutputAt===undefined?{}:{firstOutputMs:Math.min(call.durationMs,Math.max(0,response.firstOutputAt-Date.parse(call.startedAt))),generationMs:response.generationMs})};
   const returned=this.seenResults;let newResults=0;
   for(const result of request.results){const ref=this.ref(call.keyId,result.id);const old=byTool.get(ref);if(old?old.tool.status!=='pending':returned.has(ref))continue;returned.add(ref);newResults++;
    const tool:z.infer<typeof toolSchema>={id:ref,name:old?.tool.name??result.name??'',status:result.error?'error':'returned',result:result.result,truncated:result.truncated,returnedAt:call.startedAt};

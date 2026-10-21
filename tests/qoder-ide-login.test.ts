@@ -99,3 +99,8 @@ it('refuses a concurrent SQLite writer and can retry after that writer exits',as
  try{await expect(f.manager.apply(revision,prepared)).rejects.toThrow('数据库正在使用');expect(f.vault.size).toBe(0);}finally{db.exec('ROLLBACK');db.close();}
  await f.manager.apply(revision,prepared);expect(await f.manager.status()).toMatchObject({accountId:'pooled-user'});
 });
+
+it('passes the IDE display name into usage attribution when no email is available',async()=>{
+ const f=await fixture({id:'ide-user',name:'IDE User',token:'private-ide-token'});
+ expect(await f.reader.usageLogin()).toEqual({provider:'qoder',accountId:'ide-user',email:null,displayName:'IDE User'});
+});

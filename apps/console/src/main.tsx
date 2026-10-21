@@ -72,7 +72,7 @@ function App(){
  // Only follow an in-progress operation; stop on completion or a read failure.
  useEffect(()=>{
   const pending=local.login&&['starting','waiting_for_browser','verifying'].includes(local.login.status);
-  if(localError||!pending&&!local.accountsLoading&&!local.quotaBusy&&!['starting','stopping'].includes(local.state))return;
+  if(localError||!pending&&!local.accountsLoading&&!local.apiRoutesSyncing&&!local.quotaBusy&&!['starting','stopping'].includes(local.state))return;
   const timer=setTimeout(()=>void refresh().catch(()=>{}),1500);return()=>clearTimeout(timer);
  },[local,localError,refresh]);
  const previousLoginStatus=useRef<string|undefined>(undefined);
@@ -120,7 +120,7 @@ function App(){
  return <div className={`tf ${platform==='darwin'?'nativeMac':platform==='win32'?'nativeWindows':''}`}>
   {(platform==='darwin'||platform==='win32')&&<div className="tfTitlebar" aria-hidden="true"/>}
   <aside className="tfSide">
-   <div className="tfBrand"><img src="/logo.svg" alt="" width="24" height="24"/>TokenFlow<i className={`dot ${local.state==='running'?'ok':local.state==='failed'?'bad':''}`} title={gatewayText[local.state]??'网关运行中'}/></div>
+   <div className="tfBrand"><img src="/logo.svg" alt="" width="24" height="24"/>TokenFlow</div>
    <nav aria-label="主导航">
     <small className="tfNavGroup">已保存</small>{saved.map(navButton)}
     <small className="tfNavGroup">使用</small>{used.map(navButton)}

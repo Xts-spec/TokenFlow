@@ -5,7 +5,6 @@ html,body,#root{height:100%;overflow:hidden;overscroll-behavior:none}
 .nativeMac .tfSide{padding-top:46px;-webkit-app-region:drag}
 .nativeMac .tfSide button{-webkit-app-region:no-drag}
 .tfBrand{display:flex;align-items:center;gap:9px;padding:0 8px;font-size:15px;font-weight:650;letter-spacing:-.4px;color:var(--text)}
-.tfBrand .dot{width:7px;height:7px;margin:0 0 0 auto}
 .tfSide nav{display:grid;gap:2px}
 .tfNavGroup{font-size:10px;font-weight:600;letter-spacing:.08em;color:#8a97ab;padding:10px 10px 4px}
 .tfNavGroup:first-child{padding-top:0}
@@ -292,7 +291,6 @@ to{opacity:1;transform:none}
 .tfSide nav{display:flex}
 .tfSide nav button{width:auto;white-space:nowrap}
 .tfSideFoot{margin:0 0 0 auto}
-.tfBrand .dot{margin-left:4px}
 .tfPage{padding:18px 16px 32px}
 .tfBanner{padding:9px 16px}
 .tfPanelHead{flex-wrap:wrap}

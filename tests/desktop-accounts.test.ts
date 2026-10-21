@@ -118,3 +118,8 @@ it('restores the original after WorkBuddy normalizes its domestic login endpoint
  const native=JSON.parse(await readFile(f.path,'utf8'));native.auth.domain='copilot.tencent.com';await writeFile(f.path,JSON.stringify(native));
  await f.manager.apply((await f.manager.status()).revision,null);expect(await readFile(f.path)).toEqual(f.original);
 });
+
+it('passes a Qoder display name into usage attribution without requiring email',async()=>{
+ const f=await setup('qoder');await writeFile(f.path,Buffer.from(await crypt('encrypt',JSON.stringify({schemaVersion:1,user:{id:'native-user',name:'Qoder User'}})),'base64'));
+ expect(await f.manager.usageLogin()).toMatchObject({provider:'qoder',accountId:'native-user',email:null,displayName:'Qoder User'});
+});

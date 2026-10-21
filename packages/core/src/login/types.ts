@@ -1,4 +1,4 @@
-export type LoginProviderId = 'codex' | 'claude' | 'claude-manual' | 'antigravity' | 'kimi' | 'xai' | 'qoder' | 'workbuddy' | 'workbuddy-overseas' | 'zcode' | 'zcode-bigmodel' | 'trae';
+export type LoginProviderId = 'codex' | 'claude' | 'claude-manual' | 'antigravity' | 'kimi' | 'xai' | 'qoder' | 'workbuddy' | 'workbuddy-overseas' | 'zcode' | 'trae';
 /** `code`：官方页面显示授权码，由用户粘贴回来，不占用本机端口。 */
 export type LoginFlowKind = 'callback' | 'device' | 'code';
 
