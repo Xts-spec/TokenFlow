@@ -26,9 +26,10 @@ const server=createServer(async(req,res)=>{
  upstream.push({phase,body:request});
  const summary=request.instructions?.startsWith('Summarize the supplied');
  const trigger=request.input?.some(i=>i.type==='compaction_trigger');
+ const localCompact=JSON.stringify(request.input?.at(-1)).includes('CONTEXT CHECKPOINT COMPACTION');
  const toolLimit=phase===1&&process.argv.includes('--auto-only')?0:phase===0&&process.argv.includes('--long-recovery')?20:6;
- const tool=!summary&&!trigger&&(phase===0||phase===1)&&tools++<toolLimit;
- const n=++responseNumber,answer=summary?'CHECKPOINT: Directory checks completed; preserve TURN_ONE_MARKER. '+[...new Set(JSON.stringify(request.input).match(/GATEWAY_REPEAT_\d+_MARKER/g)??[])].join(' '):`REPLY_${phase}_MARKER`;
+ const tool=!summary&&!trigger&&!localCompact&&(phase===0||phase===1)&&tools++<toolLimit;
+ const n=++responseNumber,answer=summary||localCompact?'CHECKPOINT: Directory checks completed; preserve TURN_ONE_MARKER. '+[...new Set(JSON.stringify(request.input).match(/GATEWAY_REPEAT_\d+_MARKER/g)??[])].join(' '):`REPLY_${phase}_MARKER`;
  const item=trigger?{type:'compaction',encrypted_content:'official-fixture-checkpoint'}:tool?{id:`fc_${n}`,type:'function_call',call_id:`call_${n}`,name:'exec_command',arguments:JSON.stringify({cmd:phase===0&&process.argv.includes('--long-recovery')?"python3 -c \"print('fixture-long-output ' * 2000)\"":'pwd',max_output_tokens:phase===0&&process.argv.includes('--long-recovery')?16000:64})}:{id:`msg_${n}`,type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:answer,annotations:[]}]};
  if(trigger)compactions++;
  const output=phase===1&&!summary&&!trigger&&!tool?[{id:`rs_chatcmpl_fixture_${n}`,type:'reasoning',encrypted_content:'',summary:[{type:'summary_text',text:'GATEWAY_REASONING_MARKER'}]},item]:[item];
@@ -88,7 +89,8 @@ try{
  assert.ok(JSON.stringify(upstream.filter(c=>c.phase===3)).includes(process.argv.includes('--local-compaction')?'REPLY_1_MARKER':'CHECKPOINT'),'gateway summary lost on native resume');
  const migrationSummaries=upstream.filter(c=>c.phase===1&&c.body.instructions?.startsWith('Summarize the supplied'));
  if(process.argv.includes('--repeat-gateway')){
-  assert.ok(migrationSummaries.length>=3,'repeated gateway turns did not compact again');
+  const requestedCompactions=process.argv.includes('--local-compaction')?upstream.filter(call=>call.phase===1&&JSON.stringify(call.body.input?.at(-1)).includes('CONTEXT CHECKPOINT COMPACTION')).length:migrationSummaries.length;
+  assert.ok(requestedCompactions>=3,'repeated gateway tool growth did not compact again');
   for(const round of [1,2])assert.ok(JSON.stringify(upstream.filter(c=>c.phase===3)).includes(`GATEWAY_REPEAT_${round}_MARKER`),'repeated gateway user constraint lost on official resume');
   const progress=compactionProgress.filter(item=>item.phase===1&&item.itemType==='contextCompaction');
   const started=progress.filter(item=>item.method==='item/started').length,completed=progress.filter(item=>item.method==='item/completed').length;

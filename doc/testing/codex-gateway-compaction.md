@@ -130,7 +130,7 @@ node --import tsx scripts/codex-model-switch-compaction-smoke.mjs /path/to/deskt
 - `scripts/codex-first-long-history-smoke.mjs` 使用安装版 `codex-cli 0.163.0-alpha.11`、独立 HOME、只读沙盒和 48 次真实工具执行，生成约 532 KB 的有效历史（rollout 约 2.55 MB），确认没有压缩条目。原来源最后报告 150,000 输入 Token。
 - `--client-only --known-usage` 关闭测试内的网关首次接手处理，保留生产 Codex 配置。Codex 首次发送约 561 KB 请求，没有 `contextCompaction` 事件；具有较小窗口的合成来源拒绝约 558 KB 转发后，会话失败。该容量仅属于测试来源，不是新增的网关限制。这个结果不支持将所有来源的首次处理都交给 Codex。
 - `--known-usage --live` 通过当前已授权的 `codex/gpt-6-luna` 验证现有首次策略：两次真实摘要请求（约 52 KB、17 KB），一次约 78 KB 的正式续聊，均返回 200，Codex 完成回复并准确保留最早用户指令中的随机核验标记。未读取真实用户对话，未修改真实 Codex 配置。
-- 继续保留首次接手长历史时按需分块的策略；之后仍由 Codex 触发。已有 `codex-context-migration-smoke.mjs --long-recovery --repeat-gateway` 验证 50 个真实运行时请求、三轮客户端压缩及切回官方/再切回网关的摘要复用。
+- 继续保留首次接手长历史时按需分块的策略；之后仍由 Codex 触发。`codex-context-migration-smoke.mjs --long-recovery --repeat-gateway` 及追加 `--local-compaction` 的生产 TokenFlow 配置各验证 50 个真实运行时请求、三轮客户端压缩及切回官方/再切回网关的摘要复用；生产配置中网关仅首次生成一次摘要，后续三轮由 Codex 自行发起。短回合不强求重复压缩，模型切换测试验证其遵循 `body_after_prefix` 语义。
 
 ```sh
 # 对照：预期失败，证明客户端未在首次请求前压缩较大历史
