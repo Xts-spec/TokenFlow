@@ -202,10 +202,9 @@ function codexGatewayStillPresent(current:string|null):boolean {
   if(current===null)return false;
   try{
     const doc=decodeConfig('codex',current) as {[key:string]:any};
-    const providers=isObject(doc.model_providers)?doc.model_providers:{};
     const profile=typeof doc.profile==='string'&&isObject(doc.profiles)?doc.profiles[doc.profile]:undefined;
     const provider=isObject(profile)&&typeof profile.model_provider==='string'?profile.model_provider:doc.model_provider;
-    return provider==='token_flow'||Object.hasOwn(providers,'token_flow');
+    return provider==='token_flow';
   }catch{return false;}
 }
 // Reverse only the fields this connection changed. Client settings added later survive.
@@ -242,10 +241,10 @@ function restoredConfig(record:Record,current:string|null):string|null {
 function object(value:unknown):{[key:string]:any} {
   if(!value||typeof value!=='object'||Array.isArray(value))throw conflict('配置格式无效，未覆盖原文件。');return value;
 }
-// An explicitly previewed routing repair may replace drifted routing fields.
+// Applying a selected model replaces drifted routing fields.
 // The exact current bytes are still journaled and checked again before writing.
 function repairConfigBase(record:Record,current:string|null):string|null {
-  try{return restoredConfig(record,current);}catch{/* Explicit preview may replace the drifted routing fields below. */}
+  try{return restoredConfig(record,current);}catch{/* The selected model replaces drifted routing fields below. */}
   if(current===null)return record.before;
   const actual=decodeConfig(record.target,current),before=record.before===null?undefined:decodeConfig(record.target,record.before),after=decodeConfig(record.target,record.after);
   if(workbuddyModels(record.target)){
@@ -280,6 +279,41 @@ function codexProfile(doc:{[key:string]:any}):{[key:string]:any}|undefined {
   if(typeof doc.profile!=='string'||!Object.hasOwn(object(doc.profiles),doc.profile))throw conflict('Codex 当前配置档案无效，未修改原设置。');
   return object(doc.profiles[doc.profile]);
 }
+/** Exit gateway routing from the current document, never replay a previous provider. */
+function nativeConfig(target:Target,current:string|null,record:Record):string|null {
+ if(current===null)return target==='codex'?stringify({model_provider:'openai'}):null;
+ const value=decodeConfig(target,current);
+ if(workbuddyModels(target)){
+  const doc=Array.isArray(value)?{models:value}:object(value);
+  const models=z.array(z.object({id:z.string()}).passthrough()).parse(doc.models??[]);
+  const owned=new Set([...(record.selections??[record]).map(item=>item.model),...Object.keys(record.modelAliases??{})]);
+  const kept=models.filter(item=>!owned.has(item.id.replace(/^custom-local:/,'')));
+  return encodeConfig(target,Array.isArray(value)?kept:{...doc,models:kept});
+ }
+ const doc=object(value);
+ if(target==='codex'){
+  const clean=(config:{[key:string]:any})=>{
+   for(const key of ['model','review_model','openai_base_url','model_catalog_json','model_context_window','model_auto_compact_token_limit','model_auto_compact_token_limit_scope','forced_login_method','forced_chatgpt_workspace_id'])delete config[key];
+   config.model_provider='openai';
+   if(config.agents){const agents={...object(config.agents)};delete agents.default_subagent_model;delete agents.default_subagent_reasoning_effort;if(Object.keys(agents).length)config.agents=agents;else delete config.agents;}
+   if(config.model_providers){const providers={...object(config.model_providers)};delete providers.token_flow;delete providers.openai;if(Object.keys(providers).length)config.model_providers=providers;else delete config.model_providers;}
+  };
+  clean(doc);const profile=codexProfile(doc);if(profile)clean(profile);
+ }else if(target==='claude'){
+  for(const key of ['model','availableModels','modelPicker','apiKeyHelper','forceLoginMethod','forceLoginOrgUUID','forceLoginGatewayUrl'])delete doc[key];
+  if(doc.env){const env={...object(doc.env)};
+   for(const key of ['ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_API_KEY','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY','CLAUDE_CODE_OAUTH_TOKEN','ANTHROPIC_PROFILE','ANTHROPIC_MODEL','ANTHROPIC_DEFAULT_OPUS_MODEL','ANTHROPIC_DEFAULT_SONNET_MODEL','ANTHROPIC_DEFAULT_FABLE_MODEL','ANTHROPIC_DEFAULT_HAIKU_MODEL','ANTHROPIC_SMALL_FAST_MODEL','CLAUDE_CODE_BG_CLASSIFIER_MODEL','CLAUDE_CODE_AUTO_MODE_MODEL','CLAUDE_CODE_SUBAGENT_MODEL','CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY'])delete env[key];
+   doc.env=env;
+  }
+ }else if(target==='pi'||target==='qoder'){
+  if(doc.providers){const providers={...object(doc.providers)};delete providers['token-flow'];doc.providers=providers;}
+ }else if(target==='deepseek'){
+  const entry=doc['llm-pi-ai'];if(entry?.config?.providers){const providers={...object(entry.config.providers)};delete providers['token-flow'];entry.config.providers=providers;}
+  const defaults=doc['agent-default-model'];if(defaults?.config){delete defaults.config.provider;delete defaults.config.model;}
+ }
+ return encodeConfig(target,doc);
+}
+
 export function connectedConfig(target:Target,original:string|null,origin:string,model:string,key:string,catalogPath?:string,selectedModels?:string[],modelLabels:{[id:string]:string}={},fastModel?:string) {
   const chosen=selectedModels??[model];
   const label=(id:string)=>apiModelDisplayName(modelLabels[id]?.trim()||id);
@@ -289,11 +323,9 @@ export function connectedConfig(target:Target,original:string|null,origin:string
     const modelList=chosen.map(id=>({id,name:label(id),input:['text'],reasoning:false,contextWindow:131072,maxTokens:16384}));
     if(target==='pi'){
       const providers=object(doc.providers??{});
-      if(Object.hasOwn(providers,'token-flow'))throw conflict('Pi 已有 token-flow 供应商，请先恢复已有接入。');
       return encodeConfig(target,{...doc,providers:{...providers,'token-flow':{baseUrl:`${url.origin}/v1`,api:'openai-completions',apiKey:key,models:modelList}}});
     }
     const entry=object(doc['llm-pi-ai']??{id:'llm-pi-ai'}),config=object(entry.config??{}),providers=object(config.providers??{});
-    if(Object.hasOwn(providers,'token-flow'))throw conflict('DeepSeek 已有 token-flow 供应商，请先恢复已有接入。');
     return encodeConfig(target,{...doc,'agent-default-model':{...object(doc['agent-default-model']??{id:'agent-default-model'}),config:{...object(doc['agent-default-model']?.config??{}),provider:'token-flow',model}},'llm-pi-ai':{...entry,config:{...config,providers:{...providers,'token-flow':{baseURL:`${url.origin}/v1`,api:'openai-completions',headers:{Authorization:`Bearer ${key}`},models:chosen.map(id=>({id,name:label(id),input:['text'],contextWindow:131072,maxTokens:16384}))}}}}});
   }
   if(target==='qoder'){
@@ -307,8 +339,7 @@ export function connectedConfig(target:Target,original:string|null,origin:string
     const value=original===null?[]:JSON.parse(original);
     const doc=Array.isArray(value)?{models:value}:object(value);
     if(Object.keys(doc).some(k=>k!=='models'))throw conflict('WorkBuddy models.json 包含额外设置，自动转换为原生数组会丢失字段，已保留原文件；请先整理这些设置再接入。');
-    const models=doc.models===undefined?[]:z.array(z.object({id:z.string()}).passthrough()).parse(doc.models);
-    if(models.some(m=>chosen.some(model=>m.id===model||m.id===`custom-local:${model}`)))throw conflict('已有同名自定义模型，请先保留或移除该配置后再接入。');
+    const models=(doc.models===undefined?[]:z.array(z.object({id:z.string()}).passthrough()).parse(doc.models)).filter(m=>!chosen.some(model=>m.id===model||m.id===`custom-local:${model}`));
     // WorkBuddy renders custom models as name:ID when those two fields differ.
     // Give it a readable ID; the connection journal maps it back to the authorized route.
     const used=new Set(models.map(m=>m.id.replace(/^custom-local:/,'')));
@@ -335,11 +366,12 @@ export function connectedConfig(target:Target,original:string|null,origin:string
   // Compact growth after the carried prefix, otherwise that fixed cost alone
   // can exceed the catalog threshold again after every small tool result.
   const routing={model,model_provider:'token_flow',model_auto_compact_token_limit_scope:'body_after_prefix',...(catalogPath?{model_catalog_json:catalogPath}:{}),...(chosen.some(model=>a2aCapabilities(model)?.serverTools===false)?{web_search:'disabled'}:{})};
+  delete doc.openai_base_url;delete doc.review_model;
   const next:{[key:string]:any}={...doc,...routing,model_providers:{...providers,token_flow:{name:'TokenFlow',base_url:`${url.origin}/v1`,wire_api:'responses',experimental_bearer_token:key,requires_openai_auth:false,supports_websockets:false}}};
   // Legacy clients overlay the selected profile. Keep its policy and selection;
   // update only model routing. Newer CLI-selected profile files stay user-owned.
   const profile=codexProfile(doc);
-  if(profile)next.profiles={...object(doc.profiles),[doc.profile as string]:{...profile,...routing}};
+  if(profile){const selected:{[key:string]:any}={...profile,...routing};delete selected.openai_base_url;delete selected.review_model;next.profiles={...object(doc.profiles),[doc.profile as string]:selected};}
   // Remove only explicit subagent model defaults while connected. Codex then
   // inherits the current parent's model/effort, including in-app model changes.
   // The connection journal restores these defaults with the official config.
@@ -464,7 +496,7 @@ export class AgentConnections {
       const active=(await this.records()).find(r=>r.target===input.target&&r.state!=='restored');
       if(active&&active.id!==input.replaceId)throw conflict('此 Agent 已有接入记录，请审批切换方案后再接入。');
       if(input.replaceId&&!active)throw conflict('接入记录已变化，请重新生成维修方案。');
-      const original=active?(input.rewrite||input.target==='qoder'?repairConfigBase(active,before):restoredConfig(active,before)):before;
+      const original=active?repairConfigBase(active,before):before;
       const selectedModels=input.selections?.map(item=>item.model);
       if(input.selections){modelSelectionsSchema.parse(input.selections);if(!input.selections.some(item=>item.model===input.model&&item.sourceId===input.sourceId))throw conflict('默认模型必须在已选模型中');}
       if(input.fastModel&&!(input.selections??[{model:input.model,sourceId:input.sourceId}]).some(item=>item.model===input.fastModel))throw conflict('快速模型必须在已选模型中');
@@ -490,7 +522,7 @@ export class AgentConnections {
     const records=await this.records();const active=records.find(r=>r.target===target&&r.state!=='restored');
     await this.requireEditableProfile(target);
     const current=await readConfig(this.paths[target]);
-    const original=active?(rewrite||target==='qoder'?repairConfigBase(active,current):restoredConfig(active,current)):current;
+    const original=active?repairConfigBase(active,current):current;
     const after=connectedConfig(target,original,origin,model,'<审批后由网关注入客户端 Key>',target==='codex'?this.catalogPath(selections?JSON.stringify(selections.map(item=>item.model)):model):undefined,selections?.map(item=>item.model),{},fastModel);
     // Only expose gateway-owned routing fields, never the full user configuration.
     const parsed=decodeConfig(target,after) as {[key:string]:any};
@@ -521,31 +553,53 @@ export class AgentConnections {
     });
   }
   async currentOfficialModel(){return officialCodexModel(this.paths.codex,await readConfig(this.paths.codex));}
-  async restoration(id:string){
+  async nativeModel(id:string){return officialCodexModel(this.paths.codex,await this.restoration(id,'native'));}
+  async restoration(id:string,destination:'previous'|'native'='previous'){
     const record=(await this.records()).find(r=>r.id===id);if(!record)throw conflict('备份不存在');
     const current=await readConfig(this.paths[record.target]);
-    return equivalentConfig(record.target,current,record.before)?current:restoredConfig(record,current);
+    return destination==='native'?nativeConfig(record.target,current,record):this.restoreText(record,current);
+  }
+  private restoreText(record:Record,current:string|null){
+    try{return restoredConfig(record,current);}
+    catch(error){
+      if(record.target!=='codex'||!(error instanceof Error)||!error.message.includes('无法安全还原')||!codexGatewayStillPresent(current))throw error;
+      return repairConfigBase(record,current);
+    }
+  }
+  async restorePreview(id:string,mode:'previous'|'native'='previous'){
+    const record=(await this.records()).find(r=>r.id===id&&r.state!=='restored');if(!record)throw conflict('接入记录不存在或已还原，请刷新。');
+    const current=await readConfig(this.paths[record.target]);
+    let reason='';try{if(mode==='native')nativeConfig(record.target,current,record);else this.restoreText(record,current);}catch(error){reason=error instanceof Error?error.message:'无法确认原配置，请检查后重试。';}
+    let destination:{kind:'official'|'custom'|'default';provider:string;model?:string}|undefined;
+    if(mode==='native')destination={kind:'official',provider:record.target==='codex'?'openai':record.target};
+    else if(record.target==='codex'){
+      const original=parse(record.before??''),effective={...original,...codexProfile(original)};
+      const provider=typeof effective.model_provider==='string'?effective.model_provider:'openai';
+      const official=provider==='openai'&&!effective.openai_base_url&&!(isObject(original.model_providers)&&Object.hasOwn(original.model_providers,'openai'));
+      destination={kind:record.before===null?'default':official?'official':'custom',provider,...(typeof effective.model==='string'?{model:effective.model}:{})};
+    }
+    return {id,target:record.target,revision:hash(current),canRestore:!reason,reason,destination};
   }
   async officialModel(id:string){
     const record=(await this.records()).find(r=>r.id===id&&r.target==='codex');
     if(!record)return undefined;
     return officialCodexModel(this.paths.codex,record.before);
   }
-  async restore(id:string,approval?:{revision:string;allowRunning:boolean}){
+  async restore(id:string,approval?:{revision:string;allowRunning:boolean},destination:'previous'|'native'='previous'){
     const entry=(await this.records()).find(r=>r.id===id);if(!entry)throw conflict('备份不存在');
     return this.run(entry.target,async()=>{
       const record=(await this.records()).find(r=>r.id===id)!;
       if(record.state==='restored')return publicRecord(record);
       const currentText=await readConfig(this.paths[record.target]);const current=hash(currentText);
       if(approval&&current!==approval.revision)throw conflict('审批后配置已变更，请重新生成方案。');
-      if(equivalentConfig(record.target,currentText,record.before)){record.state='restored';await this.save(record);await this.retirePrevious(record);return publicRecord(record);}
-      let restored:string|null;
-      try{restored=restoredConfig(record,currentText);}
-      catch(error){
-        if(record.target!=='codex'||!(error instanceof Error)||!error.message.includes('无法安全还原')||!codexGatewayStillPresent(currentText))throw error;
-        restored=repairConfigBase(record,currentText);
+      if(destination==='previous'&&equivalentConfig(record.target,currentText,record.before)){record.state='restored';await this.save(record);await this.retirePrevious(record);return publicRecord(record);}
+      const restored=destination==='native'?nativeConfig(record.target,currentText,record):this.restoreText(record,currentText);
+      if(destination==='native'){
+        // Keep each exact preimage privately, including third-party edits made after connecting.
+        const backup=join(this.dir(),`native-${record.id}-${current}.json`),temp=`${backup}.${randomUUID()}.tmp`;
+        await safePath(backup);try{await writeFile(temp,JSON.stringify({target:record.target,before:currentText,revision:current,createdAt:new Date().toISOString()}),{mode:0o600,flag:'wx'});await rename(temp,backup);}finally{await rm(temp,{force:true});}
       }
-      await this.replace(record.target,current,restored,approval?.allowRunning);record.state='restored';await this.save(record);await this.retirePrevious(record);return publicRecord(record);
+      if(restored!==currentText)await this.replace(record.target,current,restored,approval?.allowRunning);record.state='restored';await this.save(record);await this.retirePrevious(record);return publicRecord(record);
     });
   }
 }

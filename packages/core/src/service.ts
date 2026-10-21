@@ -19,7 +19,7 @@ import {claudeDesktopModelLimit} from '../../../apps/shared/claude-desktop-model
 import {removeKnownGatewayHelpNotice} from './gateway-help-notice.js';
 import { LocalMaintenance } from './local-maintenance.js';
 import { ApiSources, parseApiSourceInput, apiModelID } from './api-sources.js';
-import { detectProtocol, validateQuickSource, sourceNameFromURL } from './api-protocol.js';
+import { detectProtocol, validateQuickSource, sourceNameFromURL, type ProtocolProbeUsage } from './api-protocol.js';
 import { NativeAccounts, nativeCredentialSchema, nativeProviderSchema, type NativeProvider } from './native-accounts.js';
 import { ClaudeAccountStore, claudeSettingsState, type CredentialStore } from './claude-accounts.js';
 import { AntigravityAccountStore, antigravityDatabasePath } from './antigravity-accounts.js';
@@ -136,7 +136,20 @@ export async function createDesktopService(options:ServiceOptions) {
   let mutationOwner:string|undefined;
   let selectionClearOwner:string|undefined;
   const maintenanceRequests=new Set<string>();
-  app.addHook('onResponse',async req=>{if(mutationOwner===req.id)mutationOwner=undefined;if(selectionClearOwner===req.id)selectionClearOwner=undefined;maintenanceRequests.delete(req.id);});
+  const activeHandlers=new Set<string>();
+  const releaseMutation=(id:string)=>{if(mutationOwner===id)mutationOwner=undefined;if(selectionClearOwner===id)selectionClearOwner=undefined;maintenanceRequests.delete(id);};
+  // Socket closure does not imply that a write stopped. Release when the handler
+  // settles, even when the client disconnected and onResponse will never run.
+  app.addHook('onRoute',route=>{
+    // Only our asynchronous mutation handlers acquire these locks. Static-file
+    // handlers complete via callbacks; wrapping them in async would send an empty response.
+    const methods=Array.isArray(route.method)?route.method:[route.method];
+    if(!route.url.startsWith('/api/')||methods.every(method=>method==='GET'||method==='HEAD'))return;
+    const handler=route.handler;
+    route.handler=async function(req,reply){activeHandlers.add(req.id);try{return await handler.call(this,req,reply);}finally{activeHandlers.delete(req.id);releaseMutation(req.id);}};
+  });
+  // Validation can fail before a handler is entered.
+  app.addHook('onSend',async(req,_reply,payload)=>{if(!activeHandlers.has(req.id))releaseMutation(req.id);return payload;});
   app.addHook('onRequest',async(req,reply)=>{
     const hostHeader=req.headers.host??'';
     if(!/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(hostHeader))return reply.code(403).send({error:'Invalid Host'});
@@ -162,9 +175,10 @@ export async function createDesktopService(options:ServiceOptions) {
       const localRun=localMaintenance.snapshot();
       if(localRun.active&&localRun.runs[0]?.kind==='upgrade'&&!['/api/maintenance/stop','/api/maintenance/local/stop'].includes(route))return reply.code(409).send({error:'升级正在执行，请等待完成后启动维修或修改权限。'});
     }
-    if((req.method==='PUT'&&(route==='/api/settings'||route==='/api/local-agent/gateway'||route==='/api/sources/:id'))||(req.method==='DELETE'&&(route==='/api/local-agent/accounts/:id'||route==='/api/sources/:id'||route==='/api/maintenance/selection'))||(req.method==='POST'&&['/api/maintenance/local/upgrade','/api/sources','/api/sources/quick','/api/sources/:id/models','/api/sources/:id/check','/api/native-accounts/:provider/switch','/api/native-accounts/:provider/restore','/api/codex-accounts/switch','/api/codex-accounts/restore','/api/claude-desktop/connect','/api/claude-desktop/restore','/api/claude-desktop/official','/api/claude-desktop/restart','/api/a2a/connect','/api/a2a/codex-migration/restore','/api/a2a/program','/api/a2a/restart','/api/a2a/restore','/api/a2a/delete','/api/a2a/import','/api/providers/probe','/api/local-agent/:action','/api/local-agent/login/:action','/api/local-agent/accounts/:id','/api/local-agent/import-local/:provider'].includes(route??''))) {
+    const backgroundRefresh=route==='/api/local-agent/:action'&&['refresh','quota'].includes((req.params as {action:string}).action);
+    if(!backgroundRefresh&&((req.method==='PUT'&&(route==='/api/settings'||route==='/api/local-agent/gateway'||route==='/api/sources/:id'))||(req.method==='DELETE'&&(route==='/api/local-agent/accounts/:id'||route==='/api/sources/:id'||route==='/api/maintenance/selection'))||(req.method==='POST'&&['/api/maintenance/local/upgrade','/api/sources','/api/sources/quick','/api/sources/:id/models','/api/sources/:id/check','/api/native-accounts/:provider/switch','/api/native-accounts/:provider/restore','/api/codex-accounts/switch','/api/codex-accounts/restore','/api/claude-desktop/connect','/api/claude-desktop/restore','/api/claude-desktop/official','/api/claude-desktop/restart','/api/a2a/connect','/api/a2a/codex-migration/restore','/api/a2a/program','/api/a2a/restart','/api/a2a/restore','/api/a2a/delete','/api/a2a/import','/api/providers/probe','/api/local-agent/:action','/api/local-agent/login/:action','/api/local-agent/accounts/:id','/api/local-agent/import-local/:provider'].includes(route??'')))) {
       if(localMaintenance.snapshot().active)return reply.code(409).send({error:'本地诊断或升级正在运行，请等待完成后修改配置。'});
-      if(mutationOwner)return reply.code(409).send({error:'另一个启动或配置操作正在进行，请稍后重试。'});
+      if(mutationOwner)return reply.code(409).send({code:'configuration_busy',error:'正在等待另一个启动或配置操作完成，尚未应用本次更改。'});
       mutationOwner=req.id;
     }
   });
@@ -243,11 +257,12 @@ export async function createDesktopService(options:ServiceOptions) {
     claude:new NativeAccounts(join(root,'claude-account-backup.json'),claudeAccountStore,()=>options.nativeProcesses?options.nativeProcesses('claude'):options.agentProcesses?options.agentProcesses('claude'):agentProcesses('claude')),
     antigravity:new NativeAccounts(join(root,'antigravity-account-backup.json'),antigravityAccountStore,()=>options.nativeProcesses?options.nativeProcesses('antigravity'):agentProcesses('antigravity')),
   };
+  const qoderIdeLogin=new QoderIdeLogin(options.qoderIde,options.secrets,()=>options.desktopProcesses?options.desktopProcesses('qoder-ide'):agentProcesses('qoder-ide'));
   const nativeUsageLogins=await NativeUsageLogins.open(root);
   let nativeLoginObservation:Promise<void>|undefined,nativeLoginTimer:ReturnType<typeof setInterval>|undefined;
   const observeNativeLogins=()=>nativeLoginObservation??=(async()=>{
-    const [codex,claude,antigravity,workbuddy,workbuddyAI,qoder]=await Promise.all([codexAccounts.usageLogin().catch(()=>null),claudeAccountStore.usageLogin().catch(()=>null),antigravityAccountStore.usageLogin().catch(()=>null),desktopAccounts.workbuddy.usageLogin().catch(()=>null),desktopAccounts['workbuddy-ai'].usageLogin().catch(()=>null),desktopAccounts.qoder.usageLogin().catch(()=>null)]);
-    await nativeUsageLogins.observe({codex,claude,antigravity,workbuddy,'workbuddy-ai':workbuddyAI,qoder});
+    const [codex,claude,antigravity,workbuddy,workbuddyAI,qoder,qoderIde]=await Promise.all([codexAccounts.usageLogin().catch(()=>null),claudeAccountStore.usageLogin().catch(()=>null),antigravityAccountStore.usageLogin().catch(()=>null),desktopAccounts.workbuddy.usageLogin().catch(()=>null),desktopAccounts['workbuddy-ai'].usageLogin().catch(()=>null),desktopAccounts.qoder.usageLogin().catch(()=>null),qoderIdeLogin.usageLogin().catch(()=>null)]);
+    await nativeUsageLogins.observe({codex,claude,antigravity,workbuddy,'workbuddy-ai':workbuddyAI,qoder,'qoder-ide':qoderIde});
   })().finally(()=>{nativeLoginObservation=undefined;});
   await observeNativeLogins();
   app.addHook('onListen',async()=>{await observeNativeLogins();nativeLoginTimer=setInterval(()=>void observeNativeLogins(),5000);nativeLoginTimer.unref();});
@@ -291,10 +306,12 @@ export async function createDesktopService(options:ServiceOptions) {
     const target=(await connections.status()).find(t=>t.backups.some(b=>b.id===id));
     if(target?.id==='codex'){
       if(approval&&target.revision!==approval.revision)throw Object.assign(new Error('配置已变化，请刷新后重试。'),{statusCode:409});
+      // Validate the current document before history work; native mode replaces conflicting routing.
+      await connections.restoration(id,'native');
       // Provider routing must be reconciled before removing its definition.
-      await restoreCodexHistory(restoreHistory,officialModel??(()=>connections.officialModel(id)));
+      await restoreCodexHistory(restoreHistory,officialModel??(()=>connections.nativeModel(id)));
     }
-    const record=await connections.restore(id,approval);fixedRoutes.delete(record.keyId);
+    const record=await connections.restore(id,approval,'native');fixedRoutes.delete(record.keyId);
     if(gatewayKeys.list().some(key=>key.id===record.keyId))await gatewayKeys.remove(record.keyId);
     return record;
   };
@@ -424,8 +441,8 @@ export async function createDesktopService(options:ServiceOptions) {
   const proposeRestore=async(id:string,chain?:MaintenanceChain)=>{
     const target=(await connections.status()).find(t=>t.backups.some(b=>b.id===id));
     if(!target||chain&&(target.id!==chain.target||chain.connectionId&&chain.connectionId!==id))throw new Error('只能还原当前选定链路的接入记录。');
-    const code=JSON.stringify({operation:'restore_connection',id,target:target.id,path:target.path,revision:target.revision,runningProcesses:target.pids,allowRunning:true,restore:'恢复该记录保存的原配置并撤销对应 Key；外部变更时停止',after:'复查配置，重启目标 Agent'},null,2);
-    return approval.propose(`还原 ${target.name} 原接口`,code,()=>restoreConnection(id,{revision:target.revision,allowRunning:true}));
+    const code=JSON.stringify({operation:'restore_connection',id,target:target.id,path:target.path,revision:target.revision,runningProcesses:target.pids,allowRunning:true,restore:'停用网关并使用官方或客户端默认配置，撤销对应 Key；保留登录、无关设置和备份',after:'复查配置，重启目标 Agent'},null,2);
+    return approval.propose(`停用 ${target.name} 网关`,code,()=>restoreConnection(id,{revision:target.revision,allowRunning:true}));
   };
   const readMaintenanceUsage=async(context:MaintenanceContext,query:MaintenanceUsageQuery={})=>{
     const native=await nativeUsageSnapshot();
@@ -546,7 +563,6 @@ export async function createDesktopService(options:ServiceOptions) {
     });
   });
   const nativeStatus=async(provider:NativeProvider)=>({...await nativeAccounts[provider].status(),accounts:await proxy.nativeAccounts(provider),gatewayConnected:provider==='claude'&&!!(await connections.status()).find(t=>t.id==='claude')?.connection});
-  const qoderIdeLogin=new QoderIdeLogin(options.qoderIde,options.secrets,()=>options.desktopProcesses?options.desktopProcesses('qoder-ide'):agentProcesses('qoder-ide'));
   const officialProvider=z.enum(['claude','antigravity','workbuddy','workbuddy-ai','qoder','qoder-ide']);
   const desktopStatus=async(provider:DesktopProvider|'qoder-ide',refresh=false)=>{const status=await (provider==='qoder-ide'?qoderIdeLogin:desktopAccounts[provider]).status(refresh);return {...status,...(provider==='workbuddy-ai'?{installation:await detectAgent('workbuddy-ai')}:{}),accounts:(await proxy.desktopNativeAccounts(provider==='qoder-ide'?'qoder':provider)).map(a=>status.unavailableReason?{...a,switchable:false,reason:status.unavailableReason}:a),gatewayConnected:!!(await connections.status()).find(t=>t.id===provider)?.connection};};
   const cursorLocalLogin=new CursorLocalLogin(options.cursorLocalPath);
@@ -642,9 +658,9 @@ export async function createDesktopService(options:ServiceOptions) {
     const {revision}=z.object({revision:z.string().regex(/^[a-f0-9]{64}$/)}).strict().parse(req.body);
     const prior=await claudeDesktop.check(revision);let saved=false;
     if(action==='restore'&&!prior.backup)throw Object.assign(new Error('没有可恢复的 Claude Desktop 接入备份。'),{statusCode:409});
-    try{await claudeDesktopChange(async()=>{if(prior.backup){await claudeDesktop.restore(revision);saved=true;if(prior.keyId){fixedRoutes.delete(prior.keyId);if(gatewayKeys.list().some(k=>k.id===prior.keyId))await gatewayKeys.remove(prior.keyId);}}});}
-    catch(error){if(saved)throw Object.assign(new Error('Claude Desktop 原配置已恢复，重新打开未确认。请手动打开 Claude Desktop。'),{statusCode:409});throw error;}
-    return {...await claudeDesktopStatus(),message:action==='official'?`${process.platform==='linux'?'请手动打开':'已打开'} Claude Desktop。请在客户端账号菜单完成官方登录或切换；Claude CLI 授权不会替换 Claude Desktop 登录。`:'已恢复接入前的配置，原官方登录数据保留。'};
+    try{await claudeDesktopChange(async()=>{if(prior.backup){await claudeDesktop.restore(revision,'native');saved=true;if(prior.keyId){fixedRoutes.delete(prior.keyId);if(gatewayKeys.list().some(k=>k.id===prior.keyId))await gatewayKeys.remove(prior.keyId);}}});}
+    catch(error){if(saved)throw Object.assign(new Error('Claude Desktop 已切回官方服务，重新打开未确认。请手动打开 Claude Desktop。'),{statusCode:409});throw error;}
+    return {...await claudeDesktopStatus(),message:action==='official'?`${process.platform==='linux'?'请手动打开':'已打开'} Claude Desktop。请在客户端账号菜单完成官方登录或切换；Claude CLI 授权不会替换 Claude Desktop 登录。`:'已切回 Claude Desktop 官方服务，当前登录数据保留。'};
   });
   app.post('/api/claude-desktop/restart',async req=>{z.object({}).strict().parse(req.body??{});return qoderLifecycle.restart('claude-desktop');});
   app.post('/api/a2a/import',async req=>{
@@ -663,10 +679,14 @@ export async function createDesktopService(options:ServiceOptions) {
     maintenanceOrigin=`http://${req.headers.host}`;
     return record;
   });
+  app.get('/api/a2a/restore-preview/:id',async req=>connections.restorePreview(z.string().uuid().parse((req.params as {id:string}).id),'native'));
   app.post('/api/a2a/restore',async req=>{
 
     const input=z.object({id:z.string().uuid(),revision:z.string().regex(/^[a-f0-9]{64}$/).optional(),allowRunning:z.boolean().default(false),restartCodex:z.boolean().default(false),restoreHistory:z.boolean().default(true)}).strict().refine(v=>!v.allowRunning||!!v.revision,'运行中还原需要当前配置版本').parse(req.body);
     approval.clear();
+    const preview=await connections.restorePreview(input.id,'native');
+    if(input.revision&&preview.revision!==input.revision)throw Object.assign(new Error('配置已变化，请重新检查恢复目标。'),{statusCode:409});
+    if(!preview.canRestore)throw new RunnerCoreError(preview.reason,{statusCode:409,code:'configuration_conflict'});
     if(input.restartCodex){const target=(await connections.status()).find(t=>t.backups.some(b=>b.id===input.id));if(target?.id!=='codex'||target.revision!==input.revision)throw Object.assign(new Error('Codex 配置已变化，请刷新后重试。'),{statusCode:409});}
     return codexChange(input.restartCodex,()=>restoreConnection(input.id,input.revision?{revision:input.revision,allowRunning:input.allowRunning}:undefined,undefined,input.restoreHistory));
   });
@@ -831,7 +851,8 @@ export async function createDesktopService(options:ServiceOptions) {
     return {targets,keys,repair:maintenance.snapshot().selection?.sourceId===id,reviewer:approval.snapshot().policy.reviewer?.sourceId===id};
   };
   const sourceID=(req:{params:unknown})=>z.string().regex(/^[a-f0-9]{24}$/).parse((req.params as {id:string}).id);
-  const synchronizeSources=async()=>{try{await proxy.synchronizeAPIModels((await apiSources.list()).filter(s=>s.enabled).flatMap(s=>s.models.map(m=>apiModelID(s.id,m))));return undefined;}catch{return '来源已保存，但模型路由暂未同步。请稍后重新保存或重启网关。';}};
+  const synchronizeSources=async()=>{try{await proxy.synchronizeAPIModels((await apiSources.list()).filter(s=>s.enabled).flatMap(s=>s.models.map(m=>apiModelID(s.id,m))));return undefined;}catch(error){return error instanceof RunnerCoreError&&error.code==='api_routes_pending'?'来源已保存，模型路由仍在同步，系统会自动重试。可查看卡片上的路由状态。':'来源已保存，但模型路由配置更新失败，请检查资料目录权限和网关状态。';}};
+  const recordSourceProbe=(sourceId:string,usage:ProtocolProbeUsage)=>activity.record({...usage,keyId:'api-probe',agent:'API 连通性测试',target:'internal',sourceId,model:sourceId?apiModelID(sourceId,usage.model):usage.model});
   app.post('/api/sources/:id/reveal-key',async(req,reply)=>{
     const id=z.string().regex(/^[a-f0-9]{24}$/).parse((req.params as {id:string}).id);
     reply.header('cache-control','no-store');
@@ -842,7 +863,7 @@ export async function createDesktopService(options:ServiceOptions) {
   });
   app.get('/api/sources',async()=>({sources:await apiSources.list()}));
   app.get('/api/sources/:id/usage',async req=>sourceDependencies(sourceID(req)));
-  app.post('/api/sources',async req=>{const source=await apiSources.save(parseApiSourceInput(req.body));const routingError=await synchronizeSources();return {...source,...(routingError?{routingError}:{})};});
+  app.post('/api/sources',async req=>{const source=await apiSources.save(parseApiSourceInput(req.body));const routingError=await synchronizeSources();return {...source,...(routingError?{routingError,routingPending:!!proxy.snapshot().apiRoutesSyncing}:{})};});
   const assertSourceEditable=async(id:string,acknowledge?:boolean)=>{
     const deps=await sourceDependencies(id);
     const used=deps.targets.length||deps.keys.length||deps.repair||deps.reviewer;
@@ -851,7 +872,7 @@ export async function createDesktopService(options:ServiceOptions) {
   };
   app.put('/api/sources/:id',async req=>{
     const id=sourceID(req);const input=parseApiSourceInput(req.body);await assertSourceEditable(id,input.acknowledge);
-    const source=await apiSources.save(input,id);const routingError=await synchronizeSources();return {...source,...(routingError?{routingError}:{})};
+    const source=await apiSources.save(input,id);const routingError=await synchronizeSources();return {...source,...(routingError?{routingError,routingPending:!!proxy.snapshot().apiRoutesSyncing}:{})};
   });
   // Discover the protocol from URL + key + model; the optional name is a display label.
   app.post('/api/sources/quick',async(req,reply)=>{
@@ -869,23 +890,26 @@ export async function createDesktopService(options:ServiceOptions) {
     const checked=validateQuickSource({baseURL:input.data.baseURL,apiKey,model:input.data.model});
     if(id)await assertSourceEditable(id,acknowledge);
     const controller=new AbortController();const cancel=()=>{if(!reply.raw.writableEnded)controller.abort();};reply.raw.once('close',cancel);
+    const probeUsage:ProtocolProbeUsage[]=[];let savedSourceId=id??'';
     try{
       const modelRoutes:NonNullable<import('./api-sources.js').ApiSource['modelRoutes']>=Object.create(null);
       const timeout=AbortSignal.timeout(80000),signal=AbortSignal.any([controller.signal,timeout]);
       // Limit concurrent probes; each model stops as soon as the preferred protocol works.
       try{
         for(let offset=0;offset<checked.models.length;offset+=3){
-          await Promise.all(checked.models.slice(offset,offset+3).map(async model=>{
-            try{modelRoutes[model]=await detectProtocol({baseURL:input.data.baseURL,apiKey,model},signal);}
+          const results=await Promise.allSettled(checked.models.slice(offset,offset+3).map(async model=>{
+            try{modelRoutes[model]=await detectProtocol({baseURL:input.data.baseURL,apiKey,model},signal,usage=>probeUsage.push(usage));}
             catch(error){throw new RunnerCoreError(`模型 ${model} 验证未通过：${error instanceof Error?error.message:'接口不可用'}。未保存本次修改。`,{statusCode:400,code:error instanceof RunnerCoreError?error.code:'api_source_rejected'});}
           }));
+          const failed=results.find(result=>result.status==='rejected');if(failed?.status==='rejected')throw failed.reason;
         }
       }catch(error){controller.abort();if(timeout.aborted)throw new RunnerCoreError('模型协议验证超时，未保存本次修改。请减少模型数量或稍后重试。',{statusCode:400,code:'api_source_timeout'});throw error;}
       if(signal.aborted)throw new RunnerCoreError('已取消验证，未保存本次修改。',{statusCode:400,code:'api_source_cancelled'});
       const found=modelRoutes[checked.models[0]];
       const source=await apiSources.save({name:input.data.name??old?.name??sourceNameFromURL(found.baseURL),baseURL:found.baseURL,protocol:found.protocol,modelRoutes,enabled:old?.enabled??true,models:checked.models,...(input.data.apiKey?.trim()?{apiKey}:{})},id);
-      const routingError=await synchronizeSources();return {...source,...(routingError?{routingError}:{})};
-    }finally{reply.raw.off('close',cancel);}
+      savedSourceId=source.id;
+      const routingError=await synchronizeSources();return {...source,...(routingError?{routingError,routingPending:!!proxy.snapshot().apiRoutesSyncing}:{})};
+    }finally{reply.raw.off('close',cancel);for(const usage of probeUsage)recordSourceProbe(savedSourceId,usage);}
   });
   app.delete('/api/sources/:id',async req=>{
     const id=sourceID(req);const deps=await sourceDependencies(id);
@@ -911,7 +935,7 @@ export async function createDesktopService(options:ServiceOptions) {
     try{
       let passed=false,message:string;
       try{
-        await detectProtocol({baseURL:`${route.baseURL.replace(/\/$/,'')}/${path}`,apiKey,model:upstream},signal);
+        await detectProtocol({baseURL:`${route.baseURL.replace(/\/$/,'')}/${path}`,apiKey,model:upstream},signal,usage=>recordSourceProbe(id,usage));
         passed=true;message='最小调用通过；未验证工具、图片或客户端。';
       }catch(error){
         const messages:Record<string,string>={api_source_auth:'API Key 无效或没有模型权限，请检查密钥和模型权限。',api_source_rate_limited:'接口限流（HTTP 429），请稍后重试。',api_source_rejected:'接口已响应但拒绝了请求，请检查模型名称和请求支持情况。',api_source_not_found:'未找到可用接口，请检查 API 地址和模型支持的协议。',api_source_cancelled:'已取消验证。'};
@@ -975,6 +999,16 @@ export async function createDesktopService(options:ServiceOptions) {
       if(compatible.changed)reply.header('X-Token-Flow-Compatibility','claude-code-help-v1');
     }
     const fixed=client&&fixedRoutes.get(client.id);
+    if(path!=='models'&&fixed?.target==='codex'&&client){
+      const requested=z.object({model:z.string().min(1).max(300)}).parse(req.body).model;
+      const qualified=`codex/${requested}`;
+      // Codex's built-in model picker and old threads can send native IDs.
+      // Only resolve an explicitly authorized Codex model on its managed key.
+      if(!requested.includes('/')&&!client.models.includes(requested)&&client.models.includes(qualified)){
+        req.body={...(req.body as Record<string,unknown>),model:qualified};
+        reply.header('X-Token-Flow-Model',qualified);
+      }
+    }
     if(path!=='models'&&fixed?.modelAliases){
       const requested=z.object({model:z.string().min(1).max(300)}).parse(req.body).model;
       const alias=fixed.target==='workbuddy'||fixed.target==='workbuddy-ai'?requested.replace(/^custom-local:/,''):requested;
@@ -1058,7 +1092,8 @@ export async function createDesktopService(options:ServiceOptions) {
     const upstreamKey=client||apiSource?proxy.gateway().apiKey:await key();
     const abort=upstreamIdle();
     const timeoutMessage=()=>abort.timeoutKind==='total'?`本次请求已达到 ${UPSTREAM_TOTAL_TIMEOUT_MS/1000} 秒总时限，请检查来源后手动重试。`:`上游连续 ${UPSTREAM_IDLE_TIMEOUT_MS/1000} 秒未返回数据，请稍后重试或缩短对话。`;
-    reply.raw.once('close',()=>abort.abort());
+    let clientDisconnected=false;
+    reply.raw.once('close',()=>{if(!reply.raw.writableFinished){clientDisconnected=true;abort.abort();}});
     try {
       const cursorModel=typeof (req.body as {model?:unknown})?.model==='string'&&(req.body as {model:string}).model.startsWith('cursor/');
       if(cursorModel&&proxy.snapshot().state!=='running'){record(503);await settle({inputTokens:null,outputTokens:null},false);abort.close();return reply.code(503).send({error:{message:'网关未启动',type:'provider_error'}});}
@@ -1092,8 +1127,18 @@ export async function createDesktopService(options:ServiceOptions) {
       reply.code(response.status).header('Content-Type',response.headers.get('content-type')??'application/json').header('Cache-Control','no-store');
       if(!response.body){record(response.status);await settle({inputTokens:null,outputTokens:null},true);abort.close();return '';}
       const source=Readable.fromWeb(response.body as never);
-      const stream=observeUsage((response.headers.get('content-type')??'').includes('text/event-stream'),async usage=>{if(usage.failed&&compaction){usage={...usage,inputTokens:usage.inputTokens??compaction.inputTokens,outputTokens:usage.outputTokens??compaction.outputTokens,cachedTokens:usage.cachedTokens??compaction.cachedTokens};}if(abort.timedOut)callError={code:'upstream_idle_timeout',message:timeoutMessage()};else if(usage.failed&&!callError)callError=traceResponse.error??{code:'upstream_incomplete_response',message:'上游响应未完整结束。'};record(abort.timedOut?504:callError?.code==='upstream_stream_error'||usage.failed?502:abort.signal.aborted?499:response.status,usage);await settle(usage,contextUsageIncomplete||!!compaction?.unmetered||abort.signal.aborted||usage.failed||usage.inputTokens===null||usage.outputTokens===null);},details=>{traceResponse=details;});
-      source.once('error',()=>{callError={code:'upstream_stream_error',message:'上游连接中断。'};abort.abort();stream.destroy();});stream.once('close',()=>{abort.close();source.destroy();});
+      const stream=observeUsage((response.headers.get('content-type')??'').includes('text/event-stream'),async usage=>{
+        if(usage.failed&&compaction)usage={...usage,inputTokens:usage.inputTokens??compaction.inputTokens,outputTokens:usage.outputTokens??compaction.outputTokens,cachedTokens:usage.cachedTokens??compaction.cachedTokens};
+        if(abort.timedOut)callError={code:abort.timeoutKind==='total'?'upstream_total_timeout':'upstream_idle_timeout',message:timeoutMessage()};
+        else if(!callError){
+          if(traceResponse.error)callError=traceResponse.error;
+          else if(clientDisconnected)callError={code:'request_cancelled',message:'客户端已取消请求。'};
+          else if(usage.failed)callError={code:'upstream_incomplete_response',message:'上游响应未完整结束。'};
+        }
+        record(abort.timedOut?504:callError?.code==='request_cancelled'?499:callError?.code==='upstream_stream_error'||usage.failed?502:response.status,usage);
+        await settle(usage,contextUsageIncomplete||!!compaction?.unmetered||abort.signal.aborted||usage.failed||usage.inputTokens===null||usage.outputTokens===null);
+      },details=>{traceResponse=details;});
+      source.once('error',()=>{if(!abort.signal.aborted)callError={code:'upstream_stream_error',message:'上游连接中断。'};abort.abort();stream.destroy();});stream.once('close',()=>{abort.close();source.destroy();});
       reply.raw.once('close',()=>stream.destroy());
       source.pipe(stream);return reply.send(stream);
     }catch(error){

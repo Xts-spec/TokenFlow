@@ -15,7 +15,7 @@ export const rangeLabel = (id: RangeId) => id === 'all' ? '全部时间' : id ==
 export const rangeShort = (id: RangeId) => id === 'all' ? '累计' : rangeLabel(id);
 
 export type UsageTotals = {
-  requests: number; failed: number; unmeasured: number;
+  requests: number; failed: number; unmeasured: number; credits:number;
   unknownCacheTokens:number;cacheWriteTokens:number;reasoningTokens:number;toolCalls:number;toolResults:number;generationMs:number;tokensPerSecond:number|null;inputTokens: number; cachedTokens: number; uncachedTokens: number; outputTokens: number; totalTokens: number;
   /** cached / input over the calls whose upstream reported cache usage; null when none did. */
   hitRate: number | null;
@@ -24,19 +24,20 @@ export type UsageTotals = {
 
 export function totalsOf(rows: readonly UsageRow[]): UsageTotals {
   let requests = 0, failed = 0, unmeasured = 0, inputTokens = 0, cachedTokens = 0, cacheBase = 0, outputTokens = 0, durationMs = 0;
-  let cacheWriteTokens=0,reasoningTokens=0,toolCalls=0,toolResults=0,generationMs=0,timedOutputTokens=0;
+  let credits=0,cacheWriteTokens=0,reasoningTokens=0,toolCalls=0,toolResults=0,generationMs=0,timedOutputTokens=0;
   let last: string | undefined;let measuredRequests=0;let toolsMeasured=false;
   for (const row of rows) {
     if(row.origin!=='native')measuredRequests+=row.requests;
     if(row.toolCalls!==undefined||row.toolResults!==undefined)toolsMeasured=true;
     cacheWriteTokens+=row.cacheWriteTokens??0;reasoningTokens+=row.reasoningTokens??0;toolCalls+=row.toolCalls??0;toolResults+=row.toolResults??0;generationMs+=row.generationMs??0;timedOutputTokens+=row.timedOutputTokens??0;
+    credits+=row.credits??0;
     requests += row.requests; failed += row.failed; unmeasured += row.unmeasured;
     inputTokens += row.inputTokens; cachedTokens += row.cachedTokens; cacheBase += row.cacheBaseTokens;
     outputTokens += row.outputTokens; durationMs += row.durationMs;
     if (!last || row.last > last) last = row.last;
   }
   return {
-    unknownCacheTokens:Math.max(0,inputTokens-cacheBase),cacheWriteTokens,reasoningTokens,toolCalls,toolResults,generationMs,tokensPerSecond:generationMs>0?timedOutputTokens*1000/generationMs:null,requests, failed, unmeasured, inputTokens, cachedTokens, outputTokens, durationMs, last,
+    credits,unknownCacheTokens:Math.max(0,inputTokens-cacheBase),cacheWriteTokens,reasoningTokens,toolCalls,toolResults,generationMs,tokensPerSecond:generationMs>0?timedOutputTokens*1000/generationMs:null,requests, failed, unmeasured, inputTokens, cachedTokens, outputTokens, durationMs, last,
     uncachedTokens: Math.max(0, inputTokens - cachedTokens - cacheWriteTokens),
     totalTokens: inputTokens + outputTokens,
     hitRate: cacheBase > 0 ? Math.min(1, cachedTokens / cacheBase) : null,
@@ -101,3 +102,7 @@ export function spentByPlatform(row:UsageRow,platform:{id:string;accounts:readon
 
 /** Account or API source behind a ledger row; models served by the account catalog keep their provider prefix. */
 export const sourceKey = (row: UsageRow) => row.sourceId || (row.origin==='native'?`native:${row.provider??row.target}:${row.channel??'unknown'}:${row.nativeAccountId??''}:${row.nativeEmailHash??''}${row.nativeOrganizationId?`:${row.nativeOrganizationId}`:''}`:undefined) || (row.model.match(/^api-([a-f0-9]{24})\//)?.[1] ?? `provider:${row.model.split('/')[0]}`);
+
+/** Unknown token usage is not a measured zero. Credits retain their own unit. */
+export const tokenTotalText=(totals:UsageTotals,compact=false)=>totals.totalTokens===0&&totals.unmeasured>0?'未提供':(compact?compactTokens:formatTokens)(totals.totalTokens);
+export const creditsText=(credits:number)=>new Intl.NumberFormat('zh-CN',{maximumFractionDigits:6}).format(credits);

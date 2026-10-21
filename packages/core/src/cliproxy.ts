@@ -82,6 +82,7 @@ export class CLIProxyManager {
   private state = 'stopped';
   private managementKey = randomBytes(32).toString('hex');
   private accounts: LocalAccount[] = [];
+  private qoderProfileAttempts=new Map<string,number>();
   private names = new Map<string, string>();
   private quotaTargets = new Map<string, {authIndex: string; account: QuotaAccount}>();
   private quotas: Record<string, AccountQuota> = {};
@@ -89,6 +90,7 @@ export class CLIProxyManager {
   private models: LocalModel[] = [];
   private apiModels=new Set<string>();
   private configurationTask:Promise<void>=Promise.resolve();
+  private apiSyncTask?:Promise<boolean>;
   private network?:Awaited<ReturnType<typeof createNetworkProxy>>;
   private networkCheck?:NetworkCheckReport;
   private networkCheckTask?:Promise<NetworkCheckReport>;
@@ -124,7 +126,7 @@ export class CLIProxyManager {
   snapshot() {
     const cursor=this.cursor.snapshot();
     const accounts=this.accounts.map(account=>{const ids=this.credentialGroups.get(account.id);return !account.isDuplicate&&ids?.length?{...account,models:[...new Set(this.accounts.filter(a=>ids.includes(a.id)&&!a.disabled&&(!a.unavailable||a.retryable)).flatMap(a=>a.models??[]))]}:account;});
-    return structuredClone({state: this.state, loginState: this.login_.state, port: this.port,
+    return structuredClone({state: this.state, loginState: this.login_.state, port: this.port,...(this.apiSyncTask?{apiRoutesSyncing:true}:{}),
       logs: this.recent,...(this.networkCheck?{networkCheck:this.networkCheck}:{}),...(this.options.networkSnapshot||this.network?{network:this.options.networkSnapshot?.()??this.network!.snapshot()}:{}), accounts: [...accounts,...cursor.accounts], models: [...this.models,...(this.state==='running'?cursor.models:[])], accountError: this.accountError, lastError: this.lastError,
       quotas: {...this.quotas,...cursor.quotas}, quotaBusy: this.quotaBusy, providers: [...loginProviderCatalog(),cursorCatalog], login: this.cursorLoginSelected?cursor.login:this.login_.snapshot()});
   }
@@ -168,12 +170,30 @@ export class CLIProxyManager {
   }
   async synchronizeAPIModels(ids:string[]) {
     await this.configure();
+    this.publishAPIModels([]);
     if(this.state!=='running'||!ids.length)return;
-    for(let attempt=0;attempt<40;attempt++){
-      try{const live=z.object({data:z.array(modelSchema)}).parse(await this.request('/models','GET',undefined,false,1500));this.publishAPIModels(live.data.map(m=>m.id));if(ids.every(id=>this.apiModels.has(id)))return;}catch{/* A reload may briefly stop serving. */}
+    // Saving is bounded, but a slow registration must continue without requiring
+    // another save or interrupting active requests by restarting the sidecar.
+    const task=this.apiSyncTask??=this.synchronizeAPIModelsInBackground(ids).finally(()=>{this.apiSyncTask=undefined;});
+    let timer:NodeJS.Timeout|undefined;
+    try{if(await Promise.race([task,new Promise<false>(resolve=>{timer=setTimeout(()=>resolve(false),4000);})]))return;}
+    finally{clearTimeout(timer);}
+    throw new RunnerCoreError('API 来源已保存，模型路由仍在同步，系统会自动重试。',{statusCode:503,code:'api_routes_pending'});
+  }
+  private async synchronizeAPIModelsInBackground(ids:string[]) {
+    const deadline=Date.now()+60000;
+    while(this.state==='running'&&!this.closing&&!this.requests.signal.aborted&&Date.now()<deadline){
+      try{
+        const live=z.object({data:z.array(modelSchema)}).parse(await this.request('/models','GET',undefined,false,1500));
+        const available=new Set(live.data.map(m=>m.id));this.publishAPIModels(available);
+        // Consult current configuration so edits/removals made while waiting cannot
+        // resurrect old routes or leave a newly saved source out of the sync.
+        if((this.options.apiModelIDs?.()??ids).every(id=>available.has(id)))return true;
+      }catch{/* A reload may briefly stop serving. */}
       await new Promise(r=>setTimeout(r,100));
     }
-    throw new RunnerCoreError('API 来源已保存，但网关模型路由尚未同步。请稍后重新保存，或重启网关；不会切换到其他来源。',{statusCode:503,code:'api_routes_pending'});
+    if(this.state==='running'&&!this.closing)this.log('API 来源已保存，但模型路由同步超时，请检查网关状态。');
+    return false;
   }
   private async request(path: string, method = 'GET', body?: unknown, management = true, timeoutMs = 10000): Promise<unknown> {
     const response = await fetch(`http://127.0.0.1:${this.port}${management ? '/v0/management' : '/v1'}${path}`, {
@@ -191,6 +211,7 @@ export class CLIProxyManager {
         const body=await readUpstreamError(response);let message='';
         try{const parsed=JSON.parse(body);message=typeof parsed.error==='string'?parsed.error:typeof parsed.error?.message==='string'?parsed.error.message:'';}catch{/* Only classify recognized error fields. */}
         const failure=safeFailure(message);
+        if(failure.code==='unknown')throw new Error(`授权服务请求失败（HTTP ${response.status}），尚未生成授权链接。服务未返回明确原因，请稍后重试。`);
         throw new Error(`本机网关已响应，但生成授权链接失败（HTTP ${response.status}）：${failure.reason}。请检查对应厂商的网络与代理连接后重试。`);
       }
       await response.body?.cancel();
@@ -289,6 +310,7 @@ export class CLIProxyManager {
       clearTimeout(this.refreshTimer);
       this.refreshTimer=undefined;
       this.requests.abort();
+      await this.apiSyncTask;
       await this.terminate(this.child); this.child = undefined; this.state = 'stopped';
       await this.refreshTask?.catch(() => undefined); await this.quotaTask?.catch(() => undefined);
       await Promise.allSettled([...this.quotaProviderTasks.values()]);
@@ -340,6 +362,10 @@ export class CLIProxyManager {
       // Local display names never change the upstream authentication identity.
       let accountLabels:Record<string,string>={};
       try{accountLabels=z.record(z.string().trim().min(1).max(200)).parse(JSON.parse(await readConfig(join(this.root,'account-labels.json'))??'{}'));}catch{/* Optional local display metadata. */}
+      const profilePath=join(this.root,'qoder-profiles.json');
+      let qoderProfiles:Record<string,{email:string;checkedAt:number}>={};
+      try{qoderProfiles=z.record(z.object({email:z.string().email().max(200),checkedAt:z.number().finite()})).parse(JSON.parse(await readConfig(profilePath)??'{}'));}catch{/* Display metadata can be fetched again. */}
+      let profilesChanged=false;
       const identities=new Map<string,string>();const credentials=new Map<string,{raw:Record<string,unknown>;modified?:unknown}>();
       const accounts: LocalAccount[] = [...retained,...await Promise.all(result.files.map(async file => {
         const id = createHash('sha256').update(file.name).digest('hex').slice(0, 24);
@@ -354,10 +380,28 @@ export class CLIProxyManager {
         const identityKey=credentialIdentity(provider,identity,file);if(identityKey)identities.set(id,identityKey);
         credentials.set(id,{raw:identity,modified:file.modtime});
         const expired=typeof identity.access_token==='string'&&!!identity.access_token&&credentialPreference(identity)[0]===0;
+        const uid=credentialSubject(identity)??file.uid;
+        let profileEmail=provider==='qoder'&&uid?qoderProfiles[uid]?.email:undefined;
+        if(provider==='qoder'&&uid&&!credentialEmail(file.email)&&!credentialEmail(identity.email)&&file.auth_index!==undefined&&!file.disabled&&!expired){
+          const checkedAt=qoderProfiles[uid]?.checkedAt??0;
+          const force=providerScope==='qoder'&&refreshUsage;
+          if((force||Date.now()-checkedAt>86400000)&&(force||Date.now()-(this.qoderProfileAttempts.get(uid)??0)>300000)){
+            this.qoderProfileAttempts.set(uid,Date.now());
+            try{
+              const response=apiCallSchema.parse(await this.request('/api-call','POST',{auth_index:String(file.auth_index),method:'GET',url:'https://openapi.qoder.sh/api/v1/userinfo',header:{Authorization:'Bearer $TOKEN$',Accept:'application/json'},data:''},true,5000));
+              if(response.status_code===200){
+                const user=JSON.parse(response.body),email=credentialEmail(user?.email);
+                if(String(user?.id??user?.user_id??user?.uid??'')===uid&&email&&email.length<=200){
+                  profileEmail=email;qoderProfiles[uid]={email,checkedAt:Date.now()};profilesChanged=true;
+                }
+              }
+            }catch{/* Missing profile metadata must never block the saved account or expose upstream content. */}
+          }
+        }
         if (file.auth_index !== undefined) quotaTargets.set(id, {authIndex: String(file.auth_index), account: {provider, email: file.email, domain:provider==='trae'&&typeof identity.host==='string'?identity.host:provider==='zcode'&&identity.provider==='bigmodel'?'bigmodel.cn':typeof identity.domain==='string'?identity.domain:undefined,
           projectId: file.project_id, accountType: file.account_type, chatgptAccountId: file.id_token?.chatgpt_account_id, planType: file.id_token?.plan_type}});
         return {
-          id, provider, label: accountLabels[id]??accountLabel(provider,file,{...identity,uid:identity.uid??credentialSubject(identity)}),
+          id, provider, label: accountLabels[id]??accountLabel(provider,profileEmail?{...file,email:credentialEmail(file.email)??credentialEmail(identity.email)??profileEmail}:file,{...identity,uid}),
           // Product eligibility is independent of installation, native login and enabled state.
           ...(provider==='qoder'?{nativeClients:['qoder','qoder-ide']}:provider==='workbuddy'?{nativeClients:[workbuddyLoginTarget(typeof identity.domain==='string'?identity.domain:undefined)].filter((id):id is NonNullable<typeof id>=>!!id)}:{}),
           status: file.status ?? 'unknown',
@@ -368,6 +412,15 @@ export class CLIProxyManager {
           retryable: !expired&&!file.disabled&&!revokedCredential(file)&&(Number.isFinite(Date.parse(file.next_retry_after??''))||(file.status==='error'&&!file.unavailable)),
         };
       }))];
+      // Multiple grants for one UID share the verified profile, including grants
+      // that skipped a concurrent lookup or are currently disabled.
+      for(const account of accounts){
+        const raw=credentials.get(account.id)?.raw,uid=raw&&credentialSubject(raw);
+        if(account.provider==='qoder'&&uid&&qoderProfiles[uid]&&!accountLabels[account.id])account.label=credentialEmail(account.label)??qoderProfiles[uid].email;
+      }
+      if(profilesChanged)try{
+        const temp=`${profilePath}.tmp`;await writeFile(temp,JSON.stringify(qoderProfiles),{mode:0o600});await rename(temp,profilePath);
+      }catch{/* Keep verified labels in this snapshot if the optional cache cannot be written. */}
       const groups=new Map<string,LocalAccount[]>();
       for(const account of accounts){const key=identities.get(account.id)??account.id;const group=groups.get(key)??[];group.push(account);groups.set(key,group);}
       const credentialGroups=new Map([...this.credentialGroups].filter(([id])=>retainedIDs.has(id)));

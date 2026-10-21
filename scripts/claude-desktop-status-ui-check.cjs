@@ -28,7 +28,7 @@ const assert=require('node:assert/strict');
  const win=new BrowserWindow({show:false,width:1320,height:1000,webPreferences:{sandbox:true}});
  const evaluate=code=>win.webContents.executeJavaScript(code),pause=ms=>new Promise(r=>setTimeout(r,ms));
  const wait=async code=>{for(let n=0;n<160;n++){if(await evaluate(code))return;await pause(50);}throw Error('UI timeout: '+code);};
- const click=async text=>{await evaluate(`[...document.querySelectorAll("button")].find(e=>e.textContent.trim()===${JSON.stringify(text)}&&!e.disabled).click()`);};
+ const click=async text=>{await evaluate(`[...(document.querySelector("dialog[open]")??document).querySelectorAll("button")].find(e=>e.textContent.trim()===${JSON.stringify(text)}&&!e.disabled).click()`);};
  const dot='document.querySelector(".tfTile .dot")';
  try{
   await win.loadURL(`http://127.0.0.1:${server.address().port}`);
@@ -39,7 +39,7 @@ const assert=require('node:assert/strict');
   await click('Claude CLI');await wait('!document.querySelector(".tfPanel[aria-label=\\"Claude Desktop\\"]")');
   assert.equal(await evaluate(`${dot}.getAttribute("aria-label")`),'未接入');
   await click('Claude Desktop');await wait('document.querySelector(".tfPanel [aria-label=\\"启用网关模型\\"]")?.checked===true');
-  await click('恢复原配置');await click('恢复配置');await wait(`${dot}.getAttribute("aria-label")==="未接入"`);
+  await click('切回官方');await click('切回官方');await wait(`${dot}.getAttribute("aria-label")==="未接入"`);
   cliSignedIn=true;await evaluate('window.dispatchEvent(new Event("tokenflow:native-login-changed"))');await pause(250);
   assert.equal(await evaluate(`${dot}.classList.contains("ok")`),false);
   await click('Claude CLI');await wait(`${dot}.getAttribute("aria-label")==="使用中"`);

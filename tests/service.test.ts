@@ -10,6 +10,17 @@ import { CLIProxyManager } from '../packages/core/src/cliproxy.js';
 const cleanup:Array<()=>Promise<unknown>>=[];
 afterEach(async()=>{for(const fn of cleanup.splice(0).reverse())await fn();});
 async function root(){const p=await mkdtemp(join(tmpdir(),'tokenflow-api-'));cleanup.push(()=>rm(p,{recursive:true,force:true}));return p;}
+it('serves complete static UI documents and assets alongside configuration locking',async()=>{
+ const dir=await root(),ui=await root();
+ const html='<!doctype html><html><body>TokenFlow fixture<script src="/app.js"></script></body></html>';
+ await writeFile(join(ui,'index.html'),html);await writeFile(join(ui,'app.js'),'window.fixtureReady=true;');
+ const service=await createDesktopService({root:dir,uiRoot:ui,binary:'/missing',token:'local-token',localKey:'local-key',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:join(dir,'codex/config.toml')},agentProcesses:async()=>[]});
+ cleanup.push(()=>service.app.close());
+ for(const [url,body] of [['/',html],['/app.js','window.fixtureReady=true;']]){
+  const response=await service.app.inject({url,headers:{host:'127.0.0.1:9527'}});
+  expect(response.statusCode).toBe(200);expect(response.body).toBe(body);
+ }
+});
 it('starts the gateway without the removed automation APIs or runtime directories',async()=>{
  const dir=await root();
  const service=await createDesktopService({root:dir,binary:'/missing',token:'local-token',localKey:'local-proxy-key',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:join(dir,'codex/config.toml'),claude:join(dir,'claude/settings.json'),qoder:join(dir,'qoder/settings.json'),workbuddy:join(dir,'workbuddy/models.json'),pi:join(dir,'pi/models.json'),deepseek:join(dir,'deepseek/cordis.patch.yml')}});
