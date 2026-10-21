@@ -141,22 +141,23 @@ export function describeSource(local: LocalAgentSnapshot, key: string, rows:read
   return { label: '已移除的来源', provider: 'api', sub: '账号或接口已删除' };
 }
 
-/** Per account / API: tokens spent through the gateway, with the account's remaining quota beside them. */
+/** One account/API total with gateway/direct usage in its details. */
 export function SourceUsage({ local, rows, title = '按来源账号', empty = '还没有经过网关的请求。', showQuota = true, expandQuota = false, headerExtra }: { headerExtra?:ReactNode; local: LocalAgentSnapshot; rows: readonly UsageRow[]; title?: string; empty?: string; showQuota?: boolean;expandQuota?:boolean }) {
   const [open, setOpen] = useState('');
   const items: BreakdownItem[] = groupUsage(rows, sourceKey).map(group => {
     const info = describeSource(local, group.key, group.rows);
     const quota = showQuota ? local.quotas[group.key] : undefined;
     const remaining = quotaRemaining(quota);
+    const paths=[{key:'gateway',label:'经 TokenFlow',totals:totalsOf(group.rows.filter(row=>row.origin!=='native'))},{key:'native',label:'本机直连',totals:totalsOf(group.rows.filter(row=>row.origin==='native'))}];
     return {
       key: group.key, label: info.label, sub: info.sub, totals: group.totals,
       icon: <ProviderIcon provider={info.provider} size={28} />,
-      extra: quota&&expandQuota?<div className="tfBreakQuota"><QuotaDetails quota={quota} label={info.label} compact/></div>:quota ? <div className="tfBreakQuota">
+      extra: <div className="tfSourceDetails"><details className="tfSourcePaths"><summary>用量详情</summary><dl>{paths.map(path=><div key={path.key}><dt>{path.label}</dt><dd><strong>{tokenTotalText(path.totals)} Token</strong><span>{formatTokens(path.totals.requests)} 次请求{path.totals.failed>0?` · ${formatTokens(path.totals.failed)} 次失败`:''}{path.totals.unmeasured>0?` · ${formatTokens(path.totals.unmeasured)} 次未返回 Token`:''}</span></dd></div>)}</dl></details>{quota&&expandQuota?<div className="tfBreakQuota"><QuotaDetails quota={quota} label={info.label} compact/></div>:quota ? <div className="tfBreakQuota">
         <button type="button" className="textButton" aria-expanded={open === group.key} onClick={() => setOpen(open === group.key ? '' : group.key)}>
           {remaining === null ? '额度' : `官方额度剩余 ${Math.round(remaining)}%`}{open === group.key ? ' · 收起' : ' · 详情'}
         </button>
         {open === group.key && <QuotaDetails quota={quota} label={info.label} compact />}
-      </div> : undefined,
+      </div> : null}</div>,
     };
   });
   return <UsageBreakdown title={title} items={items} empty={empty} headerExtra={headerExtra} />;

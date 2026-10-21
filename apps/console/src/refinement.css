@@ -663,6 +663,18 @@ body:has(dialog[open]) .tfOperationFeedback{display:none}
 .tfUsageDetails[open]>:not(summary){margin-top:16px}
 .tfUsageFoldHead{flex-wrap:wrap}
 
+/* An account is one source; collection paths stay in its expandable details. */
+.tfSourceDetails{display:grid;gap:10px;min-width:0}
+.tfSourcePaths{font-size:12px;color:var(--muted)}
+.tfSourcePaths>summary{cursor:pointer;width:fit-content;padding:4px 0;min-height:28px;line-height:20px}
+.tfSourcePaths>summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:3px}
+.tfSourcePaths dl{display:grid;gap:12px;margin:8px 0 0;padding:12px;border:1px solid var(--line);border-radius:8px}
+.tfSourcePaths dl>div{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+.tfSourcePaths dt{color:var(--muted)}
+.tfSourcePaths dd{display:grid;gap:4px;text-align:right;margin:0;color:var(--muted)}
+.tfSourcePaths dd strong{color:var(--text);font-size:13px;font-weight:550}
+.tfSourcePaths dd span{font-size:11px}
+
 /* Key creation stays compact; connection confirmation has its own centered dialog. */
 .tfKeyAccessField{border:0;padding:0;margin:0;display:flex;align-items:center;gap:20px}
 .tfKeyAccessField legend{float:left;font-size:12px;color:var(--text);padding:8px 20px 8px 0}

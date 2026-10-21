@@ -1,3 +1,5 @@
+import {mapNativeAccounts} from '../packages/core/src/usage-attribution.js';
+import {nativeIdentity,type LocalUsageRow} from '../packages/core/src/local-usage.js';
 import {createHash} from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, writeFile, readFile, rm,realpath } from 'node:fs/promises';
@@ -84,6 +86,17 @@ it('resolves Qoder email from its own official profile without changing credenti
  expect(await readFile(join(root,'cliproxy/auth/qoder-personal.json'),'utf8')).toBe(credential);
  const cached=await readFile(join(root,'qoder-profiles.json'),'utf8');
  expect(cached).toContain('personal@example.test');expect(cached).not.toMatch(/must-not-persist|private-token|wrong@example/);
+ const usageAccounts=await manager.nativeUsageAccounts(),personal=usageAccounts.find(a=>a.accountId==='personal-id')!;
+ expect(personal.email).toBe('personal@example.test');
+ const native:LocalUsageRow={day:'2026-10-21',target:'qoder-ide',keyId:'native:fixture',keyName:'官方登录',sourceId:'',model:'qoder/model',origin:'native',provider:'qoder',channel:'official',nativeAccountId:nativeIdentity('qoder','personal-id'),nativeEmailHash:nativeIdentity('email','personal@example.test'),nativeAccountEvidence:'login-snapshot',requests:1,failed:0,unmeasured:0,inputTokens:100,cachedTokens:80,cacheBaseTokens:100,outputTokens:10,durationMs:0,last:'2026-10-21T01:00:00Z'};
+ expect(mapNativeAccounts([native],usageAccounts)[0].sourceId).toBe(personal.id);
+ for(const changed of [{nativeEmailHash:nativeIdentity('email','different@example.test')},{nativeAccountId:nativeIdentity('qoder','different-uid')},{provider:'claude',nativeAccountId:nativeIdentity('claude','personal-id')}])expect(mapNativeAccounts([{...native,...changed}],usageAccounts)[0].sourceId).toBe('');
+ await writeFile(join(root,'qoder-profiles.json'),'{invalid');
+ expect(mapNativeAccounts([native],await manager.nativeUsageAccounts())[0].sourceId).toBe('');
+ await writeFile(join(root,'qoder-profiles.json'),JSON.stringify({'different-uid':{email:'personal@example.test',checkedAt:Date.now()}}));
+ expect(mapNativeAccounts([native],await manager.nativeUsageAccounts())[0].sourceId).toBe('');
+ await writeFile(join(root,'qoder-profiles.json'),cached);
+
  const calls=(await fixture()).apiCalls.filter((c:{url:string})=>c.url.endsWith('/userinfo')).length;
  await manager.refreshAccounts();
  expect((await fixture()).apiCalls.filter((c:{url:string})=>c.url.endsWith('/userinfo'))).toHaveLength(calls);

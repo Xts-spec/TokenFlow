@@ -42,6 +42,7 @@ const accountSchema = z.object({
   id_token: z.object({chatgpt_account_id: z.string().optional(), plan_type: z.string().optional()}).passthrough().optional(),
 });
 const modelSchema = z.object({id: z.string(), display_name: z.string().optional(), type: z.string().optional(), owned_by: z.string().optional(), supportedInputModalities:z.array(z.string()).optional()});
+const qoderProfilesSchema=z.record(z.object({email:z.string().email().max(200),checkedAt:z.number().finite()}));
 const apiCallSchema = z.object({status_code: z.number().int(), header: z.record(z.array(z.string())).default({}), body: z.string().default('')});
 export function revokedCredential(file:{status?:string;status_message?:string}){return file.status==='error'&&/\b(?:invalid_grant|refresh_token_revoked|refresh_token_reused|refresh_token_expired)\b/i.test(file.status_message??'');}
 export type LocalAccount = {id: string; provider: string; label: string; nativeClients?:string[]; status: string; disabled: boolean; unavailable: boolean; retryable?:boolean; authenticationRequired?:boolean; isDuplicate?: boolean;preferredCredentialId?:string;credentialCount?:number; modelError?:string; models?: string[]};
@@ -354,7 +355,7 @@ export class CLIProxyManager {
       try{accountLabels=z.record(z.string().trim().min(1).max(200)).parse(JSON.parse(await readConfig(join(this.root,'account-labels.json'))??'{}'));}catch{/* Optional local display metadata. */}
       const profilePath=join(this.root,'qoder-profiles.json');
       let qoderProfiles:Record<string,{email:string;checkedAt:number}>={};
-      try{qoderProfiles=z.record(z.object({email:z.string().email().max(200),checkedAt:z.number().finite()})).parse(JSON.parse(await readConfig(profilePath)??'{}'));}catch{/* Display metadata can be fetched again. */}
+      try{qoderProfiles=qoderProfilesSchema.parse(JSON.parse(await readConfig(profilePath)??'{}'));}catch{/* Display metadata can be fetched again. */}
       let profilesChanged=false;
       const identities=new Map<string,string>();const credentials=new Map<string,{raw:Record<string,unknown>;modified?:unknown}>();
       const accounts: LocalAccount[] = [...retained,...await Promise.all(result.files.map(async file => {
@@ -370,8 +371,8 @@ export class CLIProxyManager {
         const identityKey=credentialIdentity(provider,identity,file);if(identityKey)identities.set(id,identityKey);
         credentials.set(id,{raw:identity,modified:file.modtime});
         const expired=typeof identity.access_token==='string'&&!!identity.access_token&&credentialPreference(identity)[0]===0;
-        const uid=credentialSubject(identity)??file.uid;
         const authenticationRequired=expired||revokedCredential(file);
+        const uid=credentialSubject(identity)??file.uid;
         let profileEmail=provider==='qoder'&&uid?qoderProfiles[uid]?.email:undefined;
         if(provider==='qoder'&&uid&&!credentialEmail(file.email)&&!credentialEmail(identity.email)&&file.auth_index!==undefined&&!file.disabled&&!expired){
           const checkedAt=qoderProfiles[uid]?.checkedAt??0;
@@ -542,8 +543,8 @@ export class CLIProxyManager {
     const authID=this.authIDs.get(selected);
     // /models hides models during some cooldowns. An already scoped request must
     // still reach the pinned sidecar, which enforces retry deadlines and auth.
-    if(this.state!=='running'||!account||account.disabled||(!retryKnownModel&&account.unavailable&&!account.retryable)||!account.models?.includes(model)||(!retryKnownModel&&!this.models.some(m=>m.id===model))||!authID)
     if(account?.authenticationRequired)throw Object.assign(new Error('来源账号的登录授权已失效，请在账号授权中重新登录或确认移除。'),{statusCode:401,code:'source_auth_expired'});
+    if(this.state!=='running'||!account||account.disabled||(!retryKnownModel&&account.unavailable&&!account.retryable)||!account.models?.includes(model)||(!retryKnownModel&&!this.models.some(m=>m.id===model))||!authID)
       throw Object.assign(new Error('源账号或模型当前不可用，请刷新授权；不会切换到其他账号。'),{statusCode:409});
     return authID;
   }
@@ -602,13 +603,18 @@ export class CLIProxyManager {
    * Include expired/disabled grants, collapse duplicate authorizations, and never
    * return tokens. Region, enterprise and project remain separate identities. */
   async nativeUsageAccounts(){
+    let qoderProfiles:z.infer<typeof qoderProfilesSchema>={};
+    try{qoderProfiles=qoderProfilesSchema.parse(JSON.parse(await readConfig(join(this.root,'qoder-profiles.json'))??'{}'));}catch{/* Missing profile evidence leaves native usage unlinked. */}
     const text=(v:unknown)=>typeof v==='string'&&v.trim()?v.trim().slice(0,320):typeof v==='number'&&Number.isSafeInteger(v)?String(v):null;
     const rows=await Promise.all(this.accounts.filter(a=>!a.isDuplicate&&['codex','claude','antigravity','workbuddy','qoder'].includes(a.provider)).map(async a=>{
       try{
         const name=this.names.get(a.id);if(!name||name.includes('/')||name.includes('\\'))return null;
         const raw=JSON.parse(await readConfig(join(this.root,'cliproxy','auth',name))??'null');if(!raw||typeof raw!=='object')return null;
-        const email=credentialEmail(raw.email)??null,provider=a.provider==='workbuddy'?workbuddyLoginTarget(text(raw.domain)??undefined):a.provider;if(!provider)return null;
-        const accountId=provider==='codex'?text(raw.account_id):provider==='claude'?text(raw.account_uuid):provider==='antigravity'?email:text(raw.uid);
+        const provider=a.provider==='workbuddy'?workbuddyLoginTarget(text(raw.domain)??undefined):a.provider;if(!provider)return null;
+        // Qoder grants can omit email; only reuse the profile verified against this exact UID.
+        const qoderUID=provider==='qoder'?credentialSubject(raw):undefined;
+        const email=credentialEmail(raw.email)??(qoderUID?credentialEmail(qoderProfiles[qoderUID]?.email):undefined)??null;
+        const accountId=provider==='codex'?text(raw.account_id):provider==='claude'?text(raw.account_uuid):provider==='antigravity'?email:provider==='qoder'?qoderUID??null:text(raw.uid);
         const organizationId=provider==='claude'?text(raw.organization_uuid):provider==='antigravity'?text(raw.project_id):a.provider==='workbuddy'?text(raw.enterprise_id):null;
         return {id:a.id,provider,accountId,email,organizationId,label:a.label};
       }catch{return null;}
@@ -648,12 +654,6 @@ export class CLIProxyManager {
     await this.request(`/auth-files?name=${encodeURIComponent(name)}`,'POST',{...credential,type:provider});
     return this.refreshAccounts();
   }
-  async deleteAccount(id: string) {
-    if(this.cursor.owns(id)){await this.cursor.remove(id);return this.snapshot();}
-    const name = this.names.get(id);
-    if (!name) throw new Error('账号已变更，请刷新账号列表');
-    const records:Record<string,unknown>[]=[];
-    for(const candidate of this.credentialGroups.get(id)??[id]){const name=this.names.get(candidate);if(name){const raw=await readConfig(join(this.root,'cliproxy','auth',name));if(raw)records.push(JSON.parse(raw));await this.request(`/auth-files?name=${encodeURIComponent(name)}`,'DELETE');}delete this.quotas[candidate];}
   async removeExpiredAccount(id:string){
     const previous=this.snapshot().accounts.find(a=>a.id===id);
     if(previous&&isLoginProvider(previous.provider))await this.refreshAccounts(previous.provider,false);
@@ -666,6 +666,12 @@ export class CLIProxyManager {
     if(records.length)await this.credentialHistory.forget(account.provider,records);
     return this.refreshAccounts();
   }
+  async deleteAccount(id: string) {
+    if(this.cursor.owns(id)){await this.cursor.remove(id);return this.snapshot();}
+    const name = this.names.get(id);
+    if (!name) throw new Error('账号已变更，请刷新账号列表');
+    const records:Record<string,unknown>[]=[];
+    for(const candidate of this.credentialGroups.get(id)??[id]){const name=this.names.get(candidate);if(name){const raw=await readConfig(join(this.root,'cliproxy','auth',name));if(raw)records.push(JSON.parse(raw));await this.request(`/auth-files?name=${encodeURIComponent(name)}`,'DELETE');}delete this.quotas[candidate];}
     if(records.length)await this.credentialHistory.forget(this.accounts.find(a=>a.id===id)!.provider,records);
     this.log(`已删除账号凭据：${name}`);
     return this.refreshAccounts();
