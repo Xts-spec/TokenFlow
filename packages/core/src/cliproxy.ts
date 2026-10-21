@@ -70,7 +70,7 @@ export class CLIProxyManager {
   private requests = new AbortController();
   private startTask?: Promise<LocalAgentSnapshot>;
   private refreshTask?: Promise<LocalAgentSnapshot>;
-  private refreshScope?: LoginProviderId;
+  private refreshScope?: string;
   private refreshTimer?: ReturnType<typeof setTimeout>;
   private emptyRefreshes = 0;
   private providerRefreshTimes=new Map<string,number>();
@@ -325,15 +325,16 @@ export class CLIProxyManager {
     } finally {this.busy = false;}
   }
   /** 从每个账号的模型目录建立独立命名空间，实际注册到网关，而非只改显示文本。 */
-  refreshAccounts(provider?:LoginProviderId,refreshUsage=true): Promise<LocalAgentSnapshot> {
-    if (this.refreshTask) return !this.refreshScope||this.refreshScope===provider?this.refreshTask:this.refreshTask.catch(()=>undefined).then(()=>this.refreshAccounts(provider,refreshUsage));
+  refreshAccounts(provider?:LoginProviderId,refreshUsage=true,accountId?:string): Promise<LocalAgentSnapshot> {
+    const scope=accountId??provider;
+    if (this.refreshTask) return !this.refreshScope||this.refreshScope===scope?this.refreshTask:this.refreshTask.catch(()=>undefined).then(()=>this.refreshAccounts(provider,refreshUsage,accountId));
     clearTimeout(this.refreshTimer);
-    this.refreshScope=provider;
+    this.refreshScope=scope;
     this.refreshTimer=undefined;
-    this.refreshTask = this.loadAccounts(provider,refreshUsage).finally(() => {
+    this.refreshTask = this.loadAccounts(provider,refreshUsage,accountId).finally(() => {
       this.refreshTask = undefined;
       this.refreshScope=undefined;
-      if(this.state==='running'&&!this.closing&&!this.requests.signal.aborted){
+      if(!accountId&&this.state==='running'&&!this.closing&&!this.requests.signal.aborted){
         const pending=!!this.accountError||this.accounts.some(a=>!a.disabled&&!a.unavailable&&!a.models?.length&&!a.modelError);
         this.emptyRefreshes=pending?this.emptyRefreshes+1:0;
         if(pending&&this.emptyRefreshes<=10){
@@ -344,14 +345,15 @@ export class CLIProxyManager {
     });
     return this.refreshTask;
   }
-  private async loadAccounts(providerScope?:LoginProviderId,refreshUsage=true) {
+  private async loadAccounts(providerScope?:LoginProviderId,refreshUsage=true,accountId?:string) {
     if (this.state !== 'running') throw new Error('请先启动 Local Agent');
     try {
       const result = z.object({files: z.array(accountSchema)}).parse(await this.request('/auth-files'));
       if(providerScope)result.files=result.files.filter(file=>(file.provider??file.type)===providerScope);
+      if(accountId)result.files=result.files.filter(file=>file.name===this.names.get(accountId));
       // Keep expired grants visible until the user confirms removal. Quota errors alone are not revocation.
       result.files=result.files.filter(file=>!file.runtime_only);
-      const retained=providerScope?this.accounts.filter(account=>account.provider!==providerScope):[];
+      const retained=accountId?this.accounts.filter(account=>account.id!==accountId):providerScope?this.accounts.filter(account=>account.provider!==providerScope):[];
       const retainedIDs=new Set(retained.map(account=>account.id));
       const names = new Map([...this.names].filter(([id])=>retainedIDs.has(id)));
       const authIDs = new Map([...this.authIDs].filter(([id])=>retainedIDs.has(id)));
@@ -379,6 +381,7 @@ export class CLIProxyManager {
         const expired=typeof identity.access_token==='string'&&!!identity.access_token&&credentialPreference(identity)[0]===0;
         const revision=credentialTokenRevision(identity);
         if(this.revokedTokens.has(id)&&this.revokedTokens.get(id)!==revision)this.revokedTokens.delete(id);
+        if(revision&&revokedCredential(file))this.revokedTokens.set(id,revision);
         const authenticationRequired=expired||revokedCredential(file)||!!revision&&this.revokedTokens.get(id)===revision;
         const uid=credentialSubject(identity)??file.uid;
         let profileEmail=provider==='qoder'&&uid?qoderProfiles[uid]?.email:undefined;
@@ -401,6 +404,7 @@ export class CLIProxyManager {
         if (file.auth_index !== undefined) quotaTargets.set(id, {authIndex: String(file.auth_index), account: {provider, email: file.email, domain:provider==='trae'&&typeof identity.host==='string'?identity.host:provider==='zcode'&&identity.provider==='bigmodel'?'bigmodel.cn':typeof identity.domain==='string'?identity.domain:undefined,
           projectId: file.project_id, accountType: file.account_type, chatgptAccountId: file.id_token?.chatgpt_account_id, planType: file.id_token?.plan_type}});
         return {
+          ...(accountId?{preferredCredentialId:this.accounts.find(account=>account.id===id)?.preferredCredentialId,credentialCount:this.accounts.find(account=>account.id===id)?.credentialCount,isDuplicate:this.accounts.find(account=>account.id===id)?.isDuplicate}:{}),
           id, provider, label: accountLabels[id]??accountLabel(provider,profileEmail?{...file,email:credentialEmail(file.email)??credentialEmail(identity.email)??profileEmail}:file,{...identity,uid}),
           // Product eligibility is independent of installation, native login and enabled state.
           ...(provider==='qoder'?{nativeClients:['qoder','qoder-ide']}:provider==='workbuddy'?{nativeClients:[workbuddyLoginTarget(typeof identity.domain==='string'?identity.domain:undefined)].filter((id):id is NonNullable<typeof id>=>!!id)}:{}),
@@ -424,20 +428,22 @@ export class CLIProxyManager {
       }catch{/* Keep verified labels in this snapshot if the optional cache cannot be written. */}
       const groups=new Map<string,LocalAccount[]>();
       for(const account of accounts){const key=identities.get(account.id)??account.id;const group=groups.get(key)??[];group.push(account);groups.set(key,group);}
-      const credentialGroups=new Map([...this.credentialGroups].filter(([id])=>retainedIDs.has(id)));
+      const credentialGroups=new Map([...this.credentialGroups].filter(([id])=>id===accountId||retainedIDs.has(id)));
       for(const group of groups.values()){
+        if(accountId)continue;
         group.sort((a,b)=>Number(a.disabled)-Number(b.disabled)||Number(a.unavailable&&!a.retryable)-Number(b.unavailable&&!b.retryable)||compareCredentials(credentials.get(a.id)??{raw:{}},credentials.get(b.id)??{raw:{}})||a.id.localeCompare(b.id));
         for(const account of group){
           if(group.length>1){account.preferredCredentialId=group[0].id;account.credentialCount=group.length;account.isDuplicate=account.id!==group[0].id;}
           if(identities.has(account.id))credentialGroups.set(account.id,group.map(a=>a.id));
         }
       }
-      const aliases: typeof this.aliases = providerScope?structuredClone(Object.fromEntries(Object.entries(this.aliases).filter(([id])=>id!==providerScope))):{};
+      const retainedModels=new Set(retained.flatMap(account=>account.models??[]));
+      const aliases: typeof this.aliases = accountId?Object.fromEntries(Object.entries(this.aliases).map(([provider,entries])=>[provider,entries.filter(entry=>retainedModels.has(entry.alias))])):providerScope?structuredClone(Object.fromEntries(Object.entries(this.aliases).filter(([id])=>id!==providerScope))):{};
       const discoveredAccounts = new Set<string>();
-      const catalog = new Map<string, LocalModel>(providerScope?this.models.filter(model=>model.provider!==providerScope).map(model=>[model.id,model]):[]);
+      const catalog = new Map<string, LocalModel>(accountId?this.models.filter(model=>retainedModels.has(model.id)).map(model=>[model.id,model]):providerScope?this.models.filter(model=>model.provider!==providerScope).map(model=>[model.id,model]):[]);
 
       // 1. 从每个已启用账号的凭据文件目录建立模型发现
-      await Promise.all(accounts.filter(a => !a.disabled && !a.authenticationRequired && isLoginProvider(a.provider)&&(!providerScope||a.provider===providerScope)).map(async account => {
+      await Promise.all(accounts.filter(a => !a.disabled && !a.authenticationRequired && isLoginProvider(a.provider)&&(!providerScope||a.provider===providerScope)&&(!accountId||a.id===accountId)).map(async account => {
         const provider = account.provider as LoginProviderId;
         try {
           // Sidecar catalog states do not expose upstream HTTP status. Retry opaque
@@ -464,7 +470,7 @@ export class CLIProxyManager {
       // 2. 结合网关实时已注册的 /v1/models，为已启用提供商补充可用模型
       try {
         const live = z.object({data: z.array(modelSchema)}).parse(await this.request('/models', 'GET', undefined, false));
-        for (const model of live.data) {
+        for (const model of accountId?[]:live.data) {
           if (!model.id) continue;
           if(/^api-[a-f0-9]{24}\//.test(model.id))continue;
           let provider: LoginProviderId | undefined;
@@ -518,7 +524,7 @@ export class CLIProxyManager {
       this.credentialGroups=credentialGroups;this.accounts = accounts; this.names = names; this.authIDs = authIDs; this.quotaTargets = quotaTargets;
       for(const id of this.revokedTokens.keys())if(!names.has(id))this.revokedTokens.delete(id);
       this.quotas = Object.fromEntries(Object.entries(this.quotas).filter(([id]) => names.has(id)));
-      this.models = [...catalog.values()].filter(m => providerScope&&m.provider!==providerScope||available.has(m.id)).sort((a,b) => a.id.localeCompare(b.id));
+      this.models = [...catalog.values()].filter(m => accountId&&retainedModels.has(m.id)||providerScope&&m.provider!==providerScope||available.has(m.id)).sort((a,b) => a.id.localeCompare(b.id));
       this.publishAPIModels(available);
       this.accountError = this.models.length < catalog.size || (this.options.apiModelIDs?.()??[]).some(id=>!this.apiModels.has(id)) ? '模型路由正在同步，网关会自动重试。' : accounts.some(a=>!a.disabled&&!a.unavailable&&!a.models?.length&&!a.modelError) ? '授权已读取，正在同步可用模型…' : undefined;
       // Load quotas after startup / new login without delaying account discovery or the workspace.
@@ -665,7 +671,7 @@ export class CLIProxyManager {
   }
   async removeExpiredAccount(id:string){
     const previous=this.snapshot().accounts.find(a=>a.id===id);
-    if(previous&&isLoginProvider(previous.provider))await this.refreshAccounts(previous.provider,false);
+    if(previous&&isLoginProvider(previous.provider))await this.refreshAccounts(previous.provider,false,id);
     const account=this.snapshot().accounts.find(a=>a.id===id);
     if(!account?.authenticationRequired)throw Object.assign(new Error('此账号没有已确认失效的授权，请刷新后检查。'),{statusCode:409});
     if(this.cursor.owns(id)){await this.cursor.remove(id);return this.snapshot();}
@@ -702,6 +708,14 @@ export class CLIProxyManager {
     this.quotaProviderTasks.set(provider,task);
     return task;
   }
+  async refreshAccount(id:string):Promise<LocalAgentSnapshot> {
+    const account=this.snapshot().accounts.find(account=>account.id===id);
+    if(!account)throw Object.assign(new Error('账号已变更，请刷新账号列表'),{statusCode:404});
+    if(this.cursor.owns(id)){await this.cursor.refresh(true,id);return this.snapshot();}
+    if(!isLoginProvider(account.provider))return this.snapshot();
+    await this.refreshAccounts(account.provider,false,id);
+    return this.loadQuota(account.provider,id);
+  }
   refreshProvider(provider:LoginProviderId|'cursor',force=true):Promise<LocalAgentSnapshot> {
     const existing=this.providerRefreshTasks.get(provider);if(existing)return existing;
     const checked=this.providerRefreshTimes.get(provider);
@@ -714,9 +728,9 @@ export class CLIProxyManager {
     })().finally(()=>{this.providerRefreshTimes.set(provider,Date.now());this.providerRefreshTasks.delete(provider);});
     this.providerRefreshTasks.set(provider,task);return task;
   }
-  private async loadQuota(providerScope:LoginProviderId|'cursor') {
+  private async loadQuota(providerScope:LoginProviderId|'cursor',accountId?:string) {
     if (this.state !== 'running') throw new Error('请先启动 Local Agent');
-    const targets = this.accounts.filter(account => !account.disabled && !account.isDuplicate && account.provider===providerScope && isLoginProvider(account.provider) && !!quotaProviders[account.provider as LoginProviderId] && this.quotaTargets.has(account.id));
+    const targets = this.accounts.filter(account => !account.disabled && !account.isDuplicate && account.provider===providerScope && (!accountId||account.id===accountId) && isLoginProvider(account.provider) && !!quotaProviders[account.provider as LoginProviderId] && this.quotaTargets.has(account.id));
     await Promise.all(targets.map(async account => {
       const provider = account.provider as LoginProviderId;
       const quotaProvider = quotaProviders[provider];

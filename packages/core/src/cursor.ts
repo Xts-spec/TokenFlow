@@ -232,7 +232,7 @@ export class CursorProvider {
   this.loaded=true;await Promise.all(this.accounts.map(a=>a.load()));
  })().finally(()=>{this.loading=undefined;});return this.loading;}
 
- async refresh(forceQuota=true){await this.load();await Promise.all(this.accounts.map(a=>a.refresh(forceQuota)));}
+ async refresh(forceQuota=true,id?:string){await this.load();await Promise.all(this.accounts.filter(a=>!id||a.snapshot().accounts.some(account=>account.id===(this.aliases[id]??id))).map(a=>a.refresh(forceQuota)));}
  async refreshIfStale(){if(this.loaded&&!this.closed)await Promise.all(this.accounts.map(a=>a.refreshIfStale()));}
  snapshot(){const snapshots=this.accounts.map(a=>a.snapshot());return {accounts:snapshots.flatMap(s=>s.accounts),models:[...new Map(snapshots.flatMap(s=>s.models).map(m=>[m.id,m])).values()],quotas:Object.assign({},...snapshots.map(s=>s.quotas)) as Record<string,AccountQuota>,login:this.loginAccount?.snapshot().login};}
  assertSource(id:string,model:string){const account=this.account(id);return account.assertSource(account.id!,model);}

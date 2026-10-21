@@ -387,3 +387,15 @@ it.each(['string','object'])('reports Cursor model region restrictions from a se
  expect(response.status).toBe(403);const raw=await response.text();expect(JSON.parse(raw).error).toMatchObject({code:'cursor_region_unsupported'});expect(raw).toContain('地区');expect(raw).not.toContain('PRIVATE');
  expect(provider.snapshot().models.some(m=>m.id==='cursor/fixture-model')).toBe(true);
 });
+
+
+it('refreshes only the selected Cursor account',async()=>{
+ const {root,secrets}=await setup();
+ await secrets.set('cursor-account',JSON.stringify({version:1,accounts:[{apiKey:'one-fixture',email:'one@example.test'},{apiKey:'two-fixture',email:'two@example.test'}]}));
+ const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();
+ const chosen=provider.snapshot().accounts.find(a=>a.label==='one@example.test')!;
+ sdk.models.mockClear();sdk.quota.mockClear();
+ await provider.refresh(true,chosen.id);
+ expect(sdk.models).toHaveBeenCalledTimes(1);expect(sdk.models.mock.calls[0][0]).toMatchObject({apiKey:'one-fixture'});
+ expect(sdk.quota).toHaveBeenCalledTimes(1);
+});

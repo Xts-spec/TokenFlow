@@ -96,7 +96,7 @@ export function durationText(ms: number | null): string {
 
 /** Account authorization usage: gateway calls served by the platform's accounts, and local requests proven to use its official login. */
 export function spentByPlatform(row:UsageRow,platform:{id:string;accounts:readonly {id:string}[]}){
- if(row.origin==='native')return row.channel==='official'&&(row.provider===platform.id||platform.id==='workbuddy'&&row.provider==='workbuddy-ai');
+ if(row.origin==='native')return row.channel==='official'&&(row.provider===platform.id||platform.id==='workbuddy'&&row.provider==='workbuddy-ai'||platform.id==='qoder'&&row.provider==='qoder-ide');
  return platform.accounts.some(account=>account.id===row.sourceId)||row.channel!=='api'&&row.model.startsWith(platform.id+'/');
 }
 

@@ -11,7 +11,7 @@ import type { LocalAgentSnapshot } from '../../../packages/core/src/cliproxy';
 import { QuotaDetails } from './QuotaDetails';
 import { qualifiedModelLabel as modelLabel } from './model-label';
 import type { UsageData } from './usage-data';
-import {localDay} from './usage-model';
+import {localDay,spentByPlatform} from './usage-model';
 import {officialLoginHeld} from '../../shared/native-login-identity';
 import { clientOptions, loginNames, useNativeLogin, type LoginProvider } from './native-login';
 import { Icon } from './Icons';
@@ -34,7 +34,7 @@ function navigateTabs(event:KeyboardEvent<HTMLDivElement>){
 }
 
 export type AccountActions={
- refresh:(provider:string,force?:boolean)=>Promise<void>;
+ refresh:(provider:string,force?:boolean,accountId?:string)=>Promise<void>;
  connect:(provider:string)=>Promise<void>;
  importLocal:(provider:string)=>Promise<void>;
  login:(action:'open'|'cancel'|'callback',data:{id:string;redirectURL?:string})=>Promise<void>;
@@ -112,7 +112,6 @@ export function AccountsPage({local,usage,disabled,actions,notify,onContext}:{lo
    </NativeLoginStatus>;
 
  return <div className="tfPage tfAccountsPage">{officialConfirm.dialog}
-  <UsageFold title="今日总用量" rows={usage.allRows.filter(row=>row.day===localDay(new Date()))} range="today" loaded={usage.loaded} error={usage.error} onRetry={usage.reload}/>
   <div className="tfProviderTabs" role="tablist" aria-label="授权平台" onKeyDown={navigateTabs}>
    {providers.map(item=><button key={item.id} id={`provider-tab-${item.id}`} role="tab" aria-selected={provider?.id===item.id} aria-controls={`provider-panel-${item.id}`} tabIndex={provider?.id===item.id?0:-1} onClick={()=>chooseProvider(item.id)}>
     <ProviderIcon provider={item.id} size={28}/><span>{item.label}</span>
@@ -121,8 +120,9 @@ export function AccountsPage({local,usage,disabled,actions,notify,onContext}:{lo
   <LoginProgress local={local} disabled={disabled||switching} actions={actions}/>
   {!provider&&<p className="tfHint">正在读取授权平台…</p>}
   {provider&&<section id={`provider-panel-${provider.id}`} role="tabpanel" aria-labelledby={`provider-tab-${provider.id}`} className="tfProviderPanel">
+   <UsageFold title="今日用量" rows={usage.allRows.filter(row=>row.day===localDay(new Date())&&spentByPlatform(row,provider))} range="today" loaded={usage.loaded} error={usage.error} onRetry={usage.reload}/>
    <header className="tfProviderHead">
-    <div className="tfProviderTitle"><h2>{provider.label}</h2><button className="textButton tfProviderRefresh" aria-label={`刷新 ${provider.label} 账号、模型和额度`} title="点击刷新此平台的账号、模型和额度" disabled={locked||local.state!=='running'} onClick={()=>void (async()=>{if(lock.current)return;lock.current=true;setRefreshing(provider.id);try{await actions.refresh(provider.id);await login?.refresh(true);}catch(error){notify({kind:'error',text:error instanceof Error?error.message:'刷新失败，请重试'});}finally{lock.current=false;setRefreshing('');}})()}><Icon name="refresh" size={14}/>刷新</button></div>
+    <div className="tfProviderTitle"><h2>{provider.label}</h2><button className="textButton tfProviderRefresh" aria-label={`刷新 ${account?.label??provider.label} 账号、模型和额度`} title="点击刷新当前账号的模型和额度" disabled={locked||local.state!=='running'} onClick={()=>void (async()=>{if(lock.current)return;lock.current=true;setRefreshing(provider.id);try{await actions.refresh(provider.id,true,account?.id);await login?.refresh();}catch(error){notify({kind:'error',text:error instanceof Error?error.message:'刷新失败，请重试'});}finally{lock.current=false;setRefreshing('');}})()}><Icon name="refresh" size={14}/>刷新</button></div>
     <div className="tfRow">
      {importable.has(provider.id)&&<button disabled={locked} onClick={()=>void actions.importLocal(client==='workbuddy-ai'?'workbuddy-ai':provider.id).then(()=>login?.refresh(true))}>{provider.id==='cursor'&&login?.nativeCurrent?'复用本机账号':'从本机导入'}</button>}
      <button className="iconButton tfCollectionAdd" title="添加账号" aria-label={`添加 ${client?loginNames[client]:provider.label} 账号`} disabled={locked} onClick={()=>void actions.connect(client==='workbuddy-ai'?'workbuddy-overseas':provider.id)}><Icon name="plus" size={18}/></button>

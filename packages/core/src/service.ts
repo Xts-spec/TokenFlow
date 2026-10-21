@@ -1008,6 +1008,10 @@ export async function createDesktopService(options:ServiceOptions) {
     if(!input.redirectURL)throw Object.assign(new Error('请输入完整回调地址'),{statusCode:400});
     return localOperation(()=>proxy.submitCallback(input.id,input.redirectURL!));
   });
+  app.post('/api/local-agent/accounts/:id/refresh',async req=>{
+    const id=z.string().regex(/^[a-f0-9]{24}$/).parse((req.params as {id:string}).id);
+    return localOperation(()=>proxy.refreshAccount(id));
+  });
   app.post('/api/local-agent/accounts/:id',async req=>{
     const {enabled}=z.object({enabled:z.boolean()}).strict().parse(req.body);
     const id=z.string().regex(/^[a-f0-9]{24}$/).parse((req.params as {id:string}).id);

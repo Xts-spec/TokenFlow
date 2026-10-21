@@ -510,6 +510,7 @@ it('groups grants by real identity, preserves files, and routes an existing pinn
  expect(manager.sourceAuth(old.id,'codex/m')).toBe('new.json');expect(newest.models).toContain('codex/old-only');expect(manager.sourceAuth(newest.id,'codex/old-only')).toBe('old.json');expect(manager.sourceAuth(other.id,'codex/m')).toBe('other-person.json');
  expect(JSON.stringify(manager.snapshot())).not.toMatch(/private-access|private-refresh/);
  for(const row of rows)expect(await readFile(join(root,'cliproxy/auth',row.name),'utf8')).toContain('private-access');
+ await manager.refreshAccount(newest.id);expect(manager.sourceAuth(old.id,'codex/m')).toBe('new.json');expect(manager.sourceAuth(newest.id,'codex/old-only')).toBe('old.json');
  await manager.setAccountEnabled(old.id,false);expect(manager.snapshot().accounts.filter(a=>a.credentialCount===3).every(a=>a.disabled)).toBe(true);expect(()=>manager.sourceAuth(old.id,'codex/m')).toThrow();
 });
 function createHashForTest(name:string){return createHash('sha256').update(name).digest('hex').slice(0,24);}
@@ -546,4 +547,39 @@ it('retries an unavailable official catalog twice, forcing a fresh lookup after 
  });
  await manager.start();expect(paths).toHaveLength(3);expect(paths.slice(1).every(path=>path.endsWith('refresh=true'))).toBe(true);
  expect(manager.snapshot().accounts[0].models).toEqual(['kimi/current']);expect(manager.snapshot().accounts[0].modelError).toBeUndefined();
+});
+
+
+it('keeps explicit revocation evidence when sidecar status clears before removal',async()=>{
+ const {manager,root}=await setup();
+ await mkdir(join(root,'cliproxy/auth'),{recursive:true});
+ await writeFile(join(root,'cliproxy/auth/revoked.json'),JSON.stringify({access_token:'fixture-revoked',refresh_token:'fixture-refresh',expired:'2035-01-01T00:00:00Z'}));
+ const entry={name:'revoked.json',provider:'codex',email:'revoked@example.test',status:'error',status_message:'refresh_token_revoked'};
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([entry]));await manager.start();await manager.refreshQuota();
+ const account=manager.snapshot().accounts[0];expect(account.authenticationRequired).toBe(true);
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{...entry,status:'active',status_message:''}]));
+ await manager.removeExpiredAccount(account.id);
+ expect(manager.snapshot().accounts).toEqual([]);
+});
+
+it('refreshes one account without querying its siblings or other providers',async()=>{
+ const {manager,root,fixture}=await setup();await mkdir(join(root,'cliproxy'),{recursive:true});
+ const entries=[{name:'codex-one.json',provider:'codex',email:'one@example.test',auth_index:'codex-one',status:'active',models:['old-codex']},{name:'codex-two.json',provider:'codex',email:'two@example.test',auth_index:'codex-two',status:'active',models:['old-codex']},{name:'claude.json',provider:'claude',email:'dev@example.test',auth_index:'claude-one',status:'active',models:['old-claude']}];
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify(entries));await manager.start();await manager.refreshQuota();
+ const before=manager.snapshot(),beforeCalls=await fixture(),chosen=before.accounts.find(a=>a.label==='one@example.test')!;
+ await fixture({modelSets:{codex:['new-codex'],claude:['new-claude']}});
+ const next=await manager.refreshAccount(chosen.id);
+ expect(next.accounts.find(a=>a.id===chosen.id)?.models).toEqual(['codex/new-codex']);
+ for(const account of before.accounts.filter(a=>a.id!==chosen.id)){expect(next.accounts.find(a=>a.id===account.id)).toEqual(account);expect(next.quotas[account.id]).toEqual(before.quotas[account.id]);}
+ expect(next.models.map(m=>m.id)).toEqual(expect.arrayContaining(['codex/old-codex','codex/new-codex','claude/old-claude']));
+ const calls=await fixture();expect(calls.modelCalls.slice(beforeCalls.modelCalls.length)).toEqual(['codex-one.json']);
+ expect(new Set(calls.apiCalls.slice(beforeCalls.apiCalls.length).map((call:{authIndex:string})=>call.authIndex))).toEqual(new Set(['codex-one']));
+});
+
+
+it('routes account refresh requests to the selected account',async()=>{
+ const {root,port}=await setup();const service=await createDesktopService({root,proxyPort:port,binary,token:'refresh-admin',localKey:'fixture-key',secrets:{get:async()=>'',set:async()=>{}}});cleanup.push(()=>service.app.close());
+ const id='a'.repeat(24),refresh=vi.spyOn(service.proxy,'refreshAccount').mockResolvedValue(service.proxy.snapshot());
+ const result=await service.app.inject({method:'POST',url:`/api/local-agent/accounts/${id}/refresh`,headers:{host:'127.0.0.1:9527',authorization:'Bearer refresh-admin'},payload:{}});
+ expect(result.statusCode,result.body).toBe(200);expect(refresh).toHaveBeenCalledWith(id);
 });
