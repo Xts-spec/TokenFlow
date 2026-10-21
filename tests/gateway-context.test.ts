@@ -21,13 +21,36 @@ const longInput=[
  {role:'user',content:'Now inspect deployment.'},
  {type:'function_call',call_id:'pending',name:'inspect',arguments:'{}'}
 ] satisfies OpenAI.Responses.ResponseInputItem[];
+it('reports Qoder resource limits from summary calls without changing history or hiding them as generic failures',async()=>{
+ const {context}=await setup();const input=structuredClone(longInput);
+ const failure=await context.response('responses/compact',{model:'qoder/dfmodel',input},'a','s',async()=>Response.json({error:{code:'qoder_resource_limit',message:'PRIVATE_UPSTREAM_BODY'}},{status:429})).catch(error=>error);
+ expect(failure).toMatchObject({statusCode:422,code:'compaction_upstream_failed'});
+ expect(failure.message).toContain('资源限流');expect(failure.message).not.toContain('PRIVATE');expect(input).toEqual(longInput);
+});
+it.each(['flat','nested','failed'])('reports Qoder summary %s SSE errors safely without persisting failed summaries',async shape=>{
+ const {root,context}=await setup();const input=structuredClone(longInput);let report:any;
+ const error={code:'qoder_resource_limit',message:'PRIVATE_UPSTREAM_BODY',type:'rate_limit_error'};
+ const event=shape==='flat'?{...error,type:'error'}:shape==='nested'?{type:'error',error}:{type:'response.failed',response:{status:'failed',output:[],error}};
+ const failure=await context.response('responses/compact',{model:'qoder/dfmodel',input},'a','s',async()=>new Response('data: '+JSON.stringify(event)+'\n\n',{headers:{'content-type':'text/event-stream'}}),undefined,{onCompaction:value=>{report=value;}}).catch(error=>error);
+ expect(failure).toMatchObject({statusCode:422,code:'compaction_upstream_failed',unmetered:true});
+ expect(failure.message).toContain('资源限流');expect(failure.message).not.toContain('PRIVATE');expect(input).toEqual(longInput);
+ expect(report).toMatchObject({failed:true,unmetered:true});
+ expect((await readdir(join(root,'gateway-context'))).filter(name=>name.startsWith('summary-'))).toEqual([]);
+});
+it('preserves known usage on a classified failed summary',async()=>{
+ const {context}=await setup();let report:any;
+ const event={type:'response.failed',response:{status:'failed',output:[],usage,error:{code:'qoder_resource_limit',message:'PRIVATE_UPSTREAM_BODY'}}};
+ const failure=await context.response('responses/compact',{model:'qoder/dfmodel',input:longInput},'a','s',async()=>new Response('data: '+JSON.stringify(event)+'\n\n',{headers:{'content-type':'text/event-stream'}}),undefined,{onCompaction:value=>{report=value;}}).catch(error=>error);
+ expect(failure).toMatchObject({code:'compaction_upstream_failed',usage,unmetered:false});
+ expect(report).toMatchObject({failed:true,unmetered:false,inputTokens:30,outputTokens:10});
+});
 it.each(['qoder/model','workbuddy/model'])('compacts %s with the same model and resumes exact recent tool context after restart',async model=>{
  const {root,context}=await setup();const requests:Record<string,unknown>[]=[];
  const send=async(path:string,body:Record<string,unknown>)=>{expect(path).toBe('responses');requests.push(body);return Response.json(answer('Changed /app/main.ts; preserve API. Tests passed. Deployment inspection pending.'));};
  const original=structuredClone(longInput);
  const compact=await context.response('responses/compact',{model,input:longInput},'key-a','account-a',send);
  const result=await compact.json();expect(result.object).toBe('response.compaction');expect(result.usage).toEqual(usage);
- expect(requests[0]).toMatchObject({model,stream:false,store:false});expect(requests[0]).not.toHaveProperty('tools');
+ expect(requests[0]).toMatchObject({model,stream:true,store:false});expect(requests[0]).not.toHaveProperty('tools');
  expect(result.output.filter((item:{role?:string})=>item.role==='user')).toHaveLength(3);
  expect(result.output.at(-1)).toMatchObject({type:'compaction'});expect(result.output.at(-1).encrypted_content).not.toContain('main.ts');
  expect(longInput).toEqual(original);
@@ -38,7 +61,7 @@ it.each(['qoder/model','workbuddy/model'])('compacts %s with the same model and 
  expect(forwarded.slice(-5)).toEqual([...original.slice(5),{type:'function_call_output',call_id:'pending',output:'ready'}]);
  expect(forwarded.filter(item=>item.role==='user')).toHaveLength(3);
  expect(JSON.stringify(forwarded)).not.toContain('historical file content');
- expect(await readdir(join(root,'gateway-context'))).toEqual(['key']);
+ expect((await readdir(join(root,'gateway-context'))).filter(name=>!name.startsWith('summary-'))).toEqual(['key']);
 });
 it('persists encrypted previous responses, forks without mixing turns, scopes by key/source/model and honors store:false',async()=>{
  const {root,context}=await setup();let seen:Record<string,unknown>={};const send=async(_path:string,body:Record<string,unknown>)=>{seen=body;return Response.json(answer());};
@@ -155,4 +178,23 @@ it('rejects orphaned tool results before summarization and preserves unfinished 
  const compact=await (await context.response('responses/compact',{model:'qoder/m',input},'a','s',send)).json();let seen:unknown;
  await context.response('responses',{model:'qoder/m',input:compact.output,store:false},'a','s',async(_p,b)=>{seen=b.input;return Response.json(answer());});
  expect(seen).toContainEqual(input[2]);
+});
+it.each([20,100])('compacts a single tool loop with a %i KiB latest result without rejecting its fixed prefix',async kib=>{
+ const {context}=await setup();const model='codex/model';const scope={owner:'a',source:'s',model};
+ const input:Record<string,unknown>[]=[{role:'developer',content:'Project rules '.repeat(10000)},{role:'user',content:'Continue the task, preserve my constraints.'}];
+ for(let i=0;i<6;i++)input.push({type:'function_call',call_id:`call-${i}`,name:'read',arguments:'{}'},{type:'function_call_output',call_id:`call-${i}`,output:String(i).repeat(kib*1024)});
+ const original=structuredClone(input);let forwarded:Record<string,unknown>[]=[];let summaries=0;
+ const response=await context.response('responses',{model,input,tools:[{type:'function',name:'read',parameters:{type:'object'}}]},'a','s',async(_path,body)=>{
+  if(!body.tools){summaries++;expect(JSON.stringify(body.input)).not.toContain('Project rules');return Response.json(answer('Completed earlier reads; continue using the latest tool result.'));}
+  forwarded=body.input as Record<string,unknown>[];return Response.json(answer());
+ },{scope,recover:async()=>[]});
+ expect(response.ok).toBe(true);expect(summaries).toBeGreaterThan(0);
+ expect(forwarded).toContainEqual(original[0]);expect(forwarded).toContainEqual(original[1]);
+ expect(forwarded.slice(-2)).toEqual(original.slice(-2));
+ const checkpoint=forwarded.find(item=>item.role==='assistant');
+ expect(checkpoint).toMatchObject({type:'message',content:[{type:'output_text'}]});
+ expect(JSON.stringify(forwarded).length).toBeLessThan(JSON.stringify(original).length);
+ const calls=new Set(forwarded.filter(item=>item.type==='function_call').map(item=>item.call_id));
+ for(const item of forwarded.filter(item=>item.type==='function_call_output'))expect(calls.has(item.call_id)).toBe(true);
+ expect(input).toEqual(original);
 });

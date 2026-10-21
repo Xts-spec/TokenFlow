@@ -40,14 +40,16 @@ it('counts failures and unmetered calls separately, and ignores cache data an up
 });
 
 it('limits rows by calendar days and drops what is past retention', async () => {
-  const now = new Date(2026, 9, 12, 12).getTime();
-  const at = (days: number) => new Date(now - days * 86_400_000).toISOString();
+  // `list` accepts an explicit now, but `prune` on open reads the real clock, so the fixture days
+  // are anchored to today: a fixed date would silently fall out of retention as real time moves on.
+  const now = new Date(); now.setHours(12, 0, 0, 0);
+  const at = (days: number) => new Date(now.getTime() - days * 86_400_000).toISOString();
   await writeFile(join(root, 'usage-ledger.json'), JSON.stringify({ version: 1, rows: [] }));
   const ledger = await UsageLedger.open(root, { retentionDays: 30 });
   ledger.add(event({ startedAt: at(0), model: 'today' })); ledger.add(event({ startedAt: at(3), model: 'recent' })); ledger.add(event({ startedAt: at(20), model: 'older' }));
-  expect(ledger.list(1, now).map(row => row.model)).toEqual(['today']);
-  expect(ledger.list(7, now).map(row => row.model).sort()).toEqual(['recent', 'today']);
-  expect(ledger.list(0, now)).toHaveLength(3);
+  expect(ledger.list(1, now.getTime()).map(row => row.model)).toEqual(['today']);
+  expect(ledger.list(7, now.getTime()).map(row => row.model).sort()).toEqual(['recent', 'today']);
+  expect(ledger.list(0, now.getTime())).toHaveLength(3);
   expect(ledger.firstDay()).toBe(dayOf(at(20)));
   await ledger.close();
   const old = await UsageLedger.open(root, { retentionDays: 10 });

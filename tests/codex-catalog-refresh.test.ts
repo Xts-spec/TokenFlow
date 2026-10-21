@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -6,10 +6,27 @@ import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import { AgentConnections } from '../packages/core/src/agent-connections.js';
 import { codexModelCatalog } from '../packages/core/src/codex-model-catalog.js';
+import * as catalogModule from '../packages/core/src/codex-model-catalog.js';
 import { modelLabel } from '../packages/core/src/model-label.js';
 const roots:string[]=[];
 afterEach(async()=>{for(const root of roots.splice(0))await rm(root,{recursive:true,force:true});});
 const sourceId='a'.repeat(24),model=`api-${sourceId}/company/gpt`;
+it('reapplies unchanged selections to replace the legacy downshift window and keeps the original config restorable',async()=>{
+ const root=await mkdtemp(join(await realpath(tmpdir()),'codex-catalog-upgrade-'));roots.push(root);
+ const configPath=join(root,'config.toml'),original='model = "gpt-6-astra"\nmodel_provider = "openai"\n';
+ await writeFile(configPath,original);
+ const connections=new AgentConnections(root,{codex:configPath},async()=>[]);
+ const apply=async(replaceId?:string)=>connections.apply({target:'codex',revision:(await connections.status()).find(t=>t.id==='codex')!.revision,origin:'http://127.0.0.1:9527',model,sourceId,keyId:randomUUID(),key:'fixture-key',...(replaceId?{replaceId}:{})});
+ const legacy=catalogModule.codexModelCatalog;
+ const mock=vi.spyOn(catalogModule,'codexModelCatalog').mockImplementation((...args)=>({models:legacy(...args).models.map(m=>({...m,context_window:131072}))}));
+ let first;try{first=await apply();}finally{mock.mockRestore();}
+ const before=parse(await readFile(configPath,'utf8'));
+ const second=await apply(first.id),after=parse(await readFile(configPath,'utf8'));
+ expect(after.model_catalog_json).not.toBe(before.model_catalog_json);
+ const entry=JSON.parse(await readFile(String(after.model_catalog_json),'utf8')).models[0];
+ expect(entry.slug).toBe(model);expect(entry.context_window).toBeUndefined();expect(entry.auto_compact_token_limit).toBe(65536);
+ await connections.restore(second.id);expect(await readFile(configPath,'utf8')).toBe(original);
+});
 it('replaces the Codex catalog when managing unchanged models with updated names, preserving history and original settings',async()=>{
  const root=await mkdtemp(join(await realpath(tmpdir()),'codex-catalog-refresh-'));roots.push(root);
  const configPath=join(root,'codex/config.toml'),historyPath=join(root,'codex/sessions/existing.json');await mkdir(join(root,'codex/sessions'),{recursive:true});

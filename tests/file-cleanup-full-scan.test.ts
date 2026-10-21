@@ -8,6 +8,9 @@ import {registerFileCleanup} from '../packages/core/src/file-cleanup-routes.js';
 
 const dispose:(()=>Promise<unknown>)[]=[];
 afterEach(async()=>{for(const close of dispose.splice(0).reverse())await close();});
+// The catalog resolves the npm cache from %LOCALAPPDATA%\npm-cache on Windows and ~/.npm elsewhere,
+// so a fixture that always writes .npm can never match on Windows. Follow the host platform.
+const npmCacheDir=process.platform==='win32'?'AppData/Local/npm-cache':'.npm';
 async function fixture(extra:FileCleanupOptions={}){
  const root=await realpath(await mkdtemp(join(tmpdir(),'tf-full-scan-')));dispose.push(()=>rm(root,{recursive:true,force:true}));
  const home=join(root,'home'),disk=join(root,'disk');await mkdir(home);await mkdir(disk);
@@ -20,7 +23,7 @@ async function fixture(extra:FileCleanupOptions={}){
 it('finds deep dependencies, other-user caches and packaged files across all selected disks',async()=>{
  const {cleanup,put,disk}=await fixture();
  const dependency=await put('work/a/b/c/d/e/f/g/h/project/node_modules/dependency.bin','deps');
- const npm=await put('Users/second/.npm/_cacache/cache.bin','npm');
+ const npm=await put(`Users/second/${npmCacheDir}/_cacache/cache.bin`,'npm');
  const history=await put('Users/second/.codex/sessions/history.bin','history');
  const build=await put('work/project/release/nested/Tool-2.0.zip','package');
  const python=await put('work/python/.venv/pyvenv.cfg','venv');
@@ -85,7 +88,7 @@ it('keeps recycle-bin contents out of results on Windows and Linux',async()=>{
 
 it('cleans only verified full-scan candidates and retains unrelated personal files',async()=>{
  const trashItem=vi.fn(async(_path:string)=>{}),{cleanup,put}=await fixture({trashItem,deleteItem:async path=>rm(path,{recursive:true})});
- const cache=await put('user/.npm/_cacache/cache.bin','cache'),installer=await put('projects/release/Tool.zip','installer'),personal=await put('Documents/notes.txt','personal');
+ const cache=await put(`user/${npmCacheDir}/_cacache/cache.bin`,'cache'),installer=await put('projects/release/Tool.zip','installer'),personal=await put('Documents/notes.txt','personal');
  await cleanup.configureScope('all');cleanup.start();await cleanup.settled();const state=cleanup.snapshot();
  const selected=state.entries.find(entry=>cache.startsWith(entry.path))!,artifact=state.entries.find(entry=>entry.path===installer)!;
  cleanup.clean(state.scanId!,[selected.id],false);await cleanup.settled();expect(trashItem).toHaveBeenCalledExactlyOnceWith(selected.path);

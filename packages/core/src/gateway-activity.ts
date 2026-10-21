@@ -1,3 +1,4 @@
+import type {CompactionReport} from './gateway-context.js';
 import { Transform } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { randomUUID } from 'node:crypto';
@@ -11,8 +12,11 @@ export type GatewayCall={id:string;keyId:string;agent:string;model:string;protoc
  target?:string;
  /** Account or API source that served the call. */
  sourceId?:string;
- error?:{code:string;message:string}};
+ compaction?:CompactionReport;error?:{code:string;message:string}};
 const number=(value:unknown)=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=0?value:null;
+// Responses completion events can echo the entire tool catalog. Keep observation
+// bounded at the gateway's request-size budget, not the old 512 KiB text limit.
+const OBSERVATION_LIMIT_BYTES=16*1024*1024;
 /** Observe usage without changing payloads or retaining prompts / completions. */
 export function observeUsage(sse:boolean,onEnd:(usage:{inputTokens:number|null;cachedTokens:number|null;outputTokens:number|null;failed:boolean;cacheWriteTokens?:number;reasoningTokens?:number})=>void|Promise<void>,onDetails?:(details:ResponseObservation)=>void) {
  const details=new ResponseObserver();let cacheWriteTokens:number|null=null,reasoningTokens:number|null=null;
@@ -29,11 +33,18 @@ export function observeUsage(sse:boolean,onEnd:(usage:{inputTokens:number|null;c
    inputTokens=normalized.inputTokens??inputTokens;outputTokens=normalized.outputTokens??outputTokens;}
 
  }catch{/* Some SSE frames are control messages, not JSON. */}};
+ let bufferedBytes=0;
+ const append=(text:string)=>{
+  if(oversized)return;
+  bufferedBytes+=Buffer.byteLength(text);
+  if(bufferedBytes>OBSERVATION_LIMIT_BYTES){buffer='';bufferedBytes=0;oversized=true;}
+  else buffer+=text;
+ };
  const consume=(text:string)=>{
-  if(!sse){if(!oversized){buffer+=text;if(buffer.length>524288){buffer='';oversized=true;}}return;}
+  if(!sse){append(text);return;}
   for(const part of text.split(/(?<=\n)/)) {
-   if(!oversized){buffer+=part;if(buffer.length>524288){buffer='';oversized=true;}}
-   if(part.endsWith('\n')){if(!oversized&&buffer.startsWith('data:'))inspect(buffer.slice(5).trim());buffer='';oversized=false;}
+   append(part);
+   if(part.endsWith('\n')){if(!oversized&&buffer.startsWith('data:'))inspect(buffer.slice(5).trim());buffer='';bufferedBytes=0;oversized=false;}
   }
  };
  const finish=()=>{

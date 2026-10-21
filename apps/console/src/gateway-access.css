@@ -1,0 +1,26 @@
+.tfGatewayAccess{display:grid;gap:14px;min-width:0;padding:20px 0;margin-bottom:24px;border-bottom:1px solid var(--line)}
+.tfGatewayAccess>header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.tfGatewayAccess h3{margin:0 0 4px;font-size:13px;font-weight:550}
+.tfGatewayAccess .tfHint,.tfGatewayAccess .tfError{margin:0}
+.tfGatewayAccess .tfKeyStatus{padding-top:2px}
+.tfGatewayAccess form{display:grid;gap:12px}
+.tfGatewayAccessFields{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.tfGatewayAccess .tfGatewayAccessToggle{display:flex;align-items:center;gap:8px;color:var(--text);font-size:12px;cursor:pointer}
+.tfGatewayAccessToggle input[type=checkbox]{width:15px;height:15px;min-height:0;margin:0;padding:0;accent-color:var(--accent)}
+.tfGatewayAccess .tfGatewayAccessPort{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:11px}
+.tfGatewayAccessPort input[type=number]{box-sizing:border-box;width:92px;min-height:32px;padding:6px 8px;font-size:12px}
+.tfGatewayAccessFields>button{min-height:32px;padding:6px 10px;font-size:11px}
+.tfGatewayAccess details{font-size:11px;color:var(--muted)}
+.tfGatewayAccess summary{width:fit-content;min-height:24px;line-height:24px;cursor:pointer}
+.tfGatewayAccess .tfGatewayAccessIPs{display:grid;gap:8px;max-width:400px;margin:10px 0 6px;color:var(--muted);font-size:11px}
+.tfGatewayAccessIPs textarea{box-sizing:border-box;width:100%;font-size:12px;line-height:1.6;padding:8px 10px;min-height:76px}
+.tfGatewayAddresses{display:flex;align-items:center;gap:8px 16px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
+.tfGatewayAddresses code{font-size:11px;overflow-wrap:anywhere}
+.tfKeyAccessField{display:grid;gap:8px;min-width:0}
+.tfKeyAccessField>label{display:flex;align-items:center;gap:16px;width:fit-content;max-width:100%;font-size:12px;color:var(--text)}
+.tfKeyAccessField select{width:136px;min-height:34px;padding:7px 28px 7px 10px;font-size:12px}
+.tfKeyAccessField>.tfHint{margin:0}
+.tfInlinePicker>.tfKeyAccessField{margin-bottom:18px}
+.tfKeyEndpoint>label>select{margin-top:8px}
+.tfKeyCardAccess{white-space:nowrap}
+@media(max-width:600px){.tfGatewayAccessFields{gap:12px}.tfGatewayAccessToggle{flex-basis:100%}.tfGatewayAccess>header{gap:12px}.tfGatewayAccess>header .tfHint{max-width:36ch}}

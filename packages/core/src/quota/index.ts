@@ -22,7 +22,6 @@ export const quotaProviders: Readonly<Record<LoginProviderId, QuotaProvider>> = 
   'workbuddy-overseas':workbuddyQuota,
   qoder: qoderQuota,
   zcode: zcodeQuota,
-  'zcode-bigmodel': zcodeQuota,
   trae: traeQuota,
 };
 export { QuotaHTTPError } from './shared.js';

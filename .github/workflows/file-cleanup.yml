@@ -47,6 +47,11 @@ jobs:
       - run: npm ci
       - name: Native filesystem and cross-platform path checks
         run: npx vitest run tests/file-cleanup-native.test.ts tests/file-cleanup-paths.test.ts tests/file-cleanup-full-scan.test.ts tests/file-cleanup-disks.test.ts
+      # Electron refuses to start on Linux when chrome-sandbox is not root-owned and setuid,
+      # which npm ci never guarantees. Fix the helper instead of disabling the sandbox.
+      - name: Prepare Electron sandbox helper
+        if: runner.os == 'Linux'
+        run: sudo chown root:root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
       - name: Windows Recycle Bin and permanent deletion with disposable fixtures
         if: runner.os == 'Windows'
         run: node scripts/check-file-cleanup-native.mjs

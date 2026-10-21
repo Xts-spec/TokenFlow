@@ -82,15 +82,8 @@ export function RepairChat({local,session,selectedAgent,page='agents',selectionC
  const interfaceAgent=context.page==='agents'?repairTarget:undefined;
  const send=(text:string,chain=contextualChain)=>act(async()=>{
   if(!state.selection&&selected){
-   let next=await call<Snapshot>('/api/maintenance',selected,'PUT');setState(next);
-   const deadline=Date.now()+90000;
-   while(next.readiness?.status==='checking'){
-    if(Date.now()>=deadline)throw new Error('维修模型检测尚未完成，请等待状态更新后再发送。');
-    await new Promise(resolve=>setTimeout(resolve,500));
-    next=await requestJSON<Snapshot>('/api/maintenance');setState(next);
-    if(next.selection?.sourceId!==selected.sourceId||next.selection?.model!==selected.model)throw new Error('维修模型已变更，请确认后重新发送。');
-   }
-   if(next.readiness?.status!=='ready')throw new Error(next.readiness?.message??'维修模型尚不可用，请重新选择。');
+   const next=await call<Snapshot>('/api/maintenance',selected,'PUT');setState(next);
+   if(next.selection?.sourceId!==selected.sourceId||next.selection?.model!==selected.model)throw new Error('维修模型已变更，请确认后重新发送。');
   }
   setState(await call<Snapshot>('/api/maintenance/run',{...(chain?{chain}:{}),interfaceAgent,context,prompt:text}));setPrompt('');
  });

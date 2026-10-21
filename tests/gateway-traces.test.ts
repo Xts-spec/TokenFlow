@@ -2,11 +2,29 @@ import {afterEach,beforeEach,expect,it} from 'vitest';
 import {mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {GatewayTraces,requestTrace} from '../packages/core/src/gateway-traces';
+import {GatewayTraces,requestTrace,redactTraceText} from '../packages/core/src/gateway-traces';
 import {ResponseObserver,providerUsage} from '../packages/core/src/gateway-observation';
 import {gatewayResponseEvidence} from '../packages/core/src/local-usage-evidence';
+import {LocalUsageParser} from '../packages/core/src/local-usage';
 let root='';beforeEach(async()=>{root=await mkdtemp(join(tmpdir(),'trace-test-'));});afterEach(async()=>{await rm(root,{recursive:true,force:true});});
+it.each(['password="alpha beta gamma"',"password='alpha beta gamma'",'"api_key": "alpha beta gamma"','password="alpha beta gamma'])('hides the entire quoted credential in %s',value=>{
+ const redacted=redactTraceText(value);expect(redacted).toContain('[已隐藏]');for(const part of ['alpha','beta','gamma'])expect(redacted).not.toContain(part);
+});
 const call=(keyId='key')=>({keyId,agent:'Pi',target:'pi',sourceId:'acct',model:'test/model',protocol:'chat/completions',startedAt:new Date().toISOString(),durationMs:100,status:200,inputTokens:30,cachedTokens:20,outputTokens:4});
+it.each([false,true])('counts Claude Desktop Messages under its real gateway model and source once, streaming: %s',async streaming=>{
+ const traces=await GatewayTraces.open(root),observer=new ResponseObserver();
+ const response={id:'desktop-message-response',type:'message',model:'claude-haiku-4-6[1m]',content:[{type:'text',text:'PRIVATE_REPLY'}],usage:{input_tokens:10,cache_read_input_tokens:20,output_tokens:4}};
+ if(streaming){observer.inspect({type:'message_start',message:response});observer.inspect({type:'message_delta',usage:{output_tokens:4}});observer.inspect({type:'message_stop'});}
+ else observer.inspect(response);
+ try{
+  traces.record({...call(),target:'claude-desktop',model:'qoder/GLM-5.3',sourceId:'original-qoder-account'},requestTrace({}),observer.result());
+  await traces.flush();const evidence=await gatewayResponseEvidence(root);
+  const parser=new LocalUsageParser('claude','desktop-log',{matchesResponse:evidence.matches});
+  parser.accept({type:'assistant',timestamp:new Date().toISOString(),entrypoint:'claude-desktop-3p',requestedModel:'claude-haiku-4-6[1m]',message:response});
+  expect(parser.rows()).toEqual([]);
+  expect(traces.list()).toMatchObject([{target:'claude-desktop',model:'qoder/GLM-5.3',sourceId:'original-qoder-account',inputTokens:30,cachedTokens:20,outputTokens:4}]);
+ }finally{await traces.close();}
+});
 it('keeps exact gateway response evidence after trace retention, clearing and restart',async()=>{
  const traces=await GatewayTraces.open(root);
  try{
@@ -73,4 +91,13 @@ it('persists safe failure categories so a restart does not erase the reason for 
 it('retains sanitized streaming failure codes in observed responses',()=>{
  const o=new ResponseObserver();o.inspect({type:'error',error:{code:'workbuddy_output_failed',message:'secret payload'}});
  expect(o.result().error).toMatchObject({code:'workbuddy_output_failed'});expect(JSON.stringify(o.result())).not.toContain('secret');
+});
+it.each([
+ {type:'error',code:'qoder_resource_limit',message:'PRIVATE_UPSTREAM'},
+ {type:'error',error:{code:'qoder_resource_limit',message:'PRIVATE_UPSTREAM'}},
+ {type:'response.failed',response:{error:{code:'qoder_resource_limit',message:'PRIVATE_UPSTREAM'}}},
+])('retains Qoder resource limit classification for each Responses error envelope',event=>{
+ const observer=new ResponseObserver();observer.inspect(event);
+ expect(observer.result().error?.code).toBe('qoder_resource_limit');
+ expect(JSON.stringify(observer.result())).not.toContain('PRIVATE_UPSTREAM');
 });

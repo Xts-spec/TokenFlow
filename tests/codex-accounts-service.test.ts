@@ -39,7 +39,7 @@ it.each([true,false])('switches Codex with history compatibility by default and 
   status=(await service.app.inject({url:'/api/codex-accounts',headers})).json();
   const restored=await service.app.inject({url:'/api/codex-accounts/restore',method:'POST',headers,payload:{revision:status.revision,...(historyEnabled?{}:{restoreHistory:false})}});
   expect(restored.statusCode,restored.body).toBe(200);expect(restored.json()).toMatchObject({gatewayConnected:false,accountId:null,backup:null});
-  await expect(readFile(paths.codex)).rejects.toMatchObject({code:'ENOENT'});
+  expect((await readFile(paths.codex,'utf8')).trim()).toBe('model_provider = "openai"');
   expect(await readFile(join(root,'cliproxy/auth/a.json'),'utf8')).toBe(a);
   if(historyEnabled)expect(context).toHaveBeenCalled();else expect(context).not.toHaveBeenCalled();expect(history).toHaveBeenCalledWith('model-a');
  }finally{context.mockRestore();history.mockRestore();await service.app.close();await rm(root,{recursive:true,force:true});}

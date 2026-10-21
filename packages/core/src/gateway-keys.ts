@@ -7,6 +7,7 @@ export const gatewayKeyInput = z.object({
   name: z.string().trim().min(1).max(80),
   purpose:z.string().trim().max(160).optional(),
   enabled: z.boolean().default(true),
+  access: z.enum(['local','lan']).default('local'),
   sourceId: z.string().regex(/^[a-f0-9]{24}$/).optional(),
   modelSources: z.record(z.string().regex(/^[a-f0-9]{24}$/)).optional(),
   agents: z.array(z.enum(['codex','claude','openai'])).max(3).default(['codex','claude','openai']).transform(ids=>[...new Set(ids)]),
@@ -69,11 +70,12 @@ export class GatewayKeys {
       return publicKey(entry);
     });
   }
-  updateModels(id:string,models:string[],modelSources:Record<string,string>) {
+  updateModels(id:string,models:string[],modelSources:Record<string,string>,access?:GatewayKey['access']) {
     return this.mutate(entries=>{
       const entry=entries.find(key=>key.id===id);
       if(!entry)throw Object.assign(new Error('Key 不存在'),{statusCode:404});
       entry.models=models;entry.modelSources=modelSources;delete entry.sourceId;
+      if(access!==undefined)entry.access=access;
       // Legacy exported keys had no marker; keep them visible after pinning their model sources.
       entry.exported=true;
       return publicKey(entry);

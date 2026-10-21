@@ -90,27 +90,26 @@ export class ClaudeDesktopConnections{
   const origin=new URL(input.origin);if(origin.protocol!=='http:'||!['127.0.0.1','localhost','[::1]'].includes(origin.hostname))throw conflict('Claude Desktop 接入只允许本机网关。');
   return this.locked(async()=>{
    await this.check(input.revision);if((await (this.options.processes??claudeDesktopProcesses)()).length)throw conflict('请先完全退出 Claude Desktop，再应用模型配置。');
-   const previous=await this.journal();if(previous?.state==='prepared')throw conflict('上次 Claude Desktop 接入未完成，请先恢复原配置。');
+   const previous=await this.journal();if(previous?.state==='prepared')throw conflict('上次 Claude Desktop 接入未完成，请先切回官方后重试。');
    const active=previous?.state==='applied'?previous:null,id=active?.id??randomUUID(),before=await this.read(id);
-   if(active&&(digest(fields(parse(before.meta)))!==digest(fields(parse(active.after.meta)))||parse(before.mode).deploymentMode!=='3p'||before.profile!==active.after.profile))throw conflict('Claude Desktop 已改用其他配置或修改当前模型，原备份已保留，未覆盖。');
    const meta=parse(before.meta);if(meta.entries!==undefined&&!Array.isArray(meta.entries))throw conflict('Claude Desktop 配置目录格式异常，未修改。');
    const entries=(meta.entries??[]).filter((e:any)=>e?.id!==id);entries.push({id,name:'TokenFlow'});delete meta.hybridPointer;meta.appliedId=id;meta.entries=entries;
-   const after={meta:encode(meta),mode:mergeFields(before.mode,{deploymentMode:'3p'}),profile:encode({inferenceGatewayApiKey:input.key,inferenceGatewayAuthScheme:'bearer',inferenceGatewayBaseUrl:origin.origin,inferenceProvider:'gateway',inferenceModels:plan.visible.map(item=>({name:item.name,labelOverride:item.label,supports1m:true,prefer1m:true,...(item.familyDefault?{anthropicFamilyTier:'sonnet',isFamilyDefault:true}:{})})),coworkEgressAllowedHosts:['*'],disableDeploymentModeChooser:true})};
+   const after={meta:encode(meta),mode:mergeFields(before.mode,{deploymentMode:'3p'}),profile:encode({inferenceGatewayApiKey:input.key,inferenceGatewayAuthScheme:'bearer',inferenceGatewayBaseUrl:origin.origin,inferenceProvider:'gateway',inferenceModels:plan.visible.map(item=>({name:item.name,labelOverride:item.label,...(item.familyDefault?{anthropicFamilyTier:'sonnet',isFamilyDefault:true}:{})})),coworkEgressAllowedHosts:['*'],disableDeploymentModeChooser:true})};
    const journal:Journal={directory:this.directory,id,before:active?.before??before,after,rollback:before,keyId:input.keyId,selections,fastModel:input.fastModel,modelAliases:plan.aliases,state:'prepared',createdAt:active?.createdAt??new Date().toISOString()};await this.save(journal);
    try{await this.replace(id,before,after);journal.state='applied';await this.save(journal);}catch(error){if(digest(await this.read(id))===digest(before)){if(previous)await this.save(previous);else await this.secrets.set(secretName,'');}throw error;}
    return this.status();
   });
  }
- async restore(revision:string){return this.locked(async()=>{
-  await this.check(revision);if((await (this.options.processes??claudeDesktopProcesses)()).length)throw conflict('请先完全退出 Claude Desktop，再恢复原配置。');
+ async restore(revision:string,destination:'previous'|'native'='previous'){return this.locked(async()=>{
+  await this.check(revision);if((await (this.options.processes??claudeDesktopProcesses)()).length)throw conflict('请先完全退出 Claude Desktop，再停用网关。');
   const journal=await this.journal();if(!journal||journal.state==='restored')throw conflict('没有 Claude Desktop 接入备份。');
   const current=await this.read(journal.id),meta=parse(current.meta),mode=parse(current.mode);
   const partial=journal.state==='prepared'&&(['meta','mode','profile'] as const).every(k=>current[k]===journal.after[k]||current[k]===(journal.rollback??journal.before)[k]);
-  if(!partial&&(digest(fields(meta))!==digest(fields(parse(journal.after.meta)))||mode.deploymentMode!==parse(journal.after.mode).deploymentMode||current.profile!==journal.after.profile))throw conflict('Claude Desktop 配置已被客户端修改，原备份已保留，未覆盖。');
+  if(destination==='previous'&&!partial&&(digest(fields(meta))!==digest(fields(parse(journal.after.meta)))||mode.deploymentMode!==parse(journal.after.mode).deploymentMode||current.profile!==journal.after.profile))throw conflict('Claude Desktop 配置已被客户端修改，原备份已保留，未覆盖。');
   const originalMeta=parse(journal.before.meta),originalMode=parse(journal.before.mode);
-  const merged=parse(mergeFields(current.meta,fields(originalMeta)));if(Array.isArray(merged.entries)){merged.entries=merged.entries.filter((e:any)=>e?.id!==journal.id);if(!merged.entries.length&&originalMeta.entries===undefined)delete merged.entries;}
-  const restoredMode=mergeFields(current.mode,{deploymentMode:originalMode.deploymentMode??null});
-  const after:Snapshot={meta:Object.keys(merged).length?encode(merged):journal.before.meta===null?null:'{}\n',mode:journal.before.mode===null&&!Object.keys(parse(restoredMode)).length?null:restoredMode,profile:journal.before.profile};
+  const merged=parse(mergeFields(current.meta,destination==='native'?{appliedId:null,hybridPointer:null}:fields(originalMeta)));if(Array.isArray(merged.entries)){merged.entries=merged.entries.filter((e:any)=>e?.id!==journal.id);if(!merged.entries.length&&originalMeta.entries===undefined)delete merged.entries;}
+  const restoredMode=mergeFields(current.mode,{deploymentMode:destination==='native'?'1p':originalMode.deploymentMode??null});
+  const after:Snapshot={meta:Object.keys(merged).length?encode(merged):journal.before.meta===null?null:'{}\n',mode:journal.before.mode===null&&!Object.keys(parse(restoredMode)).length?null:restoredMode,profile:destination==='native'?null:journal.before.profile};
   journal.rollback=current;journal.after=after;journal.restoring=true;journal.state='prepared';await this.save(journal);await this.replace(journal.id,current,after);journal.state='restored';await this.save(journal);return this.status();
  });}
 }

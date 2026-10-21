@@ -254,7 +254,9 @@ func NormalizeQoderModel(requested string) (key string, isReasoning bool) {
 	lower := strings.ToLower(strings.TrimSpace(requested))
 	lower = strings.TrimPrefix(lower, "qoder/")
 	switch lower {
-	case "qmodel_38max", "qmodel_preview", "qwen3.8-max", "qwen-3.8-max", "qwen3.8_max":
+	case "qmodel_38max", "qwen3.8-max", "qwen-3.8-max", "qwen3.8_max":
+		return "qmodel_38max", true
+	case "qmodel_preview":
 		return "qmodel_preview", true
 	case "qmodel", "qwen3.7-plus", "qwen-3.7-plus", "qwen3.7plus":
 		return "qmodel", false

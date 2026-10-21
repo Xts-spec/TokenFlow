@@ -60,7 +60,9 @@ try{
  const standaloneBefore=await readFile(loginPaths.qoder),ideBefore=await request('/api/native-accounts/qoder-ide');const ideSwitched=await request('/api/native-accounts/qoder-ide/switch','POST',{sourceId:source.id,revision:ideBefore.revision});assert.equal(ideSwitched.accountId,'fixture-selected-ide');assert.equal(ideSwitched.backup.state,'applied');const ideRestored=await request('/api/native-accounts/qoder-ide/restore','POST',{revision:ideSwitched.revision});assert.equal(ideRestored.accountId,ideBefore.accountId);assert.equal(ideRestored.backup,null);assert.deepEqual(await readFile(loginPaths.qoder),standaloneBefore);
  const key=await request('/api/gateway-keys','POST',{name:'packaged check',sourceId:source.id,models:['qoder/kmodel_latest']});
  const response=await service.app.inject({url:'/v1/responses',method:'POST',headers:{...headers,authorization:`Bearer ${key.apiKey}`},payload:{model:'qoder/kmodel_latest',input:'OK'}});assert.equal(response.statusCode,200,response.body);
- await request('/api/maintenance','PUT',{sourceId:source.id,model:'qoder/kmodel_latest'});
+ const selected=await request('/api/maintenance','PUT',{sourceId:source.id,model:'qoder/kmodel_latest'});
+ assert.equal(selected.readiness.status,'unchecked');
+ await request('/api/maintenance/check','POST',{});
  const until=async(check)=>{for(let i=0;i<100;i++){const value=await request('/api/maintenance');if(check(value))return value;await new Promise(r=>setTimeout(r,100));}throw Error('Maintenance timed out');};
  await until(value=>value.readiness.status==='ready');
  await request('/api/maintenance/run','POST',{prompt:'今天的模型速度',context:{page:'proxy',range:'today',keyId:key.key.id,origin:'gateway'}});

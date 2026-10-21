@@ -15,6 +15,9 @@ const failure=()=>new GatewayContextError('无法恢复这段压缩上下文。�
 const object=(v:unknown):v is Item=>!!v&&typeof v==='object'&&!Array.isArray(v);
 export function portableCodexItem(item:Item):Item[]{
  if(!object(item))throw failure();
+ // Responses Lite declarations describe the tools available in that old turn,
+ // not a conversation message. The current request supplies its own tools.
+ if(item.type==='additional_tools'||(item.type==='message'&&item.role==='developer'&&Array.isArray(item.tools)&&item.content===undefined))return [];
  if(item.type==='compaction'||item.type==='item_reference')throw failure();
  if(item.type==='reasoning'){
   const text=(Array.isArray(item.summary)?item.summary:[]).filter((p:Item)=>object(p)&&typeof p.text==='string').map((p:Item)=>p.text).join('\n');
@@ -58,10 +61,10 @@ export class CodexContext {
   try{await writeFile(temp,this.context.encodeCheckpoint(items,codexContextScope),{mode:0o600,flag:'wx'});await rename(temp,path);}finally{await rm(temp,{force:true});}
  }
  async recover(item:Item,scopes:ContextScope[]):Promise<Item[]>{
-  if(item.type==='previous_response')return this.context.readStoredHistory(item.id,[codexContextScope,...scopes]);
+  if(item.type==='previous_response')return (await this.context.readStoredHistory(item.id,[codexContextScope,...scopes])).flatMap(portableCodexItem);
   const token=item.encrypted_content;if(typeof token!=='string'||!token)throw failure();
-  if(token.startsWith('tfctx1.'))return this.context.decodeCheckpoint(token,[codexContextScope,...scopes]);
-  const cached=await this.cached(token);if(cached)return cached;
+  if(token.startsWith('tfctx1.'))return this.context.decodeCheckpoint(token,[codexContextScope,...scopes]).flatMap(portableCodexItem);
+  const cached=await this.cached(token);if(cached)return cached.flatMap(portableCodexItem);
   for(const {path} of await this.files()){
    await safePath(path);const text=await readFile(path,'utf8');if(!text.includes(token))continue;
    let history:Item[]=[];let complete=false;

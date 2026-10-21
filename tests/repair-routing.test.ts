@@ -100,7 +100,7 @@ it('uses the selected page instead of a stale Agent chain and exposes resumable 
   const source=f.service.proxy.snapshot().accounts.find(account=>account.provider==='qoder')!;
   const chosen=await f.service.app.inject({method:'PUT',url:'/api/maintenance',headers:f.headers,payload:{sourceId:source.id,model:'qoder/kmodel_latest'}});expect(chosen.statusCode,chosen.body).toBe(200);
   const maintenance=async()=>(await f.service.app.inject({url:'/api/maintenance',headers:f.headers})).json();
-  await expect.poll(async()=>(await maintenance()).readiness.status).toBe('ready');
+  expect((await f.post('/api/maintenance/check',{})).statusCode).toBe(200);await expect.poll(async()=>(await maintenance()).readiness.status).toBe('ready');
   expect((await f.post('/api/maintenance/run',{prompt:'检查 Pi',chain:{target:'pi'},context:{page:'agents',target:'pi'},interfaceAgent:'pi'})).statusCode).toBe(200);
   await expect.poll(async()=>(await maintenance()).status).toBe('completed');
   const previous=(await maintenance()).conversationId;
@@ -123,7 +123,7 @@ it('preflights the selected Key and date from the same usage ledger without expo
   const response=await f.service.app.inject({method:'POST',url:'/v1/responses',headers:{host:f.headers.host,authorization:`Bearer ${key.apiKey}`},payload:{model:'qoder/kmodel_latest',input:'OK'}});expect(response.statusCode,response.body).toBe(200);
   await f.service.app.inject({method:'PUT',url:'/api/maintenance',headers:f.headers,payload:{sourceId:source.id,model:'qoder/kmodel_latest'}});
   const snapshot=async()=>(await f.service.app.inject({url:'/api/maintenance',headers:f.headers})).json();
-  await expect.poll(async()=>(await snapshot()).readiness.status).toBe('ready');
+  expect((await f.post('/api/maintenance/check',{})).statusCode).toBe(200);await expect.poll(async()=>(await snapshot()).readiness.status).toBe('ready');
   const context={page:'proxy',range:'today',origin:'gateway',keyId:key.key.id};
   expect((await f.post('/api/maintenance/run',{prompt:'今天的模型生成速度',context})).statusCode).toBe(200);
   await expect.poll(async()=>(await snapshot()).status).toBe('completed');
@@ -142,7 +142,7 @@ it('opens old-conversation repair as read-only diagnosis with current routing ev
   const before=await readFile(f.paths.codex,'utf8');
   const source=f.service.proxy.snapshot().accounts.find(a=>a.provider==='qoder')!;
   await f.service.app.inject({method:'PUT',url:'/api/maintenance',headers:f.headers,payload:{sourceId:source.id,model:'qoder/kmodel_latest'}});
-  const snapshot=async()=>(await f.service.app.inject({url:'/api/maintenance',headers:f.headers})).json();await expect.poll(async()=>(await snapshot()).readiness.status).toBe('ready');
+  const snapshot=async()=>(await f.service.app.inject({url:'/api/maintenance',headers:f.headers})).json();expect((await f.post('/api/maintenance/check',{})).statusCode).toBe(200);await expect.poll(async()=>(await snapshot()).readiness.status).toBe('ready');
   expect((await f.post('/api/maintenance/run',{prompt:'检查切换后旧对话',context:{page:'agents',target:'codex',intent:'codex-history'},chain:{target:'codex'}})).statusCode).toBe(200);
   await expect.poll(async()=>(await snapshot()).status).toBe('completed');
   const result=await snapshot(),text=result.messages.find((m:{text:string})=>m.text.startsWith('只读预检: ')).text;const evidence=JSON.parse(text.slice(6)).pageData;
