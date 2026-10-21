@@ -10,6 +10,7 @@ const known:Record<string,{message:string;type:string;wireMessage?:string}>={
  qoder_request_rejected:{type:'invalid_request_error',message:'Qoder 拒绝了请求参数，请保留调用记录用于排查兼容性。'},
  qoder_upstream_error:{type:'provider_error',message:'Qoder 在响应流中返回服务错误，本次请求未完成，请稍后重试。'},
  cursor_model_not_found:{type:'invalid_request_error',message:'Cursor 上游找不到所选模型（model not found）。请刷新该来源的模型列表，或选择该账号实际可用的其他模型。'},
+ cursor_region_unsupported:{type:'permission_error',message:'Cursor 明确拒绝了当前地区对该模型供应商的访问。模型可能仍出现在官方目录中；请查看 Cursor 的地区支持说明或选择受支持的模型。这不表示账号登录失效。'},
  cursor_plan_required:{type:'authentication_error',message:'Cursor 官方返回 plan_required：当前账号套餐不支持此 API，请在官方确认 Pro 或团队套餐后刷新。'},
  cursor_authentication_failed:{type:'authentication_error',message:'Cursor 授权已失效，请重新连接账号。'},
  cursor_permission_denied:{type:'authentication_error',message:'Cursor API 权限不足，请在官方账号或团队设置中确认权限。'},
@@ -22,7 +23,7 @@ const known:Record<string,{message:string;type:string;wireMessage?:string}>={
  cursor_request_rejected:{type:'invalid_request_error',message:'Cursor 上游拒绝了模型或请求参数，请检查所选模型和请求格式。'},
  cursor_tls_error:{type:'provider_error',message:'Cursor TLS 握手或证书验证失败，请检查代理与证书，可以切换网络后刷新试试。'},
  cursor_dns_error:{type:'provider_error',message:'Cursor 域名解析失败，请检查 DNS，可以切换网络后刷新试试。'},
- cursor_upstream_error:{type:'provider_error',message:'Cursor 服务或模型目录暂不可用，请刷新重试。'},
+ cursor_upstream_error:{type:'provider_error',message:'Cursor 调用失败，尚未识别具体原因。请保留调用记录用于排查；不能据此判断模型目录或账号授权失效。'},
  cursor_unavailable:{type:'source_unavailable',message:'Cursor 尚未授权，或所选账号、模型暂不可用。'},
  cursor_cancelled:{type:'request_cancelled',message:'请求已取消'},
  cursor_busy:{type:'rate_limit_error',message:'Cursor 正在处理另一个请求，请稍后重试。'},
@@ -55,7 +56,7 @@ export function upstreamError(status:number,body:string):{code?:string;type:stri
  if(code==='workbuddy_invalid_request'||code==='cursor_invalid_request'){
   const fields=Array.isArray(parsed?.error?.fields)?parsed.error.fields.filter((field:unknown)=>typeof field==='string'&&/^(?:tools|input|messages|reasoning|model|stream|instructions|system|tool_choice|parallel_tool_calls|max_tokens|max_output_tokens|max_completion_tokens|reasoning_effort)(?:\.(?:[0-9]+|name|type|content|parameters|summary|effort))*$/.test(field)).slice(0,5):[];
   const detail=fields.length?`（字段：${fields.join('、')}）`:'';
-  return {code,type:'invalid_request_error',message:code==='workbuddy_invalid_request'?`WorkBuddy 请求格式不兼容${detail}。请保留此错误用于排查；切换账号或重写配置不能修复请求格式。`:`Cursor 请求格式不支持${detail}：请使用文本、函数工具及工具结果；图片、服务端工具和严格 JSON 输出暂不可用。`};
+  return {code,type:'invalid_request_error',message:code==='workbuddy_invalid_request'?`WorkBuddy 请求格式不兼容${detail}。请保留此错误用于排查；切换账号或重写配置不能修复请求格式。`:`Cursor 请求格式不支持${detail}：请检查所标注的消息内容或工具格式；服务端工具和严格 JSON 输出暂不可用。`};
  }
  const entry=code&&Object.hasOwn(known,code)?[code,known[code]] as const:Object.entries(known).find(([,value])=>message===value.wireMessage);
  if(entry)return {code:entry[0],type:entry[1].type,message:entry[1].message};

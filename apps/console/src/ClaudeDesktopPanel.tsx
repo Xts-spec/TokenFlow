@@ -1,5 +1,6 @@
 import type {ReactNode} from 'react';
-import {useEffect,useState} from 'react';
+import {useState} from 'react';
+import type {ClaudeDesktopStatus as Status,useClaudeDesktopStatus} from './claude-desktop-status';
 import {requestJSON} from './request';
 import {ProviderIcon} from './ProviderIcon';
 import {FlowDialog} from './FlowDialog';
@@ -15,14 +16,12 @@ import {claudeDesktopModelLimit} from '../../shared/claude-desktop-models';
 import type {LocalAgentSnapshot} from '../../../packages/core/src/cliproxy';
 import type {Notify} from './notify';
 type Selection={model:string;sourceId:string};
-type Status={revision:string;connected:boolean;mode:string;backup:{state:string}|null;selections:Selection[];fastModel?:string;unavailableReason:string;pids:number[];automaticRestart:boolean;installation:{installed:boolean;version?:string;download?:string};message?:string};
 type Action='connect'|'restore'|'restart';
 const post=(body:unknown)=>({method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
 const same=(a:Selection,b:Selection)=>a.model===b.model&&a.sourceId===b.sourceId;
-export function ClaudeDesktopPanel({clientSwitch,local,usage,notify}:{clientSwitch?:ReactNode;local:LocalAgentSnapshot;usage:UsageData;notify:Notify}){
- const [status,setStatus]=useState<Status>();const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [action,setAction]=useState<Action>();const [draft,setDraft]=useState<Choice[]|null>(null);const [picking,setPicking]=useState(false);const [roleDefault,setRoleDefault]=useState('');const [roleFast,setRoleFast]=useState('');
- const refresh=async()=>{try{const state=await requestJSON<Status>('/api/claude-desktop');setStatus(state);setError('');return state;}catch(e){setError(e instanceof Error?e.message:'无法读取 Claude Desktop 配置');throw e;}};
- useEffect(()=>{void refresh().catch(()=>{});const timer=setInterval(()=>void refresh().catch(()=>{}),5000);return()=>clearInterval(timer);},[]);
+export function ClaudeDesktopPanel({desktop,clientSwitch,local,usage,notify}:{desktop:ReturnType<typeof useClaudeDesktopStatus>;clientSwitch?:ReactNode;local:LocalAgentSnapshot;usage:UsageData;notify:Notify}){
+ const {status,error,refresh}=desktop;
+ const [busy,setBusy]=useState(false);const [action,setAction]=useState<Action>();const [draft,setDraft]=useState<Choice[]|null>(null);const [picking,setPicking]=useState(false);const [roleDefault,setRoleDefault]=useState('');const [roleFast,setRoleFast]=useState('');
  const available=sourceOptions(local);
  const models=draft??status?.selections??[];
  const tooMany=models.length>claudeDesktopModelLimit;const blocked=busy||!status||!!status.unavailableReason;

@@ -70,8 +70,10 @@ export class LocalUsageParser{
   const read=number(u.cache_read_input_tokens),write=number(u.cache_creation_input_tokens);
   // Claude Desktop shares the CLI log folder. Its third-party mode never spends the Claude account.
   const desktop=this.target==='claude'&&typeof record.entrypoint==='string'&&record.entrypoint.startsWith('claude-desktop'),thirdParty=desktop&&record.entrypoint.endsWith('-3p');
+  // Desktop menu aliases are not the historical model that served the request.
+  const servedModel=thirdParty?m.model:model;
   const sampleChannel:UsageChannel=thirdParty?'api':recordChannel!=='unknown'?recordChannel:this.explicit!=='unknown'?this.explicit:desktop?'official':this.target==='qoder'?(record.modelSource==='custom'?'api':record.modelSource==='builtin'||record.modelSource==='official'?'official':'unknown'):record.authType==='oauth'?'official':record.authType==='api-key'?'api':'unknown';
-  this.add({id,timestamp,model,provider:this.target,channel:sampleChannel,responseId:m.id??record.responseId,account:thirdParty?undefined:record.accountId??this.account,input:number(u.input_tokens)+read+write,read,write,output:number(u.output_tokens),reasoning:number(u.output_tokens_details?.thinking_tokens),cacheKnown:u.cache_read_input_tokens!==undefined,...(desktop?{client:'claude-desktop'}:{}),
+  this.add({id,timestamp,model:servedModel,provider:this.target,channel:sampleChannel,responseId:m.id??record.responseId,account:thirdParty?undefined:record.accountId??this.account,input:number(u.input_tokens)+read+write,read,write,output:number(u.output_tokens),reasoning:number(u.output_tokens_details?.thinking_tokens),cacheKnown:u.cache_read_input_tokens!==undefined,...(desktop?{client:'claude-desktop'}:{}),
    // Qoder's built-in models bill credits and leave every token counter at zero.
    ...(this.target==='qoder'&&!number(u.input_tokens)&&!number(u.output_tokens)&&(number(u.credits)>0||u.billable===true)?{unmeasured:true}:{})},routed);
  }
@@ -82,7 +84,7 @@ export class LocalUsageParser{
  }
  private add(sample:Sample,routed:boolean){
   if(routed||sample.responseId&&this.evidence.matchesResponse?.(sample.responseId)||typeof sample.timestamp!=='string'||!Number.isFinite(Date.parse(sample.timestamp))||!sample.input&&!sample.output&&!sample.unmeasured)return;
-  sample.model=typeof sample.model==='string'?sample.model.slice(0,300):'未标注模型';sample.read=Math.min(sample.read,sample.input);sample.write=Math.min(sample.write,Math.max(0,sample.input-sample.read));sample.reasoning=Math.min(sample.reasoning,sample.output);
+  sample.model=typeof sample.model==='string'&&sample.model.trim()?sample.model.slice(0,300):'未标注模型';sample.read=Math.min(sample.read,sample.input);sample.write=Math.min(sample.write,Math.max(0,sample.input-sample.read));sample.reasoning=Math.min(sample.reasoning,sample.output);
   // Streaming assistant fragments share one provider response ID. Keep the final/largest sample.
   const previous=this.samples.get(sample.id);if(!previous||sample.input+sample.output>=previous.input+previous.output)this.samples.set(sample.id,sample);
  }

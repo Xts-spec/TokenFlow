@@ -22,6 +22,8 @@ it('keeps safe WorkBuddy field paths while discarding provider text and arbitrar
  expect(result.message).toContain('tools.2.name');expect(result.message).toContain('reasoning.summary');expect(result.message).not.toMatch(/private|secret/);
 });
 it('retains safe Cursor schema paths and failure categories through compaction error handling',()=>{
+ const regional=upstreamError(403,JSON.stringify({error:{code:'cursor_region_unsupported',message:'PRIVATE'}}));
+ expect(regional).toMatchObject({code:'cursor_region_unsupported',type:'permission_error'});expect(regional.message).toContain('地区');expect(regional.message).not.toContain('PRIVATE');
  const bad=upstreamError(400,JSON.stringify({error:{code:'cursor_invalid_request',fields:['messages.149.content','private-token','input.secret'],message:'private request'}}));
  expect(bad).toMatchObject({code:'cursor_invalid_request',type:'invalid_request_error'});expect(bad.message).toContain('messages.149.content');expect(bad.message).not.toMatch(/private|secret/);
  for(const code of ['cursor_model_not_found','cursor_network_error','cursor_timeout','cursor_rate_limited','cursor_permission_denied','cursor_plan_required','cursor_authentication_failed','cursor_backend_override','cursor_upstream_error','cursor_upstream_unavailable','cursor_upstream_internal','cursor_request_rejected','cursor_tls_error','cursor_dns_error']){
