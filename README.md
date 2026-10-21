@@ -34,6 +34,8 @@ Claude Desktop 的 Code 模式连上本机网关后也是同一套菜单。选 `
 
 **给其他应用一把 Key。** 在 API 代理里创建 Key，只开放需要的来源和模型。把本机地址、Key 和模型名填进那个应用即可。后来新加的来源不会自动进旧 Key。
 
+同一局域网的设备也可接入：在 API 代理页启用「局域网访问」（默认端口 `9555`），创建 Key 时将「访问范围」设为「局域网」，再复制该 Key 详情中的局域网地址、密钥和模型名。可选填来源 IP 白名单；留空时，仍须使用已授权的 Key。旧 Key 默认仅供本机使用，也可在管理模型时调整访问范围。关闭局域网访问不会影响本机 `127.0.0.1:9527` 的接入。
+
 来源包括 Codex、Claude、Antigravity、Kimi、xAI、Qoder、WorkBuddy、ZCode、Trae 和 Cursor。能自动写入配置的客户端有 Codex、Claude Code、Claude Desktop、WorkBuddy、Qoder、DeepSeek Harness 和 Pi。Qoder IDE 用来提供账号，Qoder 独立应用用来使用模型，这是两个入口。
 
 文件、命令、审批和沙箱仍由你正在用的那个客户端负责。TokenFlow 把模型的回复交回去，不代替它执行。

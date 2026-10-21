@@ -47,6 +47,7 @@ import { dirname, join, resolve } from 'node:path';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { Readable } from 'node:stream';
 import staticPlugin from '@fastify/static';
+import type { RouteOptions } from 'fastify';
 import { z } from 'zod';
 import { createServer } from './server.js';
 import { ResponsesProvider, providerSchema, defaultProvider, type ProviderConfig, type ProbeResult } from './providers.js';
@@ -56,6 +57,7 @@ import {nativeActivityTrace,nativeActivitySummary} from './activity-traces.js';
 import type {ResponseObservation} from './gateway-observation.js';
 import { UsageLedger } from './usage-ledger.js';
 import { GatewayKeys, gatewayKeyInput, allowsProtocol, type GatewayKey } from './gateway-keys.js';
+import { GatewayAccess, gatewayAccessInput } from './gateway-access.js';
 import { CLIProxyManager, type LocalAgentSnapshot, type LocalModel } from './cliproxy.js';
 import { isLoginProvider, loginProviderIds } from './login/index.js';
 import { RunnerCoreError } from './errors.js';
@@ -63,7 +65,7 @@ import { RunnerCoreError } from './errors.js';
 export type Secrets = {canEncrypt?:()=>boolean;persistent?:boolean;get:(name:string)=>Promise<string>; set:(name:string,value:string)=>Promise<void>;remove?:(name:string)=>Promise<void>};
 export type ServiceOptions = {outboundProxyURL?:string;networkSnapshot?:()=>import('./network-proxy.js').NetworkSnapshot;fileCleanup?:FileCleanupOptions;qoderIde?:QoderIdeOptions;claudeDesktop?:ClaudeDesktopOptions;claudeDesktopChange?:(work:()=>Promise<unknown>)=>Promise<unknown>;claudeTerminalChange?:(work:()=>Promise<unknown>)=>Promise<unknown>;desktopAccounts?:DesktopAccountOptions;desktopProcesses?:(target:DesktopProvider|'qoder-ide')=>Promise<number[]>;desktopAccountChange?:(target:DesktopProvider|'qoder-ide',work:()=>Promise<unknown>)=>Promise<unknown>;workbuddySDKFactory?:(proxy:CLIProxyManager)=>Pick<WorkBuddySDKProvider,'response'|'close'>;antigravityPath?:string;cursorLocalPath?:string;claudeCredentialStore?:CredentialStore|null;nativeProcesses?:(target:NativeProvider)=>Promise<number[]>;agentPaths?:Partial<AgentPaths>;agentProcesses?:(target:Target)=>Promise<number[]>;root:string;binary:string;token:string;localKey:string;secrets:Secrets;credentialWarnings?:()=>string[];uiRoot?:string;proxyPort?:number;openExternal?:(url:string)=>Promise<void>};
 const clientCredential=(headers:{authorization?:string;'x-api-key'?:string|string[]})=>{
-  const bearer=headers.authorization?.replace(/^Bearer /,'')??'';
+  const bearer=headers.authorization?.replace(/^Bearer /i,'')??'';
   const apiKey=typeof headers['x-api-key']==='string'?headers['x-api-key']:'';
   return {value:bearer||apiKey,conflict:!!bearer&&!!apiKey&&bearer!==apiKey};
 };
@@ -781,7 +783,8 @@ export async function createDesktopService(options:ServiceOptions) {
   app.get('/api/gateway-keys', async()=>({keys:gatewayKeys.list()}));
   const scopedInput = async (body: unknown, existingId?: string, modelOnly=false) => {
     const existing=existingId?gatewayKeys.list().find(key=>key.id===existingId):undefined;
-    const input = gatewayKeyInput.parse({...((existing)?{agents:existing.agents,tokenLimit:existing.tokenLimit,sourceId:existing.sourceId,modelSources:existing.modelSources}:{}),...(typeof body==='object'&&body?body:{})});
+    const input = gatewayKeyInput.parse({...((existing)?{access:existing.access,agents:existing.agents,tokenLimit:existing.tokenLimit,sourceId:existing.sourceId,modelSources:existing.modelSources}:{}),...(typeof body==='object'&&body?body:{})});
+    if(input.access==='lan'&&existing&&!existing.exported&&(!modelOnly||existing.sourceId||existing.modelSources))throw Object.assign(new Error('本地 Agent 的专用 Key 仅供本机使用，请在 API 代理中创建访问密钥。'),{statusCode:400});
     const previous = existingId ? gatewayKeys.list().find(key=>key.id===existingId)?.models ?? [] : [];
     const local=await localSnapshot();
     const savedModels=[...local.accounts.flatMap(account=>account.models??[]),...(local.apiSources??[]).flatMap(source=>source.models.map(model=>apiModelID(source.id,model)))];
@@ -829,14 +832,14 @@ export async function createDesktopService(options:ServiceOptions) {
   };
   app.put('/api/gateway-keys/:id/models',async req=>{
     const id=z.string().uuid().parse((req.params as {id:string}).id);
-    const {selections}=z.object({selections:z.array(z.object({sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(3).max(300)}).strict()).max(2000)}).strict().parse(req.body);
+    const {selections,access}=z.object({selections:z.array(z.object({sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(3).max(300)}).strict()).max(2000),access:z.enum(['local','lan']).optional()}).strict().parse(req.body);
     if(new Set(selections.map(item=>item.model)).size!==selections.length)throw Object.assign(new Error('同一模型只能选择一个来源账号'),{statusCode:400});
     return updateKey(id,async()=>{
       const existing=gatewayKeys.list().find(key=>key.id===id);
       if(!existing)throw Object.assign(new Error('Key 不存在'),{statusCode:404});
       if(!existing.exported&&(existing.sourceId||existing.modelSources))throw Object.assign(new Error('此 Key 由本地 Agent 或维修流程管理，请在对应入口修改模型。'),{statusCode:409});
-      const input=await scopedInput({name:existing.name,purpose:existing.purpose,enabled:existing.enabled,sourceId:undefined,models:selections.map(item=>item.model),modelSources:Object.fromEntries(selections.map(item=>[item.model,item.sourceId]))},id,true);
-      return gatewayKeys.updateModels(id,input.models,input.modelSources??{});
+      const input=await scopedInput({name:existing.name,purpose:existing.purpose,enabled:existing.enabled,access:access??existing.access,sourceId:undefined,models:selections.map(item=>item.model),modelSources:Object.fromEntries(selections.map(item=>[item.model,item.sourceId]))},id,true);
+      return gatewayKeys.updateModels(id,input.models,input.modelSources??{},input.access);
     });
   });
   app.put('/api/gateway-keys/:id', async req=>{
@@ -988,8 +991,14 @@ export async function createDesktopService(options:ServiceOptions) {
     const provider=z.enum(['trae','workbuddy','workbuddy-ai','zcode','cursor']).parse((req.params as {provider:string}).provider);
     return localOperation(()=>proxy.importLocal(provider));
   });
-  // Stable authenticated gateway for external local AI clients. Translation is performed by CLIProxyAPI.
-  for(const path of ['models','responses','responses/compact','chat/completions','messages','messages/count_tokens'])app.route({method:path==='models'?'GET':'POST',url:`/v1/${path}`,bodyLimit:16*1024*1024,handler:async(req,reply)=>{
+  const access=await GatewayAccess.open(root,gatewayKeys);
+  app.get('/api/gateway/access',async()=>access.snapshot());
+  app.put('/api/gateway/access',async req=>access.update(gatewayAccessInput.parse(req.body)));
+  app.addHook('onReady',async()=>{await access.start();});
+  app.addHook('preClose',async()=>{await access.close();});
+  // Both API entrances share routing, model permissions, streaming and metering.
+  for(const path of ['models','responses','responses/compact','chat/completions','messages','messages/count_tokens']){
+   const route:RouteOptions={method:path==='models'?'GET':'POST',url:`/v1/${path}`,bodyLimit:16*1024*1024,handler:async(req,reply)=>{
     const bearer=clientCredential(req.headers).value;
     const client=gatewayKeys.authenticate(bearer);
     if(bearer && !same(bearer,options.token) && !client) return reply.code(401).send({error:{message:'Invalid or disabled API key',type:'authentication_error'}});
@@ -1150,8 +1159,10 @@ export async function createDesktopService(options:ServiceOptions) {
       record(status,usage);await settle(usage,!!compaction?.unmetered||(error instanceof GatewayContextError&&error.unmetered)||(status>=500||(compaction?.calls??0)>0)&&missingUsage);abort.close();
       return reply.code(status).send({error:{code:callError.code,message:callError.message,type:error instanceof GatewayContextError?'context_error':abort.timedOut?'timeout_error':'provider_error'}});
     }
-  }});
+   }};
+   app.route({...route});access.app.route({...route});
+  }
   if(options.uiRoot)await app.register(staticPlugin,{root:resolve(options.uiRoot),prefix:'/'});
   app.addHook('onClose',async()=>{clearInterval(nativeLoginTimer);await nativeLoginObservation;await nativeUsageLogins.close();await cursorNativeUsage.close();await workbuddySDK.close();await localUsage.close();await attribution.close();await ledger.close();await traces.close();await localMaintenance.close();await maintenance.close();await approval.close();await proxy.shutdown();await apiSources.close();for(const saved of internalKeys.values()){const created=await saved.catch(()=>undefined);if(created&&gatewayKeys.list().some(k=>k.id===created.key.id))await gatewayKeys.remove(created.key.id);}});
-  return {app,proxy,discoverLocal};
+  return {app,proxy,discoverLocal,access};
 }
