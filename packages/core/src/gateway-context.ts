@@ -10,12 +10,17 @@ type RequestBody = Item & {model:string};
 export type ContextScope = {owner:string; model:string; source:string};
 export type CompactionReport={inputBytes:number;outputBytes:number;calls:number;reused:number;durationMs:number;inputTokens:number|null;outputTokens:number|null;cachedTokens:number|null;cacheWriteTokens:number|null;reasoningTokens:number|null;failed:boolean;unmetered:boolean;cacheWriteFailed?:boolean};
 export type ContextOptions={onCompaction?:(report:CompactionReport)=>void;onUsageIncomplete?:()=>void};
-export type ContextMigration = {scope:ContextScope;recover:(item:Item)=>Promise<Item[]>;normalize?:(item:Item)=>Item[]};
+export type ContextMigration = {scope:ContextScope;threadId?:string;connectionId?:string;recover:(item:Item)=>Promise<Item[]>;normalize?:(item:Item)=>Item[]};
+type ManagedWindow={hash:string;input:Item[];coveredUsers:string[]};
+type ManagedSession={initialized:boolean;connectionId?:string;foreign:string[];windows:ManagedWindow[]};
 type Send = (path:string, body:Item) => Promise<Response>;
 const PREFIX = 'tfctx1.';
 const zeroUsage = {input_tokens:0, output_tokens:0, total_tokens:0,input_tokens_details:{cached_tokens:0,cache_write_tokens:0},output_tokens_details:{reasoning_tokens:0}};
 const object = (value:unknown):value is Item => !!value && typeof value==='object' && !Array.isArray(value);
 const size = (value:unknown) => Buffer.byteLength(JSON.stringify(value));
+const instruction=(item:Item)=>['system','developer'].includes(String(item.role));
+const historicalSummary=(item:Item)=>item.role==='assistant'&&Array.isArray(item.content)&&item.content.some(part=>object(part)&&typeof part.text==='string'&&part.text.startsWith('Historical task checkpoint (summary of earlier work):\n'));
+const canonical=(value:unknown):unknown=>Array.isArray(value)?value.map(canonical):object(value)?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value;
 // This is a history-reduction target, not the provider's context limit. Fixed
 // instructions/tools and the current user request cannot be summarized away.
 // Leave checkpoint room around them instead of rejecting a fresh conversation.
@@ -174,10 +179,34 @@ export class GatewayContext {
   const path=join(this.directory,id);const temp=path+'.'+randomUUID();
   try{await writeFile(temp,this.sealHistory(input,scope,coveredUsers),{mode:0o600,flag:'wx'});await rename(temp,path);}finally{await rm(temp,{force:true});}
  }
+ private managedPrefixes(input:Item[]){
+  let hash='managed-prefix-v1';const result:{hash:string;end:number}[]=[];
+  for(let index=0;index<input.length;index++){
+   const item=input[index]!;if(instruction(item))continue;
+   const normalized={...item};delete normalized.id;
+   if(typeof item.role==='string'){
+    normalized.type='message';
+    if(typeof item.content==='string')normalized.content=[{type:item.role==='assistant'?'output_text':'input_text',text:item.content}];
+   }
+   hash=createHmac('sha256',this.secret).update(hash).update(JSON.stringify(canonical(normalized))).digest('hex');
+   result.push({hash,end:index+1});
+  }
+  return result;
+ }
+ private async managedSession(migration:ContextMigration){
+  if(!migration.threadId)return;
+  const key=createHmac('sha256',this.secret).update(JSON.stringify([migration.scope,migration.threadId])).digest('hex');
+  const path=join(this.directory,'managed-'+key);let state:ManagedSession={initialized:false,foreign:[],windows:[]};
+  try{const saved=this.unseal(await readFile(path,'utf8'),migration.scope)[0];if(saved?.format==='managed-session-v1')state=saved.state as ManagedSession;}catch{/* Derived continuity state can be rebuilt from the client's retained history. */}
+  const persist=async()=>{
+   const temp=path+'.'+randomUUID();try{await writeFile(temp,this.seal([{format:'managed-session-v1',state}],migration.scope),{mode:0o600,flag:'wx'});await rename(temp,path);}finally{await rm(temp,{force:true});}
+  };
+  return {state,persist};
+ }
  private async expand(body:RequestBody,scope:ContextScope,migration?:ContextMigration) {
-  let input=items(body.input);const coveredUsers=new Set<string>();
+  let input=items(body.input);const coveredUsers=new Set<string>();let managed=false;const foreign:string[]=[];
   if(body.previous_response_id!=null){
-   let history:Item[];try{const saved=await this.history(body.previous_response_id,scope);history=saved.input;for(const hash of saved.coveredUsers)coveredUsers.add(hash);}catch(error){if(!migration)throw error;history=await migration.recover({type:'previous_response',id:body.previous_response_id});}
+   let history:Item[];try{const saved=await this.history(body.previous_response_id,scope);history=saved.input;managed=true;for(const hash of saved.coveredUsers)coveredUsers.add(hash);}catch(error){if(!migration)throw error;history=await migration.recover({type:'previous_response',id:body.previous_response_id});}
    input=[...history,...input];
   }
   const expanded:Item[]=[];
@@ -185,7 +214,7 @@ export class GatewayContext {
    if(item.type==='compaction'){
     // The checkpoint replaces its covered window. Preserve fresh user or
     // instruction messages a client prepends when rebuilding that window.
-    let restored:Item[];try{const saved=this.unsealHistory(item.encrypted_content,scope);restored=saved.input;for(const hash of saved.coveredUsers)coveredUsers.add(hash);}catch(error){if(!migration)throw error;restored=await migration.recover(item);}
+    let restored:Item[];try{const saved=this.unsealHistory(item.encrypted_content,scope);restored=saved.input;managed=true;for(const hash of saved.coveredUsers)coveredUsers.add(hash);}catch(error){if(!migration)throw error;restored=await migration.recover(item);if(typeof item.encrypted_content==='string'&&!item.encrypted_content.startsWith(PREFIX))foreign.push(createHmac('sha256',this.secret).update(item.encrypted_content).digest('hex'));else managed=true;}
     const fresh=expanded.filter(entry=>['user','system','developer'].includes(String(entry.role))&&!(entry.role==='user'&&coveredUsers.has(this.userFingerprint(entry)))&&!restored.some(saved=>saved.role===entry.role&&JSON.stringify(saved.content)===JSON.stringify(entry.content)));
     expanded.length=0;expanded.push(...restored,...fresh);
    }
@@ -193,13 +222,36 @@ export class GatewayContext {
    else expanded.push(item);
   }
   const portable=migration?.normalize?expanded.flatMap(migration.normalize):expanded;
-  return {input:portable,coveredUsers};
+  return {input:portable,coveredUsers,managed,foreign};
  }
  async response(path:string,body:RequestBody,owner:string,source:string,send:Send,migration?:ContextMigration,options:ContextOptions={}):Promise<Response> {
   const scope=migration?.scope??{owner,model:body.model,source};const expanded=await this.expand(body,scope,migration);let input=expanded.input;const coveredUsers=expanded.coveredUsers;
+  const session=migration?await this.managedSession(migration):undefined;
+  const takeover=!!migration&&!expanded.managed&&(session?!session.state.initialized||session.state.connectionId!==migration.connectionId||expanded.foreign.some(hash=>!session.state.foreign.includes(hash)):expanded.foreign.length>0);
+  if(session){
+   const used=new Set<string>();
+   for(;;){
+    const prefixes=this.managedPrefixes(input);
+    const prefix=prefixes.reverse().find(prefix=>!used.has(prefix.hash)&&session.state.windows.some(window=>window.hash===prefix.hash));
+    if(!prefix)break;
+    const saved=session.state.windows.find(window=>window.hash===prefix.hash)!;used.add(prefix.hash);
+    input=[...input.slice(0,prefix.end).filter(instruction),...saved.input,...input.slice(prefix.end)];
+    for(const hash of saved.coveredUsers)coveredUsers.add(hash);
+   }
+  }
+  const remember=async()=>{
+   if(!session)return;session.state.initialized=true;session.state.connectionId=migration?.connectionId;
+   session.state.foreign=[...new Set([...session.state.foreign,...expanded.foreign])];
+   await session.persist().catch(()=>{});
+  };
   const compact=async(history:Item[])=>{
    const started=Date.now();const report:CompactionReport={inputBytes:size(history),outputBytes:0,calls:0,reused:0,durationMs:0,inputTokens:0,outputTokens:0,cachedTokens:0,cacheWriteTokens:0,reasoningTokens:0,failed:true,unmetered:false};
-   try{const response=await this.compact(body,history,scope,send,{owner,model:body.model,source},report,body.store!==false||!!migration,coveredUsers);report.failed=false;return response;}
+   try{const response=await this.compact(body,history,scope,send,migration?.scope??{owner,model:body.model,source},report,body.store!==false||!!migration,coveredUsers,session?async(prefix,replacement,covered)=>{
+    const hash=this.managedPrefixes(prefix).at(-1)?.hash;if(!hash)return;
+    session.state.windows=session.state.windows.filter(window=>window.hash!==hash);
+    session.state.windows.push({hash,input:replacement.filter(item=>!instruction(item)),coveredUsers:[...covered]});
+    await remember();
+   }:undefined,!!migration);report.failed=false;return response;}
    finally{report.durationMs=Date.now()-started;options.onCompaction?.({...report});}
   };
   for(const field of ['store','stream'])if(body[field]!=null&&typeof body[field]!=='boolean')throw new GatewayContextError(field+' must be boolean');
@@ -219,14 +271,14 @@ export class GatewayContext {
    return new Response(events.map((event,sequence_number)=>'event: '+event.type+'\ndata: '+JSON.stringify({...event,sequence_number})+'\n\n').join(''),{headers:{'content-type':'text/event-stream','x-token-flow-compaction':'model-summary-v1'}});
   }
   let checkpoint:Item|undefined;let summaryUsage:unknown;
-  if(body.context_management!=null||migration){
+  if(body.context_management!=null||takeover){
    const rules=body.context_management??[{type:'compaction',compact_threshold:CONTEXT_TRIGGER_BYTES}];
    if(!Array.isArray(rules)||rules.length!==1||!object(rules[0])||rules[0].type!=='compaction'||!Number.isSafeInteger(rules[0].compact_threshold)||Number(rules[0].compact_threshold)<=0)throw new GatewayContextError('context_management requires one compaction rule with a positive compact_threshold');
    // Native Chat sources expose no tokenizer. Use a conservative UTF-8 byte
    // upper bound so we compact early rather than silently exceed the threshold.
    // Static tool definitions cannot be reduced by summarizing history. Avoid
    // compacting a tiny conversation every turn just because its tools are big.
-   const automatic=migration&&body.context_management==null;
+   const automatic=takeover&&body.context_management==null;
    const fixed=fixedContext(body,input);
    const budget=contextBudget(body,input);
    const historyBytes=size({input,instructions:body.instructions,tools:body.tools})-fixed;
@@ -260,6 +312,7 @@ export class GatewayContext {
   const finish=async (value:Item) => {
    if(!Array.isArray(value.output)||!value.output.every(object)||!['completed','incomplete'].includes(String(value.status)))throw new GatewayContextError('Source returned an invalid terminal response',502);
    if(body.store!==false)await this.save(id,[...input,...value.output],scope,coveredUsers);
+   await remember();
    const output=checkpoint?[checkpoint,...value.output]:value.output;
    const usage=checkpoint?combinedUsage(summaryUsage,value.usage):wireUsage(value.usage);
    if(object(usage)&&usage.token_flow_unmetered)options.onUsageIncomplete?.();
@@ -313,7 +366,7 @@ export class GatewayContext {
   }));
   const headers=new Headers(response.headers);headers.delete('content-length');if(checkpoint)headers.set('x-token-flow-compaction','model-summary-v1; threshold=utf8-upper-bound');return new Response(stream,{headers});
  }
- private async compact(body:RequestBody,input:Item[],scope:ContextScope,send:Send,cacheScope:ContextScope,report:CompactionReport,persistSummaries:boolean,coveredUsers:Set<string>) {
+ private async compact(body:RequestBody,input:Item[],scope:ContextScope,send:Send,cacheScope:ContextScope,report:CompactionReport,persistSummaries:boolean,coveredUsers:Set<string>,remember?:(prefix:Item[],replacement:Item[],covered:Set<string>)=>Promise<void>,durable=false) {
   // Keep recent user turns; long tool loops may compact older exchanges within
   // a turn. Never cut across an unfinished tool call.
   const budget=contextBudget(body,input);
@@ -339,7 +392,7 @@ export class GatewayContext {
   // complete exchanges, but always keep the newest user request verbatim.
   let lastUser=-1;for(let index=input.length-1;index>=0;index--)if(input[index]!.role==='user'){lastUser=index;break;}
   const preservedAt=(index:number)=>{
-   return input.slice(0,index).filter(item=>['system','developer'].includes(String(item.role))||item===input[lastUser]);
+   return input.slice(0,index).filter(item=>instruction(item)||historicalSummary(item)||item===input[lastUser]);
   };
   const retainedBytes=(index:number)=>size({input:[...preservedAt(index),...input.slice(index)],instructions:body.instructions,tools:body.tools});
   // The latest user item is separately preserved. Completed exchanges after
@@ -362,7 +415,7 @@ export class GatewayContext {
    const summaryCacheKey=(transcript:string)=>createHmac('sha256',this.secret).update(JSON.stringify({version:2,scope:cacheScope,transcript})).digest('hex');
    const summarize=async(transcript:string):Promise<string>=>{
     const cacheKey=summaryCacheKey(transcript);
-    const path=join(this.directory,'summary-'+cacheKey);
+    const path=join(this.directory,(durable?'managed-summary-':'summary-')+cacheKey);
     const remembered=this.summaries.get(cacheKey);if(remembered!==undefined){report.reused++;return remembered;}
     if(persistSummaries)try{const saved=this.unseal(await readFile(path,'utf8'),cacheScope);if(typeof saved[0]?.text==='string'){this.rememberSummary(cacheKey,saved[0].text);report.reused++;return saved[0].text;}}catch{/* Missing/corrupt derived caches may be recomputed; original history is untouched. */}
     const failed=this.failures.get(cacheKey);
@@ -433,13 +486,13 @@ export class GatewayContext {
     for(const key of keys){
      this.summaries.delete(key);if(this.failures.size>=256)this.failures.delete(this.failures.keys().next().value!);
      this.failures.set(key,{until:Date.now()+60_000,message:'Context summary did not reduce history; original history is unchanged',code:'compaction_not_reduced'});
-     if(persistSummaries)await rm(join(this.directory,'summary-'+key),{force:true}).catch(()=>{report.cacheWriteFailed=true;});
+     if(persistSummaries)await rm(join(this.directory,(durable?'managed-summary-':'summary-')+key),{force:true}).catch(()=>{report.cacheWriteFailed=true;});
     }
    };
    // Rules are carried verbatim in `preserved`; summarizing them again adds
    // paid chunks without reducing the continuation, especially on IDE rollouts
    // with many developer messages. User turns stay as factual task context.
-   let transcript=summaryTranscript(prefix.filter(item=>!['system','developer'].includes(String(item.role))));let text='';let lastRoundKeys:string[]=[];
+   let transcript=summaryTranscript(prefix.filter(item=>!instruction(item)&&!historicalSummary(item)));let text='';let lastRoundKeys:string[]=[];
    do {
     const parts=splitTranscript(transcript);
     const summaries:string[]=[],expanded:string[]=[];
@@ -474,6 +527,7 @@ export class GatewayContext {
   const retainedUsers=new Set(compacted.filter(item=>item.role==='user').map(item=>this.userFingerprint(item)));
   const covered=new Set(coveredUsers);
   for(const user of input.filter(item=>item.role==='user')){const hash=this.userFingerprint(user);if(!retainedUsers.has(hash))covered.add(hash);}
+  if(remember&&cut>0&&compacted!==input)await remember(prefix,compacted.slice(0,compacted.length-tail.length),covered);
   const item={id:'cmp_tf_'+randomBytes(16).toString('hex'),type:'compaction',encrypted_content:this.sealHistory(compacted,scope,covered)};
   return reply({id:'resp_tf_compact_'+randomBytes(16).toString('hex'),object:'response.compaction',created_at:Math.floor(Date.now()/1000),output:[...compacted.filter(entry=>entry.role==='user').map(entry=>({type:'message',...entry})),item],usage},new Headers({'x-token-flow-compaction':'model-summary-v1'}));
  }

@@ -45,7 +45,7 @@ it('bounds an 11 MiB recovered tool transcript before sending summaries or infer
  const result=await context.response('responses',{model:'qoder/m',input:[{type:'compaction',encrypted_content:'official-opaque'},{role:'user',content:'Continue TASK_MARKER.'}],store:false},'a','s',async(_p,b)=>{
   calls++;expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThan(128*1024);expect(calls).toBeLessThanOrEqual(12);
   return stream('TASK_MARKER: API kept compatible. Verify tests next.');
- },{scope:{owner:'portable',source:'portable',model:'portable'},recover:async()=>old});
+ },{threadId:'fixture-thread',scope:{owner:'portable',source:'portable',model:'portable'},recover:async()=>old});
  await result.text();expect(calls).toBeGreaterThan(1);
 });
 it('retains the current user constraint even after a large older user attachment and a long tool loop',async()=>{
@@ -122,7 +122,7 @@ it('does not erase known charges when a later summary omits usage',async()=>{
 it('fits JSON-escaped summaries into the retained-context budget before inference',async()=>{
  const {context}=await setup();let calls=0;
  const input=[...Array.from({length:70},()=>({role:'assistant',content:'historical work '.repeat(1000)})),{role:'user',content:'Current constraint: '+'x'.repeat(118*1024)},...Array.from({length:7},()=>({role:'assistant',content:'recent'}))];
- const migration={scope:{owner:'portable',source:'portable',model:'portable'},recover:async()=>[]};
+ const migration={threadId:'fixture-thread',scope:{owner:'portable',source:'portable',model:'portable'},recover:async()=>[]};
  const response=await context.response('responses',{model:'qoder/m',input,store:false},'a','s',async(_p,b)=>{
   if(!b.instructions){expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThan(151*1024);return Response.json({status:'completed',output:[],usage});}
   return stream(++calls<4?'"quoted code"\n'.repeat(600):'Checkpoint: old work completed; preserve current constraint.');
@@ -153,7 +153,7 @@ it.each(['tools','instructions','developer','user'])('forwards a fresh managed C
  const response=await context.response('responses',{model:'cursor/test',...body,input,store:false},'a','s',async(_p,b)=>{
   calls++;expect(b.input).toEqual(input);for(const key of Object.keys(body))expect(b[key]).toEqual(body[key]);
   return Response.json({status:'completed',output:[],usage});
- },{scope:{owner:'portable',source:'portable',model:'portable'},recover:async()=>{recoveries++;throw Error('No checkpoint to recover');}},{onCompaction:()=>{compactions++;}});
+ },{threadId:'fixture-thread',scope:{owner:'portable',source:'portable',model:'portable'},recover:async()=>{recoveries++;throw Error('No checkpoint to recover');}},{onCompaction:()=>{compactions++;}});
  expect(response.ok).toBe(true);expect(calls).toBe(1);expect(recoveries).toBe(0);expect(compactions).toBe(0);
 });
 
@@ -165,14 +165,14 @@ it('compacts accumulated history with large fixed tools and preserves the new re
   if(b.instructions){summaries++;return stream('Old work finished. Check tests next.');}
   answers++;expect(b.tools).toEqual(tools);expect(b.input).toContainEqual(input[0]);expect(b.input).toContainEqual(input.at(-1));expect(JSON.stringify(b.input).length).toBeLessThan(32*1024);
   return Response.json({status:'completed',output:[],usage});
- },{scope:{owner:'portable',source:'portable',model:'portable'},recover:async()=>{throw Error('Must not recover another conversation');}});
+ },{threadId:'fixture-thread',scope:{owner:'portable',source:'portable',model:'portable'},recover:async()=>{throw Error('Must not recover another conversation');}});
  expect(summaries).toBeGreaterThan(0);expect(answers).toBe(1);
 });
 
 it('does not repeatedly compact a short checkpoint just because fixed context is large',async()=>{
  const {context}=await setup();const input=[{role:'developer',content:'Fixed instructions '.repeat(10000)},{role:'assistant',content:'Historical task checkpoint: '+'x'.repeat(5000)},...Array.from({length:8},(_,i)=>({role:i%2?'assistant':'user',content:'short turn '+i}))];
  let compactions=0;let calls=0;
- await context.response('responses',{model:'cursor/test',input,store:false},'a','s',async(_p,b)=>{calls++;expect(b.input).toEqual(input);return Response.json({status:'completed',output:[],usage});},{scope:{owner:'portable',source:'portable',model:'portable'},recover:async()=>[]},{onCompaction:()=>compactions++});
+ await context.response('responses',{model:'cursor/test',input,store:false},'a','s',async(_p,b)=>{calls++;expect(b.input).toEqual(input);return Response.json({status:'completed',output:[],usage});},{threadId:'fixture-thread',scope:{owner:'portable',source:'portable',model:'portable'},recover:async()=>[]},{onCompaction:()=>compactions++});
  expect(calls).toBe(1);expect(compactions).toBe(0);
 });
 
@@ -189,7 +189,7 @@ it('compacts more than 16 MiB of replayed old tool results before forwarding',as
   expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThan(128*1024);
   if(b.instructions){summaries++;return stream('Read results checked. Preserve the API and run tests next.');}
   answers++;expect(b.input).toContainEqual(input.at(-1));return Response.json({status:'completed',output:[],usage});
- },{scope:{owner:'portable',source:'portable',model:'portable'},recover:async()=>{throw Error('No recovery expected');}});
+ },{threadId:'fixture-thread',scope:{owner:'portable',source:'portable',model:'portable'},recover:async()=>{throw Error('No recovery expected');}});
  expect(summaries).toBeGreaterThan(0);expect(answers).toBe(1);
 });
 

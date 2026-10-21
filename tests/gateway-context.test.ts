@@ -187,7 +187,7 @@ it.each([20,100])('compacts a single tool loop with a %i KiB latest result witho
  const response=await context.response('responses',{model,input,tools:[{type:'function',name:'read',parameters:{type:'object'}}]},'a','s',async(_path,body)=>{
   if(!body.tools){summaries++;expect(JSON.stringify(body.input)).not.toContain('Project rules');return Response.json(answer('Completed earlier reads; continue using the latest tool result.'));}
   forwarded=body.input as Record<string,unknown>[];return Response.json(answer());
- },{scope,recover:async()=>[]});
+ },{scope,threadId:'fixture-thread',recover:async()=>[]});
  expect(response.ok).toBe(true);expect(summaries).toBeGreaterThan(0);
  expect(forwarded).toContainEqual(original[0]);expect(forwarded).toContainEqual(original[1]);
  expect(forwarded.slice(-2)).toEqual(original.slice(-2));

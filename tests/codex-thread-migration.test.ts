@@ -4,6 +4,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {DatabaseSync} from 'node:sqlite';
 import {CodexThreadMigration,type MigrationClient} from '../packages/core/src/codex-thread-migration.js';
+import {CodexHistoryBackups} from '../packages/core/src/codex-history-backups.js';
 async function fixture(){
  const root=await mkdtemp(join(await realpath(tmpdir()),'thread-migration-')),home=join(root,'codex');await mkdir(home);
  await writeFile(join(home,'config.toml'),'model="native"');
@@ -201,6 +202,25 @@ it('appends only a newly seen thread after returning to official, sharing the ea
   await f.reopen().prepare('gateway');await f.reopen().migrate('gateway');await f.reopen().restore();
   const files=await backupFiles(f.root);expect(files.filter(name=>name.endsWith('.jsonl'))).toHaveLength(3);expect(files.filter(name=>name.endsWith('.sqlite'))).toHaveLength(1);
   expect(f.db.prepare("select model from threads where id='later'").get()?.model).toBe('latest-official');
+ }finally{await f.close();}
+});
+it('backs up only added history on repeated switches and retains each observed route with a recoverable revision',async()=>{
+ const f=await fixture();try{
+  const path=join(f.home,'old.jsonl'),original=await readFile(path,'utf8');
+  await f.migration.prepare('gateway');await f.migration.migrate('gateway');
+  const gatewayText=original+'gateway turn\n';await writeFile(path,gatewayText);
+  await f.reopen().restore('native');
+  const officialText=gatewayText+'official turn\n';await writeFile(path,officialText);
+  await f.reopen().prepare('second-gateway');await f.reopen().migrate('second-gateway');await f.reopen().restore('native');
+  const files=await backupFiles(f.root);expect(files.filter(name=>name.endsWith('.jsonl'))).toHaveLength(2);expect(files.filter(name=>name.endsWith('.sqlite'))).toHaveLength(1);
+  const versions:any[]=[];for(const file of files.filter(name=>name.endsWith('manifest.json'))){const journal=JSON.parse(await readFile(join(f.root,'codex-thread-backups',file),'utf8'));for(const entry of journal.entries)if(entry.id==='old')versions.push(...entry.historySnapshots);}
+  const history=new CodexHistoryBackups(f.root);
+  const gatewayVersion=versions.filter(v=>v.provider==='token_flow'&&v.model==='gateway').at(-1);
+  expect((await history.read(gatewayVersion.snapshot)).toString()).toBe(gatewayText);
+  const latest=versions.find(v=>v.provider==='token_flow'&&v.model==='second-gateway');expect((await history.read(latest.snapshot)).toString()).toBe(officialText);
+  const directory=join(f.root,'codex-history-backups',latest.snapshot.key),deltas=(await readdir(directory)).filter(name=>name.endsWith('.delta'));
+  expect(deltas).toHaveLength(2);let bytes=0;for(const file of deltas)bytes+=(await stat(join(directory,file))).size;
+  expect(bytes).toBe(Buffer.byteLength('gateway turn\nofficial turn\n'));expect(await readFile(path,'utf8')).toBe(officialText);
  }finally{await f.close();}
 });
 it('creates a fresh baseline when an earlier history backup has been removed instead of publishing a broken reference',async()=>{

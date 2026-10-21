@@ -1,3 +1,4 @@
+import {CodexHistoryBackups} from '../packages/core/src/codex-history-backups.js';
 import {DatabaseSync} from 'node:sqlite';
 import {createHash} from 'node:crypto';
 import {it,expect,afterEach} from 'vitest';
@@ -50,13 +51,21 @@ it('never merges a neighboring conversation when recovering an exact checkpoint'
  expect(await f.migration.recover({type:'compaction',encrypted_content:'wanted'},[])).toEqual(history);
  expect(await readFile(neighbor,'utf8')).toBe(other);
 });
+it('recovers a later official checkpoint from the saved gateway summary plus only the intervening history',async()=>{
+ const f=await fixture();
+ const saved=[{role:'user',content:'Keep task constraints.'},{type:'message',role:'assistant',content:[{type:'output_text',text:'Historical task checkpoint (summary of earlier work):\nSAVED_GATEWAY_SUMMARY'}]}];
+ const token=f.context.encodeCheckpoint(saved,codexContextScope),newWork={type:'message',role:'user',content:[{type:'input_text',text:'OFFICIAL_NEW_WORK'}]};
+ await writeFile(f.file,[...history.map(payload=>({type:'response_item',payload})),{type:'response_item',payload:{type:'compaction',encrypted_content:token}},{type:'response_item',payload:newWork},checkpoint('later-official')].map(row=>JSON.stringify(row)).join('\n'));
+ const recovered=await f.migration.recover({type:'compaction',encrypted_content:'later-official'},[]);
+ expect(JSON.stringify(recovered)).toContain('SAVED_GATEWAY_SUMMARY');expect(recovered).toContainEqual(newWork);expect(JSON.stringify(recovered)).not.toContain('original tool result');
+});
 it('blocks live rollout rewrites, migrates legacy gateway checkpoints with backups, and is idempotent',async()=>{
  const f=await fixture();const scope={owner:'old-key',source:'qoder-account',model:'qoder/m'};
  const token=f.context.encodeCheckpoint(history,scope);const original=rollout(token);await writeFile(f.file,original);
  await expect(f.migration.prepareOfficial([scope],async()=>[123])).rejects.toThrow('先退出 Codex');expect(await readFile(f.file,'utf8')).toBe(original);
  expect(await f.migration.prepareOfficial([scope],async()=>[])).toEqual({migrated:1});
  const text=await readFile(f.file,'utf8');const row=JSON.parse(text.split('\n')[3]!);expect(row.payload.replacement_history).toEqual(history);expect(row.payload.window_number).toBe(2);expect(text).toContain('Future turn');
- const batch=(await readdir(join(f.root,'codex-context-backups')))[0]!;expect(await readFile(join(f.root,'codex-context-backups',batch,'0.jsonl'),'utf8')).toBe(original);
+ const batch=(await readdir(join(f.root,'codex-context-backups')))[0]!;const manifest=JSON.parse(await readFile(join(f.root,'codex-context-backups',batch,'manifest.json'),'utf8'));expect((await new CodexHistoryBackups(f.root).read(manifest.files[0].historySnapshot)).toString()).toBe(original);
  expect(await f.migration.prepareOfficial([scope],async()=>[])).toEqual({migrated:0});
  expect(await readdir(join(f.root,'codex-context-staging'))).toEqual([]);
 });
@@ -92,7 +101,7 @@ it('summarizes a recovered long window in bounded calls while keeping constraint
  const f=await fixture();const input:any[]=[{type:'message',role:'user',content:'Keep the original API and user files.'}];
  for(let i=0;i<15;i++)input.push({type:'function_call',call_id:`c${i}`,name:'read',arguments:'{}'},{type:'function_call_output',call_id:`c${i}`,output:i<10?'中'.repeat(10000):'recent result'});
  const requests:any[]=[];const send=async(_p:string,b:any)=>{requests.push(b);return Response.json({status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'Earlier reads completed; preserve API; continue current task.'}]}],usage:{input_tokens:10,output_tokens:2,total_tokens:12}});};
- const result=await(await f.context.response('responses',{model:'workbuddy/m',input,store:false},'new-key','new-source',send,{scope:codexContextScope,recover:i=>f.migration.recover(i,[])})).json();
+ const result=await(await f.context.response('responses',{model:'workbuddy/m',input,store:false},'new-key','new-source',send,{scope:codexContextScope,threadId:'fixture-thread',recover:i=>f.migration.recover(i,[])})).json();
  const summaries=requests.filter(r=>r.instructions?.startsWith('Summarize the supplied'));expect(summaries.length).toBe(1);expect(summaries[0].input[0].content).toContain("middle omitted");
  for(const r of summaries)expect(Buffer.byteLength(r.input[0].content)).toBeLessThan(50*1024);
  const forwarded=requests.at(-1).input;expect(forwarded[0]).toEqual(input[0]);expect(forwarded.slice(-8)).toEqual(input.slice(-8));expect(JSON.stringify(forwarded).length).toBeLessThan(10000);expect(result.output[0].type).toBe('compaction');
@@ -133,7 +142,7 @@ it('continues across two gateway compactions and materializes the latest checkpo
  const between=[{role:'user',content:'NEW_CONSTRAINT: never change billing.ts.'},...work('second-'),{role:'user',content:'Continue second round.'}];
  round=2;const restarted=await GatewayContext.open(f.root);
  const second=await(await restarted.response('responses',{model:'qoder/m',input:[...original,...first.output,...between],context_management:[{type:'compaction',compact_threshold:100}]},'key','source',send,migration)).json();
- expect(summaries).toHaveLength(2);expect(summaries[1]).toContain('ROUND_1_SUMMARY');expect(summaries[1]).toContain('NEW_CONSTRAINT');
+ expect(summaries).toHaveLength(2);expect(summaries[1]).not.toContain('ROUND_1_SUMMARY');expect(summaries[1]).toContain('NEW_CONSTRAINT');
  const after={type:'message',role:'user',content:[{type:'input_text',text:'AFTER_SECOND_COMPACTION'}]};
  const saved=[{type:'session_meta',payload:{model_provider:'token_flow'}},...[...original,...first.output,...between,...second.output,after].map(payload=>({type:'response_item',payload:payload.type?payload:{type:'message',...payload}}))].map(row=>JSON.stringify(row)).join('\n')+'\n';
  await writeFile(f.file,saved);const restored=new CodexContext(f.root,join(f.root,'codex/config.toml'),restarted);
@@ -144,7 +153,7 @@ it('continues across two gateway compactions and materializes the latest checkpo
  expect(JSON.stringify(latest)).toContain('ROUND_2_SUMMARY');expect(JSON.stringify(latest)).toContain('NEW_CONSTRAINT');
  expect(latest.some((item:any)=>item.type==='compaction')).toBe(false);expect(rows.at(-1).payload).toEqual(after);
  for(const item of latest.filter((item:any)=>item.type==='function_call_output'))expect(latest.some((call:any)=>call.type==='function_call'&&call.call_id===item.call_id)).toBe(true);
- const batch=(await readdir(join(f.root,'codex-context-backups')))[0]!;expect(await readFile(join(f.root,'codex-context-backups',batch,'0.jsonl'),'utf8')).toBe(saved);
+ const batch=(await readdir(join(f.root,'codex-context-backups')))[0]!;const manifest=JSON.parse(await readFile(join(f.root,'codex-context-backups',batch,'manifest.json'),'utf8'));expect((await new CodexHistoryBackups(f.root).read(manifest.files[0].historySnapshot)).toString()).toBe(saved);
  expect(await restored.prepareOfficial([],async()=>[])).toEqual({migrated:0});
 });
 it('does not reinterpret unrelated official checkpoints while switching the local login',async()=>{

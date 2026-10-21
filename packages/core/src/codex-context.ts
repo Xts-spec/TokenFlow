@@ -4,6 +4,7 @@ import {mkdir,readdir,readFile,writeFile,rename,stat,rm,copyFile,chmod} from 'no
 import {constants} from 'node:fs';
 import {GatewayContext,GatewayContextError,type ContextScope} from './gateway-context.js';
 import {safePath} from './agent-connections.js';
+import {CodexHistoryBackups,type HistorySnapshot} from './codex-history-backups.js';
 
 type Item=Record<string,any>;
 const digest=(text:string)=>createHash('sha256').update(text).digest('hex');
@@ -37,8 +38,8 @@ export function portableCodexItem(item:Item):Item[]{
 /** Replays only local Codex rollout data. No credentials, cloud lookup, or model
  * call occurs here. The service enables this exclusively for its managed Codex key. */
 export class CodexContext {
- private cache:string;private backups:string;
- constructor(private root:string,private configPath:string,private context:GatewayContext){this.cache=join(root,'codex-context-cache');this.backups=join(root,'codex-context-backups');}
+ private cache:string;private backups:string;private history:CodexHistoryBackups;
+ constructor(private root:string,private configPath:string,private context:GatewayContext){this.cache=join(root,'codex-context-cache');this.backups=join(root,'codex-context-backups');this.history=new CodexHistoryBackups(root);}
  private async files(){
   const files:{path:string;mtime:number}[]=[];
   const walk=async(dir:string,depth:number)=>{
@@ -72,7 +73,11 @@ export class CodexContext {
     const payload=event.payload;if(!object(payload))continue;
     if(event.type==='event_msg'&&payload.type==='thread_rolled_back')throw failure();
     if(event.type==='response_item'){
-     if(payload.type==='compaction'){if(payload.encrypted_content===token){complete=true;break;}continue;}
+     if(payload.type==='compaction'){
+      if(payload.encrypted_content===token){complete=true;break;}
+      if(typeof payload.encrypted_content==='string'&&payload.encrypted_content.startsWith('tfctx1.'))history=this.context.decodeCheckpoint(payload.encrypted_content,[codexContextScope,...scopes]).flatMap(portableCodexItem);
+      continue;
+     }
      history.push(...portableCodexItem(payload));
     }
     if(event.type==='compacted'){
@@ -80,6 +85,13 @@ export class CodexContext {
      if(!Array.isArray(replacement)||!replacement.every(object))throw failure();
      if(replacement.some(i=>i.type==='compaction'&&i.encrypted_content===token)){complete=true;break;}
      if(!replacement.some(i=>i.type==='compaction'))history=replacement.flatMap(portableCodexItem);
+     else if(replacement.some(i=>i.type==='compaction'&&String(i.encrypted_content).startsWith('tfctx1.'))){
+      history=[];
+      for(const item of replacement){
+       if(item.type==='compaction'&&String(item.encrypted_content).startsWith('tfctx1.'))history=this.context.decodeCheckpoint(item.encrypted_content,[codexContextScope,...scopes]).flatMap(portableCodexItem);
+       else if(item.type!=='compaction')history.push(...portableCodexItem(item));
+      }
+     }
      // Earlier opaque windows are reconstructed from their original response
      // items already on disk; never pretend the ciphertext is a readable summary.
     }
@@ -221,21 +233,27 @@ export class CodexContext {
   if((await processes()).length)throw Object.assign(new Error(`有 ${candidates.length} 个会话需要兼容处理。请先退出 Codex，再切换官方登录；原配置和会话尚未修改。`),{statusCode:409});
   const changedDuringBackup=()=>Object.assign(new Error('迁移期间会话发生变化，已停止；原始备份已保留。'),{statusCode:409});
   const batch=join(this.backups,randomUUID());await mkdir(batch,{recursive:true,mode:0o700});
-  const journal=candidates.map((c,i)=>({path:relative(dirname(this.configPath),c.path),backup:`${i}.jsonl`,beforeHash:c.beforeHash,afterHash:c.afterHash}));
+  const journal=candidates.map(c=>({path:relative(dirname(this.configPath),c.path),historySnapshot:undefined as HistorySnapshot|undefined,beforeHash:c.beforeHash,afterHash:c.afterHash}));
+  const databaseBackups:Record<string,string>={};const createdAt=new Date().toISOString();
+  const saveJournal=()=>writeFile(join(batch,'manifest.json'),JSON.stringify({createdAt,files:journal,databaseBackups}),{mode:0o600});
   try{
-   for(let i=0;i<candidates.length;i++){const c=candidates[i]!;await safePath(c.path);const before=await readFile(c.path,'utf8');if(digest(before)!==c.beforeHash)throw changedDuringBackup();await writeFile(join(batch,`${i}.jsonl`),before,{mode:0o600,flag:'wx'});}
-   await writeFile(join(batch,'manifest.json'),JSON.stringify({createdAt:new Date().toISOString(),files:journal}),{mode:0o600,flag:'wx'});
+   for(let i=0;i<candidates.length;i++){const c=candidates[i]!;await safePath(c.path);const before=await readFile(c.path,'utf8');if(digest(before)!==c.beforeHash)throw changedDuringBackup();journal[i]!.historySnapshot=await this.history.capture(c.path,Buffer.from(before));}
+   await saveJournal();
   }catch(error){await rm(batch,{recursive:true,force:true});throw error;}
   // This database is a derived UI projection with byte offsets into the
   // rollouts. Preserve a consistent backup, then let Codex rebuild affected
   // projections from history instead of reusing offsets into rewritten bytes.
   const home=dirname(this.configPath);
+  const databaseCandidates:string[]=[];
+  for(const directory of [join(this.root,'codex-thread-backups'),this.backups])for(const id of await readdir(directory).catch(()=>[]))if(/^[a-f0-9-]{36}$/.test(id))databaseCandidates.push(join(directory,id));
   for(const name of (await readdir(home)).filter(n=>/^thread_history_\d+\.sqlite$/.test(n))){
    if(!invalidated.size)break;
    const path=join(home,name);await safePath(path);
    const {DatabaseSync,backup}=await import('node:sqlite');const db=new DatabaseSync(path);
    try{
-    await backup(db,join(batch,name));
+    for(const directory of databaseCandidates){const candidate=join(directory,name);try{await safePath(candidate);if((await stat(candidate)).isFile()){databaseBackups[name]=candidate;break;}}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
+    if(!databaseBackups[name]){databaseBackups[name]=join(batch,name);await backup(db,databaseBackups[name]);}
+    await saveJournal();
     if((await processes()).length)throw new GatewayContextError('Codex 重新启动，迁移已停止。',409);
     const tables=new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(r=>r.name));
     db.exec('BEGIN IMMEDIATE');

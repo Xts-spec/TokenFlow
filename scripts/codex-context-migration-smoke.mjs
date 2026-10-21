@@ -18,7 +18,9 @@ const server=createServer(async(req,res)=>{
  let text='';for await(const chunk of req)text+=chunk;
  const body=JSON.parse(text||'{}');
  if(!req.url.endsWith('/responses')){res.writeHead(404);res.end('{}');return;}
- calls.push({path:req.url,body});
+ const threadId=req.headers.session_id??req.headers['session-id'];
+ calls.push({path:req.url,body,threadId});
+ const previousCalls=upstream.length;
  try {
  const send=async(_path,request)=>{
  upstream.push({phase,body:request});
@@ -26,16 +28,17 @@ const server=createServer(async(req,res)=>{
  const trigger=request.input?.some(i=>i.type==='compaction_trigger');
  const toolLimit=phase===1&&process.argv.includes('--auto-only')?0:phase===0&&process.argv.includes('--long-recovery')?20:6;
  const tool=!summary&&!trigger&&(phase===0||phase===1)&&tools++<toolLimit;
- const n=++responseNumber,answer=summary?'CHECKPOINT: Directory checks completed; preserve TURN_ONE_MARKER.':`REPLY_${phase}_MARKER`;
+ const n=++responseNumber,answer=summary?'CHECKPOINT: Directory checks completed; preserve TURN_ONE_MARKER. '+[...new Set(JSON.stringify(request.input).match(/GATEWAY_REPEAT_\d+_MARKER/g)??[])].join(' '):`REPLY_${phase}_MARKER`;
  const item=trigger?{type:'compaction',encrypted_content:'official-fixture-checkpoint'}:tool?{id:`fc_${n}`,type:'function_call',call_id:`call_${n}`,name:'exec_command',arguments:JSON.stringify({cmd:phase===0&&process.argv.includes('--long-recovery')?"python3 -c \"print('fixture-long-output ' * 2000)\"":'pwd',max_output_tokens:phase===0&&process.argv.includes('--long-recovery')?16000:64})}:{id:`msg_${n}`,type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:answer,annotations:[]}]};
  if(trigger)compactions++;
  const output=phase===1&&!summary&&!trigger&&!tool?[{id:`rs_chatcmpl_fixture_${n}`,type:'reasoning',encrypted_content:'',summary:[{type:'summary_text',text:'GATEWAY_REASONING_MARKER'}]},item]:[item];
- const response={id:`resp_${n}`,object:'response',created_at:Math.floor(Date.now()/1000),model:request.model,status:'completed',output,usage:{input_tokens:tool&&tools===toolLimit?12000:100,output_tokens:1,total_tokens:tool&&tools===toolLimit?12001:101}};
+ const response={id:`resp_${n}`,object:'response',created_at:Math.floor(Date.now()/1000),model:request.model,status:'completed',output,usage:{input_tokens:tool&&tools===toolLimit?(phase===1?70000:12000):100,output_tokens:1,total_tokens:tool&&tools===toolLimit?(phase===1?70001:12001):101}};
  if(!request.stream)return Response.json(response);
  const events=[{type:'response.created',response:{...response,status:'in_progress',output:[]}},...output.flatMap((item,output_index)=>[{type:'response.output_item.added',output_index,item},{type:'response.output_item.done',output_index,item}]),{type:'response.completed',response}];
  return new Response(events.map((e,i)=>`event: ${e.type}\ndata: ${JSON.stringify({...e,sequence_number:i})}\n\n`).join(''),{headers:{'content-type':'text/event-stream'}});
  };
- const response=req.url.startsWith('/original')?await send('responses',body):await context.response('responses',body,'fixture-key','fixture-source',send,{scope:codexContextScope,recover:item=>migration.recover(item,[])});
+ const response=req.url.startsWith('/original')?await send('responses',body):await context.response('responses',body,'fixture-key','fixture-source',send,{scope:codexContextScope,threadId,connectionId:phase>=4?'gateway-return':'gateway-first',recover:item=>migration.recover(item,[])});
+ if(!req.url.startsWith('/original')&&calls.filter(call=>!call.path.startsWith('/original')&&call.threadId===threadId).length>1&&phase<4&&!body.input?.some(item=>item.type==='compaction_trigger'))assert.equal(upstream.slice(previousCalls).filter(call=>call.body.instructions?.startsWith('Summarize the supplied')).length,0,'ordinary continuation must wait for Codex to request compaction');
  res.writeHead(response.status,Object.fromEntries(response.headers));for await(const chunk of response.body)res.write(chunk);res.end();
  }catch(error){console.error(error);res.writeHead(500,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:error.message}}));}
 
@@ -73,6 +76,7 @@ try{
  await migration.prepareOfficial([],async()=>[]);await connections.restore(again.id);
  phase=5;client=await start();await client.rpc('thread/resume',{threadId:thread,model:'native-fixture',modelProvider:'original_fixture'});await client.turn(thread,'native-fixture','TURN_SIX_MARKER');await client.stop();
  assert.ok(compactions>0,'original fixture never compacted');
+ assert.ok(calls.some(call=>!call.path.startsWith('/original')&&call.threadId===thread),'Codex must provide a stable thread session header');
  assert.ok(upstream.filter(c=>c.phase===3).every(c=>!c.body.input.some(i=>i.type==='reasoning'&&String(i.id).startsWith('rs_chatcmpl'))),'foreign reasoning leaked back to official provider');
  assert.ok(JSON.stringify(upstream.filter(c=>c.phase===3)).includes('GATEWAY_REASONING_MARKER'),'readable gateway reasoning summary was lost');
  for(const p of [1,2,3,4,5]){
