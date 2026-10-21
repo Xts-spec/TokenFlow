@@ -1,6 +1,6 @@
 import {access,readFile,realpath} from 'node:fs/promises';
 import {constants} from 'node:fs';
-import {delimiter,dirname,isAbsolute,join,win32} from 'node:path';
+import {delimiter,dirname,isAbsolute,join,posix,win32} from 'node:path';
 import {homedir} from 'node:os';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
@@ -34,16 +34,20 @@ async function packageOf(path:string,name:string){
 }
 export const desktopNames:Partial<Record<Target|'claude-desktop'|'workbuddy-ai'|'qoder-ide',string[]>>={'claude-desktop':['Claude'],codex:['Codex','ChatGPT'],qoder:['Qoder'],'qoder-ide':['Qoder IDE','Qoder'],workbuddy:['WorkBuddy'],'workbuddy-ai':['WorkBuddy AI','WorkBuddyAI'],deepseek:['DeepSeek Harness']};
 // AGENT_INSTALL_DIRS lists extra roots (PATH-style separators); portable or non-standard installs live there.
-const envRoots=(env:NodeJS.ProcessEnv)=>(env.AGENT_INSTALL_DIRS??'').split(delimiter).map(root=>root.trim()).filter(root=>root&&isAbsolute(root));
+// The separator follows the target platform, not the host, so a win32 probe splits on ';' when tested from macOS.
+const envRoots=(env:NodeJS.ProcessEnv,platform=process.platform)=>{
+ const path=platform==='win32'?win32:posix;
+ return (env.AGENT_INSTALL_DIRS??'').split(platform==='win32'?';':delimiter).map(root=>root.trim()).filter(root=>root&&path.isAbsolute(root));
+};
 export function desktopCandidates(target:Target|'claude-desktop'|'workbuddy-ai'|'qoder-ide',platform=process.platform,home=homedir(),env:NodeJS.ProcessEnv=process.env){
  const names=desktopNames[target]??[];
- if(platform==='darwin')return [...envRoots(env).flatMap(root=>names.map(name=>join(root,`${name}.app`))),...names.flatMap(name=>['/Applications',join(home,'Applications')].map(base=>join(base,`${name}.app`)))];
+ if(platform==='darwin')return [...envRoots(env,platform).flatMap(root=>names.map(name=>join(root,`${name}.app`))),...names.flatMap(name=>['/Applications',join(home,'Applications')].map(base=>join(base,`${name}.app`)))];
  if(platform==='win32'&&target==='claude-desktop'&&env.LOCALAPPDATA)return [win32.join(env.LOCALAPPDATA,'AnthropicClaude','Claude.exe'),win32.join(env.LOCALAPPDATA,'Programs','Claude','Claude.exe'),win32.join(env.LOCALAPPDATA,'Claude','Claude.exe')];
  if(platform==='win32')return names.flatMap(name=>{
   const exe=target==='workbuddy-ai'?'WorkBuddyAI':target==='qoder-ide'?'Qoder':name;
   const standard=[env.LOCALAPPDATA&&win32.join(env.LOCALAPPDATA,'Programs'),env.LOCALAPPDATA,env.ProgramFiles,env['ProgramFiles(x86)']].filter((base):base is string=>!!base&&win32.isAbsolute(base));
   // User-configured roots are searched first and accept either a per-app folder or the executable directly.
-  return [...envRoots(env).flatMap(root=>[win32.join(root,name,`${exe}.exe`),win32.join(root,`${exe}.exe`)]),...standard.map(base=>win32.join(base,name,`${exe}.exe`))];
+  return [...envRoots(env,platform).flatMap(root=>[win32.join(root,name,`${exe}.exe`),win32.join(root,`${exe}.exe`)]),...standard.map(base=>win32.join(base,name,`${exe}.exe`))];
  });
  return [];
 }
