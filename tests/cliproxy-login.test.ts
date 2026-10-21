@@ -10,7 +10,7 @@ import {quotaProviders} from '../packages/core/src/quota/index.js';
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => {for (const fn of cleanup.splice(0).reverse()) await fn();});
 const binary = resolve('tests/fixtures/fake-cliproxy.mjs');
-it('preserves official image capabilities and keeps image-dropping adapters text-only',async()=>{
+it('preserves official image declarations without overriding Qoder as text-only',async()=>{
  const {manager,root}=await setup();
  await mkdir(join(root,'cliproxy'),{recursive:true});
  await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([
@@ -21,7 +21,7 @@ it('preserves official image capabilities and keeps image-dropping adapters text
  expect(models.find(m=>m.id==='workbuddy/deepseek-v4.1-flash')?.capabilities?.images).toBe(true);
  expect(models.find(m=>m.id==='workbuddy/text-only')?.capabilities?.images).toBe(false);
  expect(models.find(m=>m.id==='workbuddy/unknown')?.capabilities).toBeUndefined();
- expect(models.find(m=>m.id==='qoder/vision-base-model')?.capabilities?.images).toBe(false);
+ expect(models.find(m=>m.id==='qoder/vision-base-model')?.capabilities?.images).toBe(true);
 });
 it('identifies WorkBuddy and Qoder accounts from safe stored metadata when sidecar labels are generic',async()=>{
  const {manager,root}=await setup();
@@ -441,4 +441,27 @@ it('imports two members of one Codex workspace independently and keeps separate 
  const names=(await import('node:fs/promises')).readdir;const files=(await names(join(root,'cliproxy/auth'))).filter(n=>n.startsWith('local-codex-'));
  expect(files).toHaveLength(3);expect(manager.snapshot().accounts.filter(a=>a.provider==='codex'&&!a.isDuplicate)).toHaveLength(2);
  await manager.importCredential('codex',first,true);expect((await names(join(root,'cliproxy/auth'))).filter(n=>n.startsWith('local-codex-'))).toHaveLength(3);
+});
+
+it.each(['timeout','tls'])('distinguishes an authorization %s failure from a stopped local agent',async kind=>{
+ const {manager}=await setup();await manager.start();const realFetch=globalThis.fetch;
+ const mock=vi.spyOn(globalThis,'fetch').mockImplementation(async(url,init)=>{
+  if(String(url).includes('/workbuddy-auth-url')){
+   if(kind==='timeout')throw new DOMException('The operation timed out','TimeoutError');
+   return Response.json({error:'Client network socket disconnected before secure TLS connection was established secret-token'},{status:502});
+  }
+  return realFetch(url,init);
+ });
+ try{const state=await manager.login('workbuddy-overseas');expect(state.state).toBe('running');expect(state.login?.status).toBe('failed');expect(state.login?.message).toContain(kind==='timeout'?'超时':'TLS');expect(state.login?.message).not.toContain('无法连接 Local Agent');expect(state.login?.message).not.toContain('secret-token');}finally{mock.mockRestore();}
+});
+
+it('retries an unavailable official catalog twice, forcing a fresh lookup after the cached failure',async()=>{
+ const {manager,root}=await setup();await mkdir(join(root,'cliproxy'),{recursive:true});
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'kimi.json',provider:'kimi',status:'active',models:['current']}]));
+ const original=(manager as any).request.bind(manager);const paths:string[]=[];
+ vi.spyOn(manager as any,'request').mockImplementation(async (...args:any[])=>{
+  const value=await original(...args);if(String(args[0]).startsWith('/auth-files/models')){paths.push(args[0]);return {...value,catalog:{status:paths.length<3?'unavailable':'live'}};}return value;
+ });
+ await manager.start();expect(paths).toHaveLength(3);expect(paths.slice(1).every(path=>path.endsWith('refresh=true'))).toBe(true);
+ expect(manager.snapshot().accounts[0].models).toEqual(['kimi/current']);expect(manager.snapshot().accounts[0].modelError).toBeUndefined();
 });

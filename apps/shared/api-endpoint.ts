@@ -27,5 +27,6 @@ export type RoutedApiSource={id:string;protocol:ApiProtocol;baseURL:string;model
 export function apiModelRoute(source:RoutedApiSource,model:string):ApiModelRoute{
  const prefix=`api-${source.id}/`;
  const upstream=model.startsWith(prefix)?model.slice(prefix.length):model;
- return source.modelRoutes&&Object.hasOwn(source.modelRoutes,upstream)?source.modelRoutes[upstream]:{protocol:source.protocol,baseURL:source.baseURL};
+ const route=source.modelRoutes&&Object.hasOwn(source.modelRoutes,upstream)?source.modelRoutes[upstream]:{protocol:source.protocol,baseURL:source.baseURL};
+ return {...route,baseURL:normalizeApiBaseURL(route.baseURL)};
 }

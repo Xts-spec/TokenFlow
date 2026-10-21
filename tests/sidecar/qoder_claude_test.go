@@ -232,6 +232,120 @@ func TestQoderInvalidParameterIsRequestFault(t *testing.T) {
 	}
 }
 
+// An application-level denial can arrive in an HTTP 200 SSE stream which
+// remains open. Classify it before waiting for more events or transport EOF.
+func TestQoderResourceLimitFrameFailsBeforeOpenStreamEnds(t *testing.T) {
+	reader, writer := io.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	defer reader.Close()
+	defer writer.Close()
+	queue, _ := json.Marshal(map[string]any{"isQueued": true, "modelKey": "dfmodel", "queueCount": 0, "queueType": "p3", "retryAfterSeconds": 30, "serviceAvailable": false, "subCode": "RESOURCE_LIMIT"})
+	body, _ := json.Marshal(map[string]any{"code": "10605", "message": string(queue)})
+	envelope, _ := json.Marshal(map[string]any{"statusCode": "FORBIDDEN", "statusCodeValue": 403, "body": string(body)})
+	stream := readAgentChatStream(ctx, &http.Response{StatusCode: http.StatusOK, Body: reader, Header: http.Header{"Content-Type": []string{"text/event-stream"}}}, "qoder")
+	go func() {
+		// Do not close the pipe: the production denial frame leaves SSE open.
+		_, _ = fmt.Fprintf(writer, "data: %s\n\n", envelope)
+	}()
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case chunk, ok := <-stream.Chunks:
+			if !ok {
+				t.Fatal("resource-limited stream ended without a classified failure")
+			}
+			if chunk.Err == nil {
+				continue
+			}
+			typed, ok := chunk.Err.(interface{ StatusCode() int })
+			if !ok || typed.StatusCode() != http.StatusTooManyRequests {
+				t.Fatalf("resource limit must be retryable HTTP 429, got %v", chunk.Err)
+			}
+			if !strings.Contains(chunk.Err.Error(), "qoder_resource_limit") {
+				t.Fatal("resource limit lost its explicit safe category")
+			}
+			if _, ok := <-stream.Chunks; ok {
+				t.Fatal("resource-limited stream did not terminate")
+			}
+			if _, err := writer.Write([]byte("unexpected event")); err != io.ErrClosedPipe {
+				t.Fatal("resource-limited upstream body was not closed")
+			}
+			return
+		case <-deadline.C:
+			t.Fatal("RESOURCE_LIMIT frame was ignored while the upstream SSE connection remained open")
+		}
+	}
+}
+
+func TestQoderEnvelopeFailuresAreSafeAndBounded(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		status     int
+		body       any
+		wantStatus int
+		code       string
+		retry      time.Duration
+	}{
+		{"object resource", 403, map[string]any{"code": "10605", "message": map[string]any{"subCode": "RESOURCE_LIMIT", "retryAfterSeconds": 999999}}, 429, "qoder_resource_limit", 300 * time.Second},
+		{"string resource", 403, `{"code":"10605","message":"{\"subCode\":\"RESOURCE_LIMIT\",\"retryAfterSeconds\":-1}"}`, 429, "qoder_resource_limit", 30 * time.Second},
+		{"structured subcode", 403, map[string]any{"subCode": "RESOURCE_LIMIT", "retryAfterSeconds": 5}, 429, "qoder_resource_limit", 5 * time.Second},
+		{"authentication", 401, map[string]any{"message": "private-payload"}, 401, "qoder_authentication_failed", 0},
+		{"forbidden plain text", 403, map[string]any{"message": "private-payload RESOURCE_LIMIT"}, 403, "qoder_access_denied", 0},
+		{"server failure", 503, `{"message":"private-payload"}`, 503, "qoder_upstream_error", 0},
+		{"request failure", 422, map[string]any{"message": "private-payload"}, 422, "qoder_request_rejected", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			envelope, _ := json.Marshal(map[string]any{"statusCodeValue": tc.status, "body": tc.body})
+			stream := readAgentChatStream(context.Background(), &http.Response{Body: io.NopCloser(strings.NewReader("data: " + string(envelope) + "\n\n")), Header: http.Header{}}, "qoder")
+			chunk, ok := <-stream.Chunks
+			if !ok || chunk.Err == nil {
+				t.Fatal("error envelope became model output")
+			}
+			typed, ok := chunk.Err.(interface {
+				StatusCode() int
+				RetryAfter() *time.Duration
+			})
+			if !ok || typed.StatusCode() != tc.wantStatus {
+				t.Fatalf("wrong status: %v", chunk.Err)
+			}
+			if !strings.Contains(chunk.Err.Error(), tc.code) || strings.Contains(chunk.Err.Error(), "private-payload") {
+				t.Fatal("missing safe code or leaked message")
+			}
+			retry := typed.RetryAfter()
+			if tc.retry == 0 && retry != nil || tc.retry != 0 && (retry == nil || *retry != tc.retry) {
+				t.Fatal("wrong retry bound")
+			}
+			if _, ok := <-stream.Chunks; ok {
+				t.Fatal("error envelope did not terminate stream")
+			}
+		})
+	}
+}
+
+func TestQoderSuccessfulEnvelopeDoesNotClassifyOutputAsResourceLimit(t *testing.T) {
+	for _, wrapped := range []bool{false, true} {
+		body := `{"choices":[{"delta":{"content":"RESOURCE_LIMIT"},"finish_reason":"stop"}]}`
+		var value any = json.RawMessage(body)
+		if wrapped {
+			value = body
+		}
+		envelope, _ := json.Marshal(map[string]any{"statusCodeValue": 200, "body": value})
+		stream := readAgentChatStream(context.Background(), &http.Response{Body: io.NopCloser(strings.NewReader("data: " + string(envelope) + "\n\ndata: [DONE]\n\n")), Header: http.Header{}}, "qoder")
+		count := 0
+		for chunk := range stream.Chunks {
+			if chunk.Err != nil {
+				t.Fatal(chunk.Err)
+			}
+			count++
+		}
+		if count != 1 {
+			t.Fatalf("successful event lost: %d", count)
+		}
+	}
+}
+
 func TestQoderRejectsMissingAccountIdentity(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(http.StatusOK) }))
@@ -313,7 +427,7 @@ func TestQoderWireKeepsHeaderAndSelectedModelConsistent(t *testing.T) {
 			t.Run(string(format)+model, func(t *testing.T) {
 				key := "kmodel_latest"
 				if model == "Qwen3.8-Max" {
-					key = "qmodel_preview"
+					key = "qmodel_38max"
 				}
 				checked := false
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -453,5 +567,117 @@ func TestQoderPreHeaderEOFRetryIsBounded(t *testing.T) {
 	_, err := executor.ExecuteStream(context.Background(), auth, req, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAI, OriginalRequest: req.Payload})
 	if err == nil || attempts != 2 {
 		t.Fatalf("err=%v attempts=%d", err, attempts)
+	}
+}
+
+func TestQoderCapacityWait(t *testing.T) {
+	resource := func(delay time.Duration) error {
+		return statusErr{code: 429, msg: `{"error":{"code":"qoder_resource_limit"}}`, retryAfter: &delay}
+	}
+	cases := []struct {
+		name    string
+		failure error
+		output  bool
+		budget  time.Duration
+		want    int
+	}{
+		{"resource retries", resource(time.Millisecond), false, time.Second, 3},
+		{"generic 429", statusErr{code: 429, msg: `{"error":{"code":"qoder_rate_limited"}}`}, false, time.Second, 1},
+		{"quota", statusErr{code: 429, msg: `{"error":{"code":"quota_exceeded"}}`}, false, time.Second, 1},
+		{"retry after exceeds budget", resource(time.Second), false, time.Millisecond, 1},
+		{"never replay output", resource(time.Millisecond), true, time.Second, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			native := func(context.Context, *cliproxyauth.Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+				calls++
+				chunks := make(chan cliproxyexecutor.StreamChunk, 2)
+				if tc.output {
+					chunks <- cliproxyexecutor.StreamChunk{Payload: []byte("model event")}
+				}
+				chunks <- cliproxyexecutor.StreamChunk{Err: tc.failure}
+				close(chunks)
+				return &cliproxyexecutor.StreamResult{Chunks: chunks}, nil
+			}
+			stream, err := qoderWaitForCapacity(context.Background(), nil, cliproxyexecutor.Request{}, cliproxyexecutor.Options{}, native, tc.budget)
+			if tc.output {
+				if err != nil {
+					t.Fatal(err)
+				}
+				count := 0
+				for range stream.Chunks {
+					count++
+				}
+				if count != 2 {
+					t.Fatalf("got %d events", count)
+				}
+			} else if err == nil {
+				chunk := <-stream.Chunks
+				if chunk.Err == nil {
+					t.Fatal("expected error")
+				}
+			}
+			if calls != tc.want {
+				t.Fatalf("calls=%d want %d", calls, tc.want)
+			}
+		})
+	}
+	t.Run("cancel wait", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		native := func(context.Context, *cliproxyauth.Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+			cancel()
+			return nil, resource(time.Second)
+		}
+		_, err := qoderWaitForCapacity(ctx, nil, cliproxyexecutor.Request{}, cliproxyexecutor.Options{}, native, time.Minute)
+		if err != context.Canceled {
+			t.Fatalf("got %v", err)
+		}
+	})
+}
+
+func TestQoderCapacityWaitRecovers(t *testing.T) {
+	calls := 0
+	delay := time.Millisecond
+	native := func(context.Context, *cliproxyauth.Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+		calls++
+		chunks := make(chan cliproxyexecutor.StreamChunk, 1)
+		if calls == 1 {
+			chunks <- cliproxyexecutor.StreamChunk{Err: statusErr{code: 429, msg: `{"error":{"code":"qoder_resource_limit"}}`, retryAfter: &delay}}
+		} else {
+			chunks <- cliproxyexecutor.StreamChunk{Payload: []byte("recovered")}
+		}
+		close(chunks)
+		return &cliproxyexecutor.StreamResult{Chunks: chunks}, nil
+	}
+	started := time.Now()
+	stream, err := qoderWaitForCapacity(context.Background(), nil, cliproxyexecutor.Request{}, cliproxyexecutor.Options{}, native, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunk := <-stream.Chunks
+	if string(chunk.Payload) != "recovered" || calls != 2 || time.Since(started) < delay {
+		t.Fatalf("unexpected recovery calls=%d", calls)
+	}
+	for range stream.Chunks {
+	}
+}
+
+func TestQoderHTTPResourceLimit(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "120")
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprint(w, `{"code":"10605","subCode":"RESOURCE_LIMIT","retryAfterSeconds":1}`)
+	}))
+	defer server.Close()
+	executor := NewQoderExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{"chat_url": server.URL}, Metadata: map[string]any{"access_token": "synthetic", "uid": "fixture-user"}}
+	req := cliproxyexecutor.Request{Model: "kmodel_latest", Payload: []byte(`{"messages":[{"role":"user","content":"Hi"}]}`)}
+	_, err := executor.executeNativeStream(context.Background(), auth, req, cliproxyexecutor.Options{})
+	status, ok := err.(statusErr)
+	if !ok || status.code != 429 || !strings.Contains(status.msg, "qoder_capacity_wait_exhausted") || status.retryAfter == nil || *status.retryAfter != 120*time.Second || calls != 1 {
+		t.Fatalf("unexpected capacity result calls=%d", calls)
 	}
 }

@@ -43,11 +43,13 @@ it('preserves Codex local policy and active legacy profile through model switche
  const {paths,connections}=await setup();
  const original=`model = "old"
 profile = "work"
+model_auto_compact_token_limit_scope = "total"
 approval_policy = "untrusted"
 sandbox_mode = "read-only"
 [profiles.work]
 model = "profile-model"
 model_provider = "original"
+model_auto_compact_token_limit_scope = "total"
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 web_search = "live"
@@ -71,7 +73,7 @@ trust_level = "untrusted"
   expect(preview.routing).toMatchObject({profile:'work',model,model_provider:'token_flow',web_search:model==='codex/test'?'live':'disabled'});
   const record=await connections.apply({target:'codex',revision:preview.revision,replaceId:preview.replaceId,origin:'http://127.0.0.1:9527',model,sourceId:'s',keyId:randomUUID(),key:'fixture-key'});
   const after=parse(await readFile(paths.codex,'utf8'));
-  expect(after).toMatchObject({profile:'work',approval_policy:'untrusted',sandbox_mode:'read-only',profiles:{work:{model,model_provider:'token_flow',approval_policy:'on-request',sandbox_mode:'workspace-write',web_search:model==='codex/test'?'live':'disabled'},other:{model:'untouched',approval_policy:'never'}}});
+  expect(after).toMatchObject({profile:'work',model_auto_compact_token_limit_scope:'body_after_prefix',approval_policy:'untrusted',sandbox_mode:'read-only',profiles:{work:{model,model_provider:'token_flow',model_auto_compact_token_limit_scope:'body_after_prefix',approval_policy:'on-request',sandbox_mode:'workspace-write',web_search:model==='codex/test'?'live':'disabled'},other:{model:'untouched',approval_policy:'never'}}});
   for(const field of ['sandbox_workspace_write','shell_environment_policy','mcp_servers','projects'])expect(after[field]).toEqual(before[field]);
   expect((await connections.review(record.id)).checks.every(c=>c.ok)).toBe(true);
  }
@@ -110,6 +112,7 @@ it('configures supported Codex tools by source and restores search when switchin
   expect(parse(await readFile(paths.codex,'utf8'))).toMatchObject({web_search:expected,approval_policy:'on-request'});
   const manual=agentConfig('codex','http://127.0.0.1:9527',model);
   expect(manual.includes('web_search="disabled"')).toBe(expected==='disabled');
+  expect(manual).toContain('model_auto_compact_token_limit_scope="body_after_prefix"');
  }
  const record=(await connections.status())[0].connection!;await connections.restore(record.id);expect(await readFile(paths.codex,'utf8')).toBe(original);
 });
@@ -293,13 +296,13 @@ it('exports the selected Codex model to its picker and allows model-only edits b
  await connections.restore(next.id);
  expect(parse(await readFile(paths.codex,'utf8'))).toEqual({model:'original',model_catalog_json:'/fixture/original-models.json',model_reasoning_effort:'high'});
 });
-it('exports confirmed image support without granting it to unknown or text-only models',async()=>{
+it('allows image attachments without a per-model capability registry on forwarding transports',async()=>{
  const {paths,connections}=await setup();
- const ids=['workbuddy/deepseek-v4.1-flash','qoder/text-only','api/unknown'];
- await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:ids[0]!,sourceId:'a'.repeat(24),keyId:randomUUID(),key:'fixture-key',selections:ids.map(model=>({model,sourceId:'a'.repeat(24)})),modelImages:{[ids[0]!]:true,[ids[1]!]:false}});
+ const ids=['workbuddy/new-model','qoder/new-model',`api-${'a'.repeat(24)}/unknown`,'codex/new-model','cursor/text-adapter'];
+ await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:ids[0]!,sourceId:'a'.repeat(24),keyId:randomUUID(),key:'fixture-key',selections:ids.map(model=>({model,sourceId:'a'.repeat(24)}))});
  const config=parse(await readFile(paths.codex,'utf8'));
  const catalog=JSON.parse(await readFile(String(config.model_catalog_json),'utf8'));
- expect(catalog.models.map((m:any)=>m.input_modalities)).toEqual([['text','image'],['text'],['text']]);
+ expect(catalog.models.map((m:any)=>m.input_modalities)).toEqual([['text','image'],['text','image'],['text','image'],['text','image'],['text']]);
 });
 it('deletes stale records after reinstall without touching the new config, and keeps history selectable',async()=>{
  const {root,paths,connections}=await setup();await writeFile(paths.codex,'model = "original"\n');

@@ -11,7 +11,7 @@ import {GatewayContext} from '../packages/core/src/gateway-context.ts';
 import {CodexContext,codexContextScope} from '../packages/core/src/codex-context.ts';
 import {AgentConnections} from '../packages/core/src/agent-connections.ts';
 const root=await mkdtemp(join(await realpath(tmpdir()),'codex-continuation-'));
-const calls=[];let child;let responseNumber=0;let phase=0;let tools=0;let compactions=0;const upstream=[];
+const calls=[];let child;let responseNumber=0;let phase=0;let tools=0;let compactions=0;const upstream=[],compactionProgress=[];
 const context=await GatewayContext.open(root);
 const migration=new CodexContext(root,join(root,'config.toml'),context);
 const server=createServer(async(req,res)=>{
@@ -44,7 +44,7 @@ async function start(){
  child=spawn(process.argv[2]??'codex',['app-server','--listen','stdio://',...(process.argv.includes('--local-compaction')?[]:['-c','model_providers.token_flow.name="OpenAI"'])],{cwd:root,env:{PATH:process.env.PATH,HOME:root,CODEX_HOME:root},stdio:['pipe','pipe','pipe']});
  const proc=child;let buffer='',id=0,turnResolve;const pending=new Map();
  proc.stderr.on('data',chunk=>{if(process.env.DEBUG_FIXTURE)process.stderr.write(chunk);});
- proc.stdout.on('data',chunk=>{buffer+=chunk;let end;while((end=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,end);buffer=buffer.slice(end+1);let msg;try{msg=JSON.parse(line);}catch{continue;}if(pending.has(msg.id)){const wait=pending.get(msg.id);pending.delete(msg.id);msg.error?wait.reject(Error(JSON.stringify(msg.error))):wait.resolve(msg.result);}if(msg.method==='turn/completed')turnResolve?.(msg.params.turn);}});
+ proc.stdout.on('data',chunk=>{buffer+=chunk;let end;while((end=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,end);buffer=buffer.slice(end+1);let msg;try{msg=JSON.parse(line);}catch{continue;}if(pending.has(msg.id)){const wait=pending.get(msg.id);pending.delete(msg.id);msg.error?wait.reject(Error(JSON.stringify(msg.error))):wait.resolve(msg.result);}if(msg.method&&(/compact/i.test(msg.method)||/compact/i.test(msg.params?.item?.type??'')))compactionProgress.push({phase,method:msg.method,itemType:msg.params?.item?.type});if(msg.method==='turn/completed')turnResolve?.(msg.params.turn);}});
  const rpc=(method,params)=>new Promise((resolve,reject)=>{const key=++id;const timer=setTimeout(()=>reject(Error('RPC timeout: '+method)),30000);pending.set(key,{resolve:v=>{clearTimeout(timer);resolve(v)},reject:e=>{clearTimeout(timer);reject(e)}});proc.stdin.write(JSON.stringify({id:key,method,params})+'\n');});
  await rpc('initialize',{clientInfo:{name:'continuation_fixture',version:'1.0'}});proc.stdin.write(JSON.stringify({method:'initialized'})+'\n');
  return {rpc,turn:async(threadId,model,text)=>{let timer;const done=new Promise((resolve,reject)=>{turnResolve=resolve;timer=setTimeout(()=>reject(Error('Turn timeout')),45000)});try{await rpc('turn/start',{threadId,model,input:[{type:'text',text}]});assert.equal((await done).status,'completed');}finally{clearTimeout(timer);}},stop:()=>new Promise(r=>{proc.once('exit',r);proc.kill();})};
@@ -60,6 +60,9 @@ try{
  const record=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin,model:'qoder/kmodel_latest',sourceId:'a'.repeat(24),selections:[{model:'qoder/kmodel_latest',sourceId:'a'.repeat(24)},{model:'workbuddy/hy4-preview',sourceId:'b'.repeat(24)}],keyId:randomUUID(),key:'gateway-synthetic-key'});
  phase=1;tools=0;client=await start();await client.rpc('thread/resume',{threadId:thread,model:'qoder/kmodel_latest',...(process.argv.includes('--implicit-provider')?{}:{modelProvider:'token_flow'})});
  await client.turn(thread,'qoder/kmodel_latest','TURN_TWO_MARKER');
+ if(process.argv.includes('--repeat-gateway'))for(let round=1;round<=2;round++){
+  tools=0;await client.turn(thread,'qoder/kmodel_latest',`GATEWAY_REPEAT_${round}_MARKER: preserve API compatibility.`);
+ }
  phase=2;await client.turn(thread,'workbuddy/hy4-preview','TURN_THREE_MARKER');await client.stop();
  const migrated=await migration.prepareOfficial([],async()=>[]);if(!process.argv.includes('--local-compaction'))assert.ok(migrated.migrated>0);assert.equal((await migration.prepareOfficial([],async()=>[])).migrated,0);await connections.restore(record.id);phase=3;
  client=await start();await client.rpc('thread/resume',{threadId:thread,model:'native-fixture',...(process.argv.includes('--implicit-provider')?{}:{modelProvider:'original_fixture'})});
@@ -79,7 +82,18 @@ try{
  }
  assert.ok(upstream.some(c=>c.phase===1&&c.body.input.some(i=>i.type==='function_call_output')),'tool results lost');
  assert.ok(JSON.stringify(upstream.filter(c=>c.phase===3)).includes(process.argv.includes('--local-compaction')?'REPLY_1_MARKER':'CHECKPOINT'),'gateway summary lost on native resume');
- if(process.argv.includes('--long-recovery'))assert.ok(upstream.filter(c=>c.phase===1&&c.body.instructions?.startsWith('Summarize the supplied')).length>2,'long history did not exercise batched migration');
- console.log(JSON.stringify({passed:true,scope:'real installed Codex with synthetic providers; no live official login',localCompaction:process.argv.includes('--local-compaction'),longRecovery:process.argv.includes('--long-recovery'),originalCompactions:compactions,migrated:migrated.migrated,requests:calls.length,toolHistoryPreserved:true,summaryResumed:true,foreignReasoningRepaired:true}));
+ const migrationSummaries=upstream.filter(c=>c.phase===1&&c.body.instructions?.startsWith('Summarize the supplied'));
+ if(process.argv.includes('--repeat-gateway')){
+  assert.ok(migrationSummaries.length>=3,'repeated gateway turns did not compact again');
+  for(const round of [1,2])assert.ok(JSON.stringify(upstream.filter(c=>c.phase===3)).includes(`GATEWAY_REPEAT_${round}_MARKER`),'repeated gateway user constraint lost on official resume');
+  const progress=compactionProgress.filter(item=>item.phase===1&&item.itemType==='contextCompaction');
+  const started=progress.filter(item=>item.method==='item/started').length,completed=progress.filter(item=>item.method==='item/completed').length;
+  assert.ok(started>=2,'Codex did not publish repeated compaction start events');assert.equal(completed,started,'Codex did not complete every compaction lifecycle');
+ }
+ if(process.argv.includes('--long-recovery')){
+  assert.ok(migrationSummaries.length>0,'long history was not summarized');
+  for(const call of migrationSummaries)assert.ok(Buffer.byteLength(call.body.input[0].content)<50*1024,'migration summary exceeded bounded chunk size');
+ }
+ console.log(JSON.stringify({passed:true,scope:'real installed Codex with synthetic providers; no live official login',localCompaction:process.argv.includes('--local-compaction'),longRecovery:process.argv.includes('--long-recovery'),repeatedGateway:process.argv.includes('--repeat-gateway'),originalCompactions:compactions,migrationSummaryCalls:migrationSummaries.length,migrated:migrated.migrated,requests:calls.length,toolHistoryPreserved:true,summaryResumed:true,foreignReasoningRepaired:true,compactionProgress}));
 
 }finally{child?.kill();server.closeAllConnections();await new Promise(r=>server.close(r));if(process.env.KEEP_FIXTURE)console.log(root);else await rm(root,{recursive:true,force:true});}

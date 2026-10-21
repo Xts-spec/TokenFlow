@@ -71,6 +71,21 @@ func TestQoderLongConversationKeepsCallerInstructionsAndToolPairs(t *testing.T) 
 	}
 }
 
+func TestQoderQwen38MaxPreservesOfficialModelKey(t *testing.T) {
+	for _, requested := range []string{"qmodel_38max", "qoder/qmodel_38max", "qwen3.8-max", "qwen-3.8-max", "qwen3.8_max", "qoder/Qwen3.8-Max"} {
+		t.Run(requested, func(t *testing.T) {
+			key, reasoning := NormalizeQoderModel(requested)
+			if key != "qmodel_38max" || !reasoning {
+				t.Fatalf("NormalizeQoderModel(%q) = (%q, %v), want (qmodel_38max, true)", requested, key, reasoning)
+			}
+		})
+	}
+	key, reasoning := NormalizeQoderModel("qoder/qmodel_preview")
+	if key != "qmodel_preview" || !reasoning {
+		t.Fatalf("preview model changed: (%q, %v)", key, reasoning)
+	}
+}
+
 func TestQoderSelectedModelReachesEveryNativeModelField(t *testing.T) {
 	for _, requested := range []string{"qoder/Kimi-K3", "qoder/Qwen3.8-Max", "qoder/Auto", "qoder/future_official_key"} {
 		t.Run(requested, func(t *testing.T) {

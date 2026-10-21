@@ -8,6 +8,7 @@ import {ProviderIcon} from './ProviderIcon';
 import {QuotaRing} from './QuotaRing';
 import {FlowDialog} from './FlowDialog';
 import {Icon} from './Icons';
+import {sourceSelectionState,sourceSelectionNotice} from './source-options';
 
 const same=(a:Choice,b:Choice)=>a.sourceId===b.sourceId&&a.model===b.model;
 export function AgentModelPicker({open,title,local,current,selected,onConfirm,onClose,embedded=false,busy=false,onSelectionChange}:{embedded?:boolean;busy?:boolean;onSelectionChange?:(choices:Choice[])=>void;open:boolean;title:string;local:LocalAgentSnapshot;current?:Choice;selected:Choice[];onConfirm:(choices:Choice[])=>void;onClose:()=>void}){
@@ -26,9 +27,10 @@ export function AgentModelPicker({open,title,local,current,selected,onConfirm,on
  const key=`${active?.id??''}\n${q}`;
  useLayoutEffect(()=>{if(list.current)list.current.scrollTop=positions.current.get(key)??0;},[key]);
  const chooseSource=(id:string)=>{if(list.current)positions.current.set(key,list.current.scrollTop);setSource(id);};
- const available=(choice:Choice)=>all.some(group=>group.id===choice.sourceId&&group.models.some(model=>model.id===choice.model));
- const unavailableCount=draft.filter(choice=>!available(choice)).length;
- const removeUnavailable=()=>updateDraft(items=>items.filter(available));
+ const unavailable=(choice:Choice)=>sourceSelectionState(local,choice)==='unavailable';
+ const unavailableCount=draft.filter(unavailable).length;
+ const removeUnavailable=()=>updateDraft(items=>items.filter(choice=>!unavailable(choice)));
+ const notice=sourceSelectionNotice(local,draft);
  const toggle=(choice:Choice)=>updateDraft(items=>items.some(item=>same(item,choice))?items.filter(item=>!same(item,choice)):[...items,choice]);
  const chosen=orderModels(draft,item=>modelLabel(local,item.model),displayOrder,ranks);
  const chosenIds=chosen.map(item=>item.model),visibleIds=active?.models.map(model=>model.id)??[];
@@ -40,10 +42,11 @@ export function AgentModelPicker({open,title,local,current,selected,onConfirm,on
   <label className="tfSearch tfAgentPickerSearch"><Icon name="search" size={16}/><input ref={search} type="search" placeholder="搜索模型、来源或账号" aria-label="搜索厂商、账号或模型" value={query} onChange={event=>{if(list.current)positions.current.set(key,list.current.scrollTop);setQuery(event.target.value);}}/></label>
   <section className="tfAgentPicked" aria-label="已选模型">
    <header><span>已选模型 <b aria-live="polite">{draft.length}</b></span><div className="tfRow">{embedded&&unavailableCount>0&&<button type="button" className="textButton" onClick={removeUnavailable}>移除不可用模型（{unavailableCount}）</button>}<button type="button" className="textButton" disabled={!draft.length} onClick={()=>updateDraft([])}>清空选择</button></div></header>
-   <ul>{chosen.map(choice=>{const group=all.find(group=>group.id===choice.sourceId);const label=modelLabel(local,choice.model);const ok=available(choice);return <li className={`tfAgentPickedTag tfDragRow ${ok?'':'unavailable'}`} key={`${choice.sourceId}/${choice.model}`} {...dropOrder('models',choice.model,chosenIds,move)} title={`${label} · ${group?.accountLabel??'来源不可用'}`}>
+   <ul>{chosen.map(choice=>{const group=all.find(group=>group.id===choice.sourceId);const label=modelLabel(local,choice.model);const invalid=unavailable(choice);return <li className={`tfAgentPickedTag tfDragRow ${invalid?'unavailable':''}`} key={`${choice.sourceId}/${choice.model}`} {...dropOrder('models',choice.model,chosenIds,move)} title={`${label} · ${group?.accountLabel??(invalid?'当前来源未提供此模型':'来源信息待加载')}`}>
     <DragHandle kind="models" id={choice.model} label={label} items={chosenIds} move={move}/><ProviderIcon provider={modelManufacturer(choice.model,local)} size={24}/><strong>{label}</strong><button type="button" className="iconButton" aria-label={`移除 ${label}`} onClick={()=>toggle(choice)}><Icon name="close" size={12}/></button>
    </li>;})}</ul>{!chosen.length&&<p>从下方选择模型</p>}
   </section>
+  {notice&&<p className="tfHint" role="status">{notice}</p>}
   <div className="tfAgentPickerBrowser" onWheel={releaseSearch}>
    <div className="tfAgentPickerSources" role="tablist" aria-label="模型来源" aria-orientation="vertical">
     <span className="tfAgentPickerCaption">来源与账号</span>

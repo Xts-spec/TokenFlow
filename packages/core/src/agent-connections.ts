@@ -332,7 +332,10 @@ export function connectedConfig(target:Target,original:string|null,origin:string
   const doc=original===null?{}:parse(original);
   // Full original bytes remain in the backup; TOML serialization preserves semantic settings.
   const providers=doc.model_providers===undefined?{}:object(doc.model_providers);
-  const routing={model,model_provider:'token_flow',...(catalogPath?{model_catalog_json:catalogPath}:{}),...(chosen.some(model=>a2aCapabilities(model)?.serverTools===false)?{web_search:'disabled'}:{})};
+  // Upstream usage includes the caller's fixed instructions and tool schemas.
+  // Compact growth after the carried prefix, otherwise that fixed cost alone
+  // can exceed the catalog threshold again after every small tool result.
+  const routing={model,model_provider:'token_flow',model_auto_compact_token_limit_scope:'body_after_prefix',...(catalogPath?{model_catalog_json:catalogPath}:{}),...(chosen.some(model=>a2aCapabilities(model)?.serverTools===false)?{web_search:'disabled'}:{})};
   const next:{[key:string]:any}={...doc,...routing,model_providers:{...providers,token_flow:{name:'TokenFlow',base_url:`${url.origin}/v1`,wire_api:'responses',experimental_bearer_token:key,requires_openai_auth:false,supports_websockets:false}}};
   // Legacy clients overlay the selected profile. Keep its policy and selection;
   // update only model routing. Newer CLI-selected profile files stay user-owned.
@@ -474,7 +477,7 @@ export class AgentConnections {
     }catch{checks.push({name:'配置格式可解析',ok:false});}
     return {id,target:record.target,model:record.model,checks,liveCallVerified:false,...(record.target==='claude'?{compatibility:{autoMode:'unverified' as const,note:'主模型、辅助模型配置一致不代表 Auto Mode 审批可用。审批分类器与 App 的维修审批模型相互独立；Messages 文本和工具检测也不能验证分类器。'}}:{}),note:record.target==='pi'?'在官方 Pi 的 /model 菜单选择 token-flow 模型。':record.target==='deepseek'?'重新打开 DeepSeek Harness 官方桌面应用，在模型菜单选择 token-flow 模型；已有对话从历史继续。':record.target==='qoder'?`重启 Qoder 独立应用，在模型菜单选择 ${record.model}。原登录与内置模型保留；不适用于 Qoder IDE。`:record.target==='workbuddy'?`在 WorkBuddy 新建任务的输入框下方打开模型菜单，选择 ${record.model}。若没有显示，重启 WorkBuddy 后再查看。配置检查不代表已在客户端选用。`:record.target==='workbuddy-ai'?`在 WorkBuddyAI 新建任务的输入框下方打开模型菜单，选择 ${record.model}。若没有显示，重启 WorkBuddyAI 后再查看。配置检查不代表已在客户端选用。官方登录保持不变。`:'重启 Agent 后加载配置；项目级设置或已有终端环境变量仍可能覆盖用户配置。'};
   }
-  async apply(input:{target:Target;revision:string;origin:string;model:string;sourceId:string;keyId:string;key:string;allowRunning?:boolean;replaceId?:string;rewrite?:boolean;selections?:ModelSelection[];fastModel?:string;modelLabels?:{[id:string]:string};modelImages?:{[id:string]:boolean}}){
+  async apply(input:{target:Target;revision:string;origin:string;model:string;sourceId:string;keyId:string;key:string;allowRunning?:boolean;replaceId?:string;rewrite?:boolean;selections?:ModelSelection[];fastModel?:string;modelLabels?:{[id:string]:string}}){
     return this.run(input.target,async()=>{
       await this.requireEditableProfile(input.target);
       if(!input.allowRunning)await this.idle(input.target);
@@ -487,7 +490,7 @@ export class AgentConnections {
       if(input.selections){modelSelectionsSchema.parse(input.selections);if(!input.selections.some(item=>item.model===input.model&&item.sourceId===input.sourceId))throw conflict('默认模型必须在已选模型中');}
       if(input.fastModel&&!(input.selections??[{model:input.model,sourceId:input.sourceId}]).some(item=>item.model===input.fastModel))throw conflict('快速模型必须在已选模型中');
       // Include display metadata so a renamed menu does not reuse the legacy cached path.
-      const catalog=input.target==='codex'?codexModelCatalog(selectedModels??input.model,input.modelLabels,input.modelImages):undefined;
+      const catalog=input.target==='codex'?codexModelCatalog(selectedModels??input.model,input.modelLabels):undefined;
       const catalogPath=catalog?this.catalogPath(JSON.stringify(catalog)):undefined;
       let after:string;try{after=connectedConfig(input.target,original,input.origin,input.model,input.key,catalogPath,selectedModels,input.modelLabels,input.fastModel);}catch{throw conflict('配置格式无法安全解析，未修改原文件。');}
       if(catalogPath){

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
@@ -408,6 +409,52 @@ func executeAgentResponseStream(ctx context.Context, auth *cliproxyauth.Auth, re
 	return &cliproxyexecutor.StreamResult{Headers: stream.Headers, Chunks: out}, nil
 }
 
+// Qoder reports application failures inside HTTP 200 SSE envelopes. Only
+// structured error envelopes count; model output and raw messages are untrusted.
+func qoderEnvelopeError(envelope gjson.Result) error {
+	status := envelope.Get("statusCodeValue").Int()
+	if status < 400 {
+		return nil
+	}
+	body := envelope.Get("body")
+	if body.Type == gjson.String {
+		body = gjson.Parse(body.String())
+	}
+	details := body.Get("message")
+	if details.Type == gjson.String {
+		details = gjson.Parse(details.String())
+	}
+	code, message, kind := "qoder_upstream_error", "The source reported an upstream error.", "server_error"
+	var retry *time.Duration
+	if body.Get("code").String() == "10605" || body.Get("subCode").String() == "RESOURCE_LIMIT" || details.Get("subCode").String() == "RESOURCE_LIMIT" {
+		status, code, message, kind = 429, "qoder_resource_limit", "The source is temporarily resource limited.", "rate_limit_error"
+		seconds := details.Get("retryAfterSeconds")
+		if !seconds.Exists() {
+			seconds = body.Get("retryAfterSeconds")
+		}
+		delay := seconds.Int()
+		if delay < 1 {
+			delay = 30
+		}
+		if delay > 300 {
+			delay = 300
+		}
+		duration := time.Duration(delay) * time.Second
+		retry = &duration
+	} else if status == 401 {
+		code, message, kind = "qoder_authentication_failed", "The source rejected authentication.", "authentication_error"
+	} else if status == 403 {
+		code, message, kind = "qoder_access_denied", "The source denied access.", "permission_error"
+	} else if status == 429 {
+		code, message, kind = "qoder_rate_limited", "The source is temporarily rate limited.", "rate_limit_error"
+	} else if status < 500 {
+		code, message, kind = "qoder_request_rejected", "The source rejected the request.", "invalid_request_error"
+	} else if status > 599 {
+		status = 502
+	}
+	return statusErr{code: int(status), msg: fmt.Sprintf(`{"error":{"type":%q,"code":%q,"message":%q}}`, kind, code, message), retryAfter: retry}
+}
+
 func readAgentChatStream(ctx context.Context, resp *http.Response, provider string) *cliproxyexecutor.StreamResult {
 	chunks := make(chan cliproxyexecutor.StreamChunk, 64)
 	go func() {
@@ -453,6 +500,12 @@ func readAgentChatStream(ctx context.Context, resp *http.Response, provider stri
 				return
 			}
 			envelope := gjson.Parse(data)
+			if provider == "qoder" {
+				if err := qoderEnvelopeError(envelope); err != nil {
+					send(cliproxyexecutor.StreamChunk{Err: err})
+					return
+				}
+			}
 			if envelope.Get("error").Exists() {
 				fail("upstream reported an error")
 				return

@@ -24,7 +24,7 @@ const json=(method:string,body:unknown)=>({method,headers:{'content-type':'appli
 export function connectivityResult(passed:boolean,message:string){
  const state=passed?'ok':message.includes('有响应')?'weak':'fail';
  const phrase=state==='ok'?'已连通':state==='weak'?'有响应':'未连通';
- const hint=state==='ok'?'文本请求有返回':state==='weak'?'接口有回应，文本不完整':'这次没有连通';
+ const hint=state==='ok'?'接口可用':state==='weak'?'接口已响应，返回尚不完整':/密钥|API Key|权限/.test(message)?'检查密钥或模型权限':/限流|429/.test(message)?'请求较多，稍后再试':/超时|无法连接/.test(message)?'检查网络或接口地址':message?'检查接口地址和模型设置':'这次没有连通';
  return {state,phrase,hint} as const;
 }
 
@@ -42,7 +42,7 @@ function ApiSourceCard({local,source,usage,disabled,editing,notify,onEdit,onTogg
  const today=totalsOf(todayRows);
  const [copied,setCopied]=useState('');
  const [flipped,setFlipped]=useState(false),[secret,setSecret]=useState(''),[revealing,setRevealing]=useState(false);
- const [probes,setProbes]=useState<Record<string,{state:'running'|'ok'|'weak'|'fail';phrase?:string;hint?:string}>>({});
+ const [probes,setProbes]=useState<Record<string,{state:'running'|'ok'|'weak'|'fail';phrase?:string;hint?:string}>>(()=>Object.fromEntries(Object.entries(source.checks??{}).map(([model,check])=>[model,connectivityResult(check.status==='passed',check.message)])));
  const [probing,setProbing]=useState(false);const probeVersion=useRef(0);
  const modelsSection=useRef<HTMLElement>(null),jumpToModels=useRef(false);
  const revealVersion=useRef(0);const flipButton=useRef<HTMLButtonElement>(null),returnButton=useRef<HTMLButtonElement>(null),didFlip=useRef(false);

@@ -6,8 +6,12 @@ export type CursorToolCall={id:string;name:string;arguments:string;custom?:boole
 const object=z.record(z.unknown());
 const textBlock=z.object({type:z.enum(['text','input_text','output_text']),text:z.string()}).passthrough();
 const toolUse=z.object({type:z.literal('tool_use'),id:z.string(),name:z.string(),input:object}).passthrough();
-const toolResult=z.object({type:z.literal('tool_result'),tool_use_id:z.string(),content:z.union([z.string(),z.array(textBlock)]).optional(),is_error:z.boolean().optional()}).passthrough();
-const content=z.union([z.string(),z.array(z.union([textBlock,toolUse,toolResult]))]);
+const toolReference=z.object({type:z.literal('tool_reference'),tool_name:z.string()});
+const toolResult=z.object({type:z.literal('tool_result'),tool_use_id:z.string(),content:z.union([z.string(),z.array(z.union([textBlock,toolReference]))]).optional(),is_error:z.boolean().optional()}).passthrough();
+const thinking=z.union([z.object({type:z.literal('thinking'),thinking:z.string(),signature:z.string().optional()}),z.object({type:z.literal('redacted_thinking'),data:z.string()})]);
+// Thinking belongs to the previous provider's signed internal state. Keep its
+// adjacent visible text and tool calls, but never replay that state to an SDK.
+const content=z.union([z.string(),z.array(z.union([textBlock,toolUse,toolResult,thinking])).transform(blocks=>blocks.filter(block=>block.type!=='thinking'&&block.type!=='redacted_thinking'))]);
 const chatCall=z.object({id:z.string(),type:z.literal('function'),function:z.object({name:z.string(),arguments:z.string()})});
 const message=z.object({type:z.literal('message').optional(),role:z.enum(['system','developer','user','assistant','tool']),content:content.nullish(),tool_calls:z.array(chatCall).optional(),tool_call_id:z.string().optional()}).passthrough();
 const item=z.union([message,z.object({type:z.literal('function_call'),call_id:z.string(),name:z.string(),arguments:z.string()}).passthrough(),z.object({type:z.literal('function_call_output'),call_id:z.string(),output:content}).passthrough(),z.object({type:z.literal('custom_tool_call'),call_id:z.string(),name:z.string(),input:z.string()}).passthrough(),z.object({type:z.literal('custom_tool_call_output'),call_id:z.string(),output:content}).passthrough(),z.object({type:z.literal('reasoning'),summary:z.array(textBlock).optional()}).passthrough()]);
@@ -26,6 +30,9 @@ const request=z.object({
  text:z.object({format:z.object({type:z.literal('text')}).optional(),verbosity:z.string().optional()}).optional(),response_format:z.object({type:z.literal('text')}).optional(),
  truncation:z.enum(['auto','disabled']).optional(),service_tier:z.string().optional(),
 }).strict();
+export function cursorInputFields(error:unknown){
+ return error instanceof z.ZodError?[...new Set(error.issues.map(issue=>issue.path.join('.')).filter(path=>/^[a-zA-Z][a-zA-Z0-9_.]{0,100}$/.test(path)))].slice(0,5):[];
+}
 export function parseCursorInput(path:string,body:unknown){
  if(!['responses','chat/completions','messages'].includes(path))throw new Error('Cursor 不支持此接口。');
  const value=request.parse(body);const history=path==='responses'?value.input:value.messages;

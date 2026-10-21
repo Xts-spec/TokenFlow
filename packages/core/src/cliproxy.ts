@@ -1,3 +1,4 @@
+import {retryOfficialRead,OfficialReadTransportError,refreshNetworkHint} from './official-refresh.js';
 import {CredentialHistory} from './credential-history.js';
 import {credentialIdentity,credentialFingerprint,compareCredentials,credentialPreference,credentialSubject,credentialEmail} from './credential-identity.js';
 import {desktopCredentialSchema,desktopPoolProvider,workbuddyLoginDomain,workbuddyLoginIssue,workbuddyLoginTarget,type DesktopProvider} from './desktop-accounts.js';
@@ -21,6 +22,7 @@ import { safeEnvironment } from './process-environment.js';
 import {createNetworkProxy,type NetworkSnapshot} from './network-proxy.js';
 import {checkNetwork,type NetworkCheckReport} from './network-check.js';
 import {safeFailure} from './login/diagnostics.js';
+import {readUpstreamError} from './upstream-errors.js';
 import { LoginController, loginProviderCatalog, isLoginProvider, routeModelToProvider, type LoginOptions, type LoginProviderId } from './login/index.js';
 import { quotaProviders, QuotaHTTPError, type AccountQuota, type QuotaAccount, type QuotaRequest, type QuotaResponse } from './quota/index.js';
 
@@ -48,8 +50,8 @@ export type LocalAccount = {id: string; provider: string; label: string; nativeC
 function modelImageCapabilities(model:z.infer<typeof modelSchema>,provider:string){
  const modalities=model.supportedInputModalities;
  if(!modalities?.length)return {};
- // These adapters currently drop image payloads, even for a multimodal base model.
- return {capabilities:{text:true,tools:true,images:!['qoder','cursor'].includes(provider)&&modalities.some(value=>value.toLowerCase()==='image')}};
+ // Preserve the upstream declaration; Qoder forwards images in message content.
+ return {capabilities:{text:true,tools:true,images:provider!=='cursor'&&modalities.some(value=>value.toLowerCase()==='image')}};
 }
 export type LocalModel = {id: string; displayName?: string; provider?: LoginProviderId | 'cursor' | 'api';textOnly?:boolean;capabilities?:{text:boolean;tools:boolean;images:boolean}};
 export type CLIProxyOptions = LoginOptions & {outboundProxyURL?:string;networkSnapshot?:()=>NetworkSnapshot;secrets?:{get:(name:string)=>Promise<string>;set:(name:string,value:string)=>Promise<void>};apiConfig?:()=>string;apiModelIDs?:()=>string[]};
@@ -177,14 +179,27 @@ export class CLIProxyManager {
     const response = await fetch(`http://127.0.0.1:${this.port}${management ? '/v0/management' : '/v1'}${path}`, {
       method, headers: {Authorization: `Bearer ${management ? this.managementKey : this.key}`, ...(body === undefined ? {} : {'Content-Type': 'application/json'})},
       body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), this.requests.signal]), redirect: 'error',
-    }).catch(() => {throw path==='/api-call'?new QuotaTransportError('额度查询连接失败或超时。'):new Error('无法连接 Local Agent，请检查服务状态后重试。');});
+    }).catch(error => {
+      if(path==='/api-call')throw new QuotaTransportError('额度查询连接失败或超时。');
+      if(path.startsWith('/auth-files/models?'))throw new OfficialReadTransportError('模型目录连接失败或超时。');
+      const failure=safeFailure(error);
+      if(path.includes('-auth-url')&&failure.code==='timeout')throw new Error('等待本机网关生成授权链接超时；网关可能仍在等待厂商服务。请检查网络与代理后重试，此错误不代表本机网关已停止。');
+      throw new Error(`无法完成本机网关请求：${failure.reason}。请检查服务状态后重试。`);
+    });
     if (!response.ok) {
+      if(path.includes('-auth-url')){
+        const body=await readUpstreamError(response);let message='';
+        try{const parsed=JSON.parse(body);message=typeof parsed.error==='string'?parsed.error:typeof parsed.error?.message==='string'?parsed.error.message:'';}catch{/* Only classify recognized error fields. */}
+        const failure=safeFailure(message);
+        throw new Error(`本机网关已响应，但生成授权链接失败（HTTP ${response.status}）：${failure.reason}。请检查对应厂商的网络与代理连接后重试。`);
+      }
       await response.body?.cancel();
+      if(path.startsWith('/auth-files/models?')&&transientQuotaStatus(response.status))throw new OfficialReadTransportError(`模型目录连接失败（HTTP ${response.status}）。`);
       if(path==='/api-call'&&transientQuotaStatus(response.status))throw new QuotaTransportError(`额度上游连接失败（HTTP ${response.status}），网关已响应。`);
       if(path==='/api-call')throw new Error(response.status>=500?`额度上游连接失败（HTTP ${response.status}），网关已响应。请稍后重试或检查网络与代理；不代表账号授权丢失。`:`额度查询网关请求失败（HTTP ${response.status}），请刷新网关状态后重试。`);
       throw new Error(`Local Agent 接口请求失败（HTTP ${response.status}）。请检查网关状态后重试。`);
     }
-    return response.json().catch(error => {if(path==='/api-call'&&!(error instanceof SyntaxError))throw new QuotaTransportError('额度查询连接中断或超时。');throw new Error('Local Agent 返回了无效响应，请重启服务后重试。');});
+    return response.json().catch(error => {if(path.startsWith('/auth-files/models?')&&!(error instanceof SyntaxError))throw new OfficialReadTransportError('模型目录连接中断或超时。');if(path==='/api-call'&&!(error instanceof SyntaxError))throw new QuotaTransportError('额度查询连接中断或超时。');throw new Error('Local Agent 返回了无效响应，请重启服务后重试。');});
   }
   start(): Promise<LocalAgentSnapshot> {
     if (this.startTask) return this.startTask;
@@ -372,10 +387,12 @@ export class CLIProxyManager {
       await Promise.all(accounts.filter(a => !a.disabled && isLoginProvider(a.provider)&&(!providerScope||a.provider===providerScope)).map(async account => {
         const provider = account.provider as LoginProviderId;
         try {
-          const res = z.object({models: z.array(modelSchema),catalog:z.object({status:z.enum(['live','stale','unavailable','unsupported']),verifiedAt:z.string().optional(),reason:z.string().optional()}).nullish()}).parse(await this.request(`/auth-files/models?name=${encodeURIComponent(names.get(account.id)!)}&refresh=${providerScope?'true':'cached'}`,'GET',undefined,true,10000));
+          // Sidecar catalog states do not expose upstream HTTP status. Retry opaque
+          // lookup failures twice as requested, but never unsupported catalogs.
+          const res = await retryOfficialRead(async attempt=>z.object({models: z.array(modelSchema),catalog:z.object({status:z.enum(['live','stale','unavailable','unsupported']),verifiedAt:z.string().optional(),reason:z.string().optional()}).nullish()}).parse(await this.request(`/auth-files/models?name=${encodeURIComponent(names.get(account.id)!)}&refresh=${providerScope||attempt>1?'true':'cached'}`,'GET',undefined,true,10000)),{signal:this.requests.signal,retryResult:result=>result.catalog?.status==='stale'||result.catalog?.status==='unavailable',onRetry:attempt=>this.log(`${provider} 模型目录暂时不可用，自动尝试 ${attempt}/3。`)});
           if(res.catalog?.status==='live'&&!res.models.length)account.modelError='来源返回的当前可用模型列表为空。';
-          if(res.catalog?.status==='stale')account.modelError='官方目录暂时刷新失败，使用最近 15 分钟内确认的列表，稍后自动重试。';
-          if(res.catalog?.status==='unavailable')account.modelError='尚未获取到官方模型目录，已隐藏未经验证的旧型号。请刷新或检查来源授权。';
+          if(res.catalog?.status==='stale')account.modelError='官方目录暂时刷新失败，使用最近 15 分钟内确认的列表。可以切换网络后刷新试试。';
+          if(res.catalog?.status==='unavailable')account.modelError='尚未获取到官方模型目录，已隐藏未经验证的旧型号。请检查来源授权，也可以切换网络后刷新试试。';
           if(res.catalog?.status==='unsupported')account.modelError='该来源暂未提供可验证的账号模型目录，已隐藏内置旧型号。';
           if(res.catalog&&['unavailable','unsupported'].includes(res.catalog.status))res.models=[];
           discoveredAccounts.add(account.id);
@@ -388,7 +405,7 @@ export class CLIProxyManager {
             catalog.set(id, {id, provider, ...(model.display_name?.trim()?{displayName:model.display_name.trim()}: {}),...modelImageCapabilities(model,provider)});
             (aliases[provider] ??= []).push({name: baseId, alias: id, fork: true});
           }
-        } catch {account.models=[];account.modelError='模型目录刷新未完成，已隐藏未经验证的型号，稍后自动重试。';discoveredAccounts.add(account.id);}
+        } catch {account.models=[];account.modelError='模型目录刷新未完成，已隐藏未经验证的型号。可以切换网络后刷新试试。';discoveredAccounts.add(account.id);}
       }));
 
       // 2. 结合网关实时已注册的 /v1/models，为已启用提供商补充可用模型
@@ -638,7 +655,7 @@ export class CLIProxyManager {
         if(!this.accounts.some(a=>a.id===account.id&&!a.disabled))throw new Error('账号已停用或移除，已停止额度查询。');
         return apiCallSchema.transform(r => ({statusCode: r.status_code, header: r.header, body: r.body}))
           .parse(await this.request('/api-call', 'POST', {auth_index: authIndex, method: request.method, url: request.url, header: request.header, data: request.data ?? ''}, true, 45000));
-      },signal,attempt=>this.log(`${provider} 额度连接暂时失败，自动尝试 ${attempt}/5。`));
+      },signal,attempt=>this.log(`${provider} 额度连接暂时失败，自动尝试 ${attempt}/3。`));
       const observedAt = new Date().toISOString();
       try {
         const report = await quotaProvider.fetch(call, info);
@@ -658,7 +675,7 @@ export class CLIProxyManager {
         if (signal.aborted||!this.accounts.some(a=>a.id===account.id&&!a.disabled)||!this.names.has(account.id)) return;
         const previous=this.quotas[account.id];
         const lastSuccessfulAt=previous?.status==='ok'?previous.observedAt:previous?.lastSuccessfulAt;
-        this.quotas[account.id] = {accountId: account.id, provider, status: 'error', observedAt, windows: lastSuccessfulAt?previous.windows:[], ...(lastSuccessfulAt?{lastSuccessfulAt,plan:previous.plan}:{}), error: message.slice(0, 300)};
+        this.quotas[account.id] = {accountId: account.id, provider, status: 'error', observedAt, windows: lastSuccessfulAt?previous.windows:[], ...(lastSuccessfulAt?{lastSuccessfulAt,plan:previous.plan}:{}), error: `${message.slice(0, 260)}${message.includes(refreshNetworkHint)?'':` ${refreshNetworkHint}`}`};
       }
     }));
     if(providerScope==='cursor')await this.cursor.refresh();

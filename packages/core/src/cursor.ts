@@ -1,3 +1,6 @@
+import {upstreamError} from './upstream-errors.js';
+import {safeFailure} from './login/diagnostics.js';
+import {retryOfficialRead,OfficialReadTransportError,refreshNetworkHint} from './official-refresh.js';
 import {CredentialHistory} from './credential-history.js';
 import {credentialEmail,credentialFingerprint,compareCredentials,credentialPreference} from './credential-identity.js';
 import { createHash,randomUUID } from 'node:crypto';
@@ -13,7 +16,7 @@ import {localCursorSession} from './cursor-local.js';
 import {rememberCursorGatewayConversation} from './cursor-conversations.js';
 import type {CursorUsageReader} from './cursor-native-usage.js';
 
-import {parseCursorInput,cursorResponse,type CursorToolCall} from './cursor-protocol.js';
+import {parseCursorInput,cursorResponse,cursorInputFields,type CursorToolCall} from './cursor-protocol.js';
 export {parseCursorInput,cursorResponse} from './cursor-protocol.js';
 
 const credentialSchema=z.object({apiKey:z.string().min(1),email:z.string().optional(),apiKeyExpiresAtMs:z.number().optional(),authorizedAt:z.number().optional(),disabled:z.boolean().default(false)});
@@ -21,14 +24,14 @@ type CursorLogin=Omit<LoginSession,'provider'>&{provider:'cursor'};
 type Credential=z.infer<typeof credentialSchema>;
 type Secrets={get:(name:string)=>Promise<string>;set:(name:string,value:string)=>Promise<void>};
 const failure=(message:string,statusCode=400)=>Object.assign(new Error(message),{statusCode});
-const errorResponse=(message:string,status=400)=>Response.json({error:{message,type:'cursor_error'}},{status});
+const errorResponse=(message:string,status=400,code?:string)=>Response.json({error:{message,type:'cursor_error',...(code?{code}:{})}},{status});
 export const cursorCatalog={id:'cursor' as const,label:'Cursor',flow:'device' as const,hint:'官方 SDK 授权 · 支持文本、客户端工具与官方用量查询'};
 
 // Only client-declared tools are exposed. No local filesystem or shell tools.
 class CursorAccount {
  private credential?:Credential;private loaded=false;private models:SDKModel[]=[];private login?:CursorLogin;
  private loginAbort?:AbortController;private loginTask?:Promise<void>;private refreshTask?:Promise<void>;
- private catalogCredential?:Credential;
+ private catalogCredential?:Credential;private refreshAbort=new AbortController();
  private sdkBillingUnavailable?:{key:string;until:number};
  private billing?:{key:string;client:CursorUsage};private quota?:AccountQuota;private quotaCheckedAt=0;
  private usageIdentity?:{key:string;email:string};
@@ -55,24 +58,26 @@ class CursorAccount {
   const credential=this.credential;if(!credential||credential.disabled)return;
   this.catalogCredential=credential;this.catalogStatus='loading';
   try{
-   const {Cursor}=await this.sdk();let models:SDKModel[];
-   try{models=await bounded(Cursor.models.list({apiKey:credential.apiKey}),20000);if(!Array.isArray(models))throw new Error('Invalid catalog');}
-   catch(error){
-    if(cursorFailure(error).blocked)throw error;
-    // The documented REST catalog also works when SDK bootstrap/catalog parsing
-    // fails. Never substitute a guessed model or broaden account permissions.
-    const response=await fetch('https://api.cursor.com/v1/models',{headers:{Authorization:`Bearer ${credential.apiKey}`},redirect:'error',signal:AbortSignal.timeout(15000)});
-    if(!response.ok)throw Object.assign(new Error('Catalog request failed'),{status:response.status});
-    models=z.object({items:z.array(z.object({id:z.string(),displayName:z.string().default('')}).passthrough())}).parse(await response.json()).items as SDKModel[];
-   }
+   const {Cursor}=await this.sdk();
+   const models=await retryOfficialRead(async attempt=>{
+    if(this.closed||this.credential!==credential)throw new DOMException('Refresh cancelled','AbortError');
+    if(attempt===1){
+     try{const models=await bounded(Cursor.models.list({apiKey:credential.apiKey}),20000);if(!Array.isArray(models))throw new Error('Invalid catalog');return models;}
+     catch(error){if(cursorFailure(error).blocked||['cursor_rate_limited','cursor_request_rejected'].includes(cursorFailure(error).code))throw error;throw new OfficialReadTransportError('SDK catalog unavailable');}
+    }
+    // Retry via the documented REST catalog when SDK bootstrap or discovery fails.
+    const response=await fetch('https://api.cursor.com/v1/models',{headers:{Authorization:`Bearer ${credential.apiKey}`},redirect:'error',signal:AbortSignal.any([this.refreshAbort.signal,AbortSignal.timeout(15000)])});
+    if(!response.ok){await response.body?.cancel();throw Object.assign(new Error('Catalog request failed'),{status:response.status});}
+    return z.object({items:z.array(z.object({id:z.string(),displayName:z.string().default('')}).passthrough())}).parse(await response.json()).items as SDKModel[];
+   },{signal:this.refreshAbort.signal});
    if(this.credential!==credential||this.closed)return;
    this.catalogVerifiedAt=Date.now();this.models=models.filter(m=>m.id&&m.id.length<280);this.error=this.models.length?undefined:'Cursor 未返回此账号可用的模型，请检查官方 API 权限后刷新。';this.catalogStatus=this.error?'error':'ready';
-  }catch(error){if(this.credential===credential&&!this.closed){const cause=cursorFailure(error);if(cause.blocked||Date.now()-this.catalogVerifiedAt>=15*60000)this.models=[];this.error=cause.message;this.catalogStatus='error';}}
+  }catch(error){if(this.credential===credential&&!this.closed){const cause=cursorFailure(error);if(cause.blocked||Date.now()-this.catalogVerifiedAt>=15*60000)this.models=[];this.error=`${cause.message} ${refreshNetworkHint}`;this.catalogStatus='error';}}
   finally{this.catalogCheckedAt=Date.now();this.observedAt=new Date().toISOString();}
   if(this.credential===credential&&!this.closed&&(forceQuota||Date.now()-this.quotaCheckedAt>=300000)){
    const previous=this.quota&&this.quota.accountId===this.id?this.quota:undefined;
-   try{const report=await this.usageClient(credential).quota();if(this.credential===credential&&!this.closed)this.quota={...report,accountId:this.id!,provider:'cursor',status:'ok',observedAt:new Date().toISOString(),lastSuccessfulAt:new Date().toISOString()};}
-   catch{if(this.credential===credential&&!this.closed)this.quota={...previous,accountId:this.id!,provider:'cursor',status:'error',observedAt:new Date().toISOString(),windows:previous?.windows??[],error:'Cursor 官方用量查询暂不可用，请稍后刷新。',note:'可在 Cursor 官方用量页核对；查询失败不代表额度为零。'};}
+   try{const report=await retryOfficialRead(()=>{if(this.closed||this.credential!==credential)throw new DOMException('Refresh cancelled','AbortError');return this.usageClient(credential).quota();},{signal:this.refreshAbort.signal});if(this.credential===credential&&!this.closed)this.quota={...report,accountId:this.id!,provider:'cursor',status:'ok',observedAt:new Date().toISOString(),lastSuccessfulAt:new Date().toISOString()};}
+   catch{if(this.credential===credential&&!this.closed)this.quota={...previous,accountId:this.id!,provider:'cursor',status:'error',observedAt:new Date().toISOString(),windows:previous?.windows??[],error:'Cursor 官方用量查询暂不可用，可以切换网络后刷新试试。',note:'可在 Cursor 官方用量页核对；查询失败不代表额度为零。'};}
    finally{this.quotaCheckedAt=Date.now();}
   }
  })().finally(()=>{this.refreshTask=undefined;});return this.refreshTask;}
@@ -106,13 +111,13 @@ class CursorAccount {
  cancelLogin(id:string){if(this.login?.id!==id)throw failure('授权会话已变更');this.login.status='cancelled';this.login.message='已取消 Cursor 授权。';this.loginAbort?.abort();}
  async setEnabled(enabled:boolean){if(this.loginTask)throw failure('请先结束 Cursor 授权',409);if(!this.credential)throw failure('Cursor 尚未连接');const next={...this.credential,disabled:!enabled};await this.secrets.set('cursor-account',JSON.stringify(next));this.credential=next;if(!enabled)await this.active?.cancel();await this.refresh();}
  async remove(){if(this.loginTask)throw failure('请先结束 Cursor 授权',409);await this.secrets.set('cursor-account','');this.credential=undefined;this.models=[];this.quota=undefined;this.billing=undefined;await this.active?.cancel();}
- async close(){this.closed=true;this.loginAbort?.abort();await this.active?.cancel().catch(()=>{});await this.loginTask;}
+ async close(){this.closed=true;this.refreshAbort.abort();this.loginAbort?.abort();await this.active?.cancel().catch(()=>{});await this.loginTask;await this.refreshTask?.catch(()=>{});}
  async response(path:string,body:unknown,signal:AbortSignal):Promise<Response>{
-  let input:ReturnType<typeof parseCursorInput>;try{input=parseCursorInput(path,body);}catch{return errorResponse('Cursor 请求格式不支持：请使用文本、函数工具及工具结果；图片、服务端工具和严格 JSON 输出暂不可用。');}
-  if(!this.id)return errorResponse('Cursor 尚未授权',503);
+  let input:ReturnType<typeof parseCursorInput>;try{input=parseCursorInput(path,body);}catch(error){return Response.json({error:{type:'invalid_request_error',code:'cursor_invalid_request',fields:cursorInputFields(error),message:'Cursor 请求格式不支持：请使用文本、函数工具及工具结果；图片、服务端工具和严格 JSON 输出暂不可用。'}},{status:400});}
+  if(!this.id)return errorResponse('Cursor 尚未授权',503,'cursor_unavailable');
   this.assertSource(this.id,input.model);
-  if(this.closed||signal.aborted)return errorResponse('请求已取消',499);
-  if(this.generating)return errorResponse('Cursor 正在处理另一个请求，请稍后重试。',429);
+  if(this.closed||signal.aborted)return errorResponse('请求已取消',499,'cursor_cancelled');
+  if(this.generating)return errorResponse('Cursor 正在处理另一个请求，请稍后重试。',429,'cursor_busy');
   const credential=this.credential!;
   this.generating=true;let temp:string|undefined;let agent:Awaited<ReturnType<(typeof import('@cursor/sdk'))['Agent']['create']>>|undefined;
   const cancel=()=>{void this.active?.cancel().catch(()=>{});};signal.addEventListener('abort',cancel,{once:true});
@@ -144,7 +149,7 @@ class CursorAccount {
     }
    }]));
    agent=await Agent.create({apiKey:credential.apiKey,model:{id:model.id,...(params.length?{params}: {})},tools:input.tools.length?['mcp']:[],mcpServers:{},agents:{},local:{cwd:temp,settingSources:[],customTools,store:new JsonlLocalAgentStore(join(temp,'store'))}});
-   if(signal.aborted||this.closed||this.credential?.disabled||this.credential?.apiKey!==credential.apiKey)return errorResponse('请求已取消',499);
+   if(signal.aborted||this.closed||this.credential?.disabled||this.credential?.apiKey!==credential.apiKey)return errorResponse('请求已取消',499,'cursor_cancelled');
    const startedAt=Date.now();
    if(agent.agentId)await rememberCursorGatewayConversation(this.root,agent.agentId,startedAt);
    this.active=await agent.send(input.prompt);if(signal.aborted)cancel();
@@ -154,9 +159,9 @@ class CursorAccount {
    if(outcome==='tool'){
     const stopping=this.active.cancel();for(const release of releases.splice(0))release();await stopping;result=await wait;
    }else result=outcome;
-   if(signal.aborted||this.closed||this.credential?.disabled||this.credential?.apiKey!==credential.apiKey)return errorResponse('请求已取消',499);
-   if(!calls.length&&result.status!=='finished')return errorResponse(cursorFailure(result.error).message,502);
-   if(input.required&&!calls.length)return errorResponse('Cursor 未按要求生成工具调用，请重试或选择其他模型。',502);
+   if(signal.aborted||this.closed||this.credential?.disabled||this.credential?.apiKey!==credential.apiKey)return errorResponse('请求已取消',499,'cursor_cancelled');
+   if(!calls.length&&result.status!=='finished'){const cause=cursorFailure(result.error);return errorResponse(cause.message,cause.status,cause.code);}
+   if(input.required&&!calls.length)return errorResponse('Cursor 未按要求生成工具调用，请重试或选择其他模型。',502,'cursor_tool_required');
    let tokens:TokenUsage|undefined=result.usage??this.active.usage;
    // Remember only the explicit unsupported-feature response, per credential.
    // The official per-agent ledger still settles every request before it returns.
@@ -171,12 +176,12 @@ class CursorAccount {
    // SDK completion counters can differ from the bill (observed 5 versus 29 output tokens).
    // Settle this exact fresh agent even when the SDK already returned counters.
    if(agentId){try{tokens=await this.usageClient(credential).runUsage(agentId,startedAt,signal)??tokens;}catch{/* Retain SDK counters if official settlement is unavailable. */}}
-   if(signal.aborted||this.closed||this.credential!==credential)return errorResponse('请求已取消',499);
+   if(signal.aborted||this.closed||this.credential!==credential)return errorResponse('请求已取消',499,'cursor_cancelled');
    const usage=tokens?{input_tokens:tokens.inputTokens+tokens.cacheReadTokens+tokens.cacheWriteTokens,output_tokens:tokens.outputTokens,cached_tokens:tokens.cacheReadTokens,cache_write_tokens:tokens.cacheWriteTokens}:undefined;
    const response=cursorResponse(path,input.model,calls.length?'':result.result??'',usage,input.stream,calls);
    if(input.limit)response.headers.set('X-Token-Flow-Output-Limit','advisory; Cursor SDK does not expose a hard output token limit');
    return response;
-  }catch(error){return errorResponse(cursorFailure(error).message,signal.aborted?499:502);}
+  }catch(error){const cause=cursorFailure(error);return errorResponse(cause.message,signal.aborted?499:cause.status,signal.aborted?'cursor_cancelled':cause.code);}
   finally{signal.removeEventListener('abort',cancel);for(const release of releases)release();await cleanup();this.active=undefined;this.generating=false;}
  }
 }
@@ -243,7 +248,7 @@ export class CursorProvider {
  async remove(id=this.id){if(this.importing)throw failure('正在导入 Cursor 账号，请稍候。',409);const account=this.account(id);await account.remove();this.accounts=this.accounts.filter(a=>a!==account);await account.close();}
  async response(path:string,body:unknown,signal:AbortSignal,sourceId?:string){
   const model=(body as {model?:string})?.model;const id=sourceId??this.accounts.find(a=>a.snapshot().models.some(m=>m.id===model))?.id;
-  if(!id)return errorResponse('Cursor 尚未授权或模型不可用',503);
+  if(!id)return errorResponse('Cursor 尚未授权或模型不可用',503,'cursor_unavailable');
   return this.account(id).response(path,body,signal);
  }
  async close(){this.closed=true;await Promise.all(this.accounts.map(a=>a.close()));await this.writes;}
@@ -253,11 +258,23 @@ async function bounded<T>(promise:Promise<T>,ms:number):Promise<T>{
  try{return await Promise.race([promise,new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(new Error('Timeout'),{code:'deadline_exceeded'})),ms);})]);}finally{clearTimeout(timer);}
 }
 function cursorFailure(error:unknown){
- const e=(error??{}) as {name?:string;status?:number;code?:string};
- const auth=e.status===401||e.name==='AuthenticationError'||['unauthenticated','unauthorized'].includes(e.code??'');
- const blocked=auth||e.status===403||e.code==='plan_required';
- const message=e.code==='plan_required'?'Cursor 官方返回 plan_required：当前账号套餐不支持此 API，请在官方确认 Pro 或团队套餐后刷新。':auth?'Cursor 授权已失效，请重新连接账号。':e.status===403?'Cursor API 权限不足，请在官方账号或团队设置中确认权限。':e.status===429||e.name==='RateLimitError'?'Cursor 请求受限，请检查官方额度或稍后重试。':e.code==='deadline_exceeded'?'Cursor 连接超时，请检查网络后刷新。':e.name==='TypeError'?'Cursor 网络连接失败，请检查网络后刷新。':process.env.CURSOR_BACKEND_URL?'检测到 CURSOR_BACKEND_URL 覆盖，请移除后重启；SDK 授权与模型目录使用不同的官方地址。':'Cursor 服务或模型目录暂不可用，请刷新重试。';
- return {auth,blocked,message};
+ // RunError retains only code/message; SDK Error prototypes and HTTP status
+ // are lost when a failed run crosses the SDK's event/storage boundary.
+ const e=(typeof error==='string'?{message:error}:error??{}) as {name?:string;status?:number;code?:string;message?:string};
+ const upstreamCode=e.code?.toLowerCase()??'';
+ const auth=e.status===401||e.name==='AuthenticationError'||['unauthenticated','unauthorized','not_logged_in','invalid_auth_id','agent_requires_login','auth_token_not_found','auth_token_expired'].includes(upstreamCode);
+ const blocked=auth||e.status===403||['plan_required','permission_denied','not_high_enough_permissions'].includes(upstreamCode);
+ const network=safeFailure(error instanceof Error?error:e.message);
+ const modelMissing=upstreamCode==='model_not_found'||/\bmodel (?:was |is )?not found\b/i.test(e.message??'');
+ const code=modelMissing?'cursor_model_not_found':upstreamCode==='plan_required'?'cursor_plan_required':auth?'cursor_authentication_failed':blocked?'cursor_permission_denied':
+  e.status===429||e.name==='RateLimitError'||['resource_exhausted','rate_limited','rate_limited_changeable','openai_rate_limit_exceeded','generic_rate_limit_exceeded','api_key_rate_limit'].includes(upstreamCode)?'cursor_rate_limited':
+  ['invalid_argument','bad_request','bad_model_name'].includes(upstreamCode)||e.name==='ConfigurationError'?'cursor_request_rejected':
+  ['deadline_exceeded','timeout'].includes(upstreamCode)||network.code==='timeout'?'cursor_timeout':
+  network.code==='tls'?'cursor_tls_error':network.code==='dns'?'cursor_dns_error':
+  ['connection_refused','connection_closed','proxy','proxy_auth'].includes(network.code)?'cursor_network_error':
+  upstreamCode==='unavailable'?'cursor_upstream_unavailable':upstreamCode==='internal'?'cursor_upstream_internal':
+  e.name==='TypeError'||e.name==='NetworkError'?'cursor_network_error':process.env.CURSOR_BACKEND_URL?'cursor_backend_override':'cursor_upstream_error';
+ return {auth,blocked,code,status:modelMissing?400:502,message:upstreamError(502,JSON.stringify({error:{code}})).message};
 }
 
 function containsTransportPath(value:unknown,root:string):boolean {

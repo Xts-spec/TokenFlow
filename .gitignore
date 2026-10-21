@@ -99,7 +99,14 @@ extensions/
 # Output artifacts
 output/
 
+# 根目录误落的 Vite 构建产物（正常输出在 dist/）
+/index-*.js
+/index-*.css
+
 # Miscellaneous
 .impeccable.md
 .DS_Store
 release*/
+
+# 复盘语料（本地分析用，不入库）
+analysis-corpus/

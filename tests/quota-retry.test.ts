@@ -10,9 +10,10 @@ it('retries transport errors and upstream 502s with bounded backoff, then return
  expect((await retryQuotaCall(call,new AbortController().signal,retry)).statusCode).toBe(200);
  expect(call).toHaveBeenCalledTimes(3);expect(retry.mock.calls).toEqual([[2],[3]]);expect(vi.mocked(delay).mock.calls.map(c=>c[0])).toEqual([1000,2000]);
 });
-it('stops after five attempts and never exposes the provider body',async()=>{
- const call=vi.fn().mockResolvedValue(response(503));await expect(retryQuotaCall(call,new AbortController().signal,()=>{})).rejects.toThrow('已尝试 5 次');
- expect(call).toHaveBeenCalledTimes(5);expect(vi.mocked(delay).mock.calls.map(c=>c[0])).toEqual([1000,2000,4000,8000]);
+it('stops after three attempts and never exposes the provider body',async()=>{
+ const call=vi.fn().mockResolvedValue(response(503));await expect(retryQuotaCall(call,new AbortController().signal,()=>{})).rejects.toThrow('已尝试 3 次');
+ expect(call).toHaveBeenCalledTimes(3);expect(vi.mocked(delay).mock.calls.map(c=>c[0])).toEqual([1000,2000]);
+ await expect(retryQuotaCall(call,new AbortController().signal,()=>{})).rejects.toThrow('切换网络后刷新试试');
 });
 it.each([400,401,403,404,429,501])('does not retry HTTP %s',async code=>{
  const call=vi.fn().mockResolvedValue(response(code));expect((await retryQuotaCall(call,new AbortController().signal,()=>{})).statusCode).toBe(code);expect(call).toHaveBeenCalledTimes(1);

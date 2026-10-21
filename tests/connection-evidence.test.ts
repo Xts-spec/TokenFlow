@@ -60,3 +60,15 @@ it('follows API source enablement and model removal without changing the saved c
   expect(connectionEvidence(apiConnection,[],sourceOptions(local)).label).toBe('已写入配置 · 待客户端验证');
   expect(apiConnection).toEqual(original);
 });
+
+it('does not mark saved selections unavailable during account loading or catalog failure',()=>{
+ const base={state:'running',accounts:[],models:[],quotas:{}} as unknown as LocalAgentSnapshot;
+ for(const local of [
+  {...base,accountsLoading:true},
+  {...base,accountError:'temporary directory failure'},
+  {...base,accounts:[{id:'source',provider:'codex',label:'source',status:'active',disabled:false,unavailable:false,models:[],modelError:'catalog refresh failed'}]},
+ ]){
+  expect(connectionEvidence(connected,[],sourceOptions(local),local).tone).toBe('neutral');
+  expect(connectionEvidence(connected,[],sourceOptions(local),local).label).not.toContain('不可用');
+ }
+});
