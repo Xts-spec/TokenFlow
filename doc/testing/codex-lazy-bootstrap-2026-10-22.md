@@ -19,3 +19,7 @@ RESULT_PATH=/tmp/tf-lazy-live.json node --import tsx scripts/codex-first-long-hi
 独立的安装版 Codex 合成回归验证了 50 次请求、三轮客户端压缩、网关→官方→网关往返，以及用户要求、工具结果和可读推理摘要保留。自动化测试另覆盖切换零压缩、旧版待办升级、按对话隔离、短对话后来增长不自动压缩、失败立即重试、网关重启复用、跨来源增量整理。未在 Windows 主机实测。
 
 逐请求元数据见 [JSON 记录](results/codex-lazy-bootstrap-2026-10-22.json)。首次压缩仍会增加当前长对话第一次续聊的等待，切换本身只承担备份和来源迁移耗时。
+
+发布验证：34 个相关套件共 395 项通过，类型检查通过。安装包检查先在 .43 上按预期失败（缺少首次续聊处理），再在 .44 上通过；生产 A2A 接入验证切换零摘要调用、首次续聊生成摘要、重复请求复用、后续增长等待客户端，以及显式 compaction_trigger 正常执行。
+
+10.15.26.44 已替换 `/Applications/TokenFlow.app` 并启动，网关健康检查正常；40 个构建输出文件与 app.asar 逐项一致，安装后哈希再次匹配。上一版备份位于 `releases/installed-backups/TokenFlow-10.15.26.43.app`，发布及安装验证位于 `releases/v10.15.26.44/`。
