@@ -212,7 +212,21 @@ export class GatewayContext {
   // normal Responses stream whose only output is the new compaction item.
   if(input.some(item=>item.type==='compaction_trigger')){
    if(input.at(-1)?.type!=='compaction_trigger'||input.filter(item=>item.type==='compaction_trigger').length!==1)throw new GatewayContextError('compaction_trigger must be the final input item');
-   const compacted=await compact(input.slice(0,-1));if(!compacted.ok)return compacted;
+   let compacted:Response;
+   try{compacted=await compact(input.slice(0,-1));}
+   catch(error){
+    // The client asked to compact, but this history cannot be reduced (short or already
+    // dense). Failing the turn would strand a conversation that is otherwise servable, so
+    // report a completed turn with no checkpoint: the caller keeps its original history.
+    if(error instanceof GatewayContextError&&error.code==='compaction_not_reduced'){
+     const empty={id:'resp_tf_'+randomBytes(16).toString('hex'),object:'response',created_at:Math.floor(Date.now()/1000),status:'completed',model:body.model,output:[],usage:error.usage??zeroUsage};
+     if(!body.stream)return reply(empty,new Headers({'x-token-flow-compaction':'not-reduced'}));
+     const events=[{type:'response.created',response:{...empty,status:'in_progress',usage:null}},{type:'response.completed',response:empty}];
+     return new Response(events.map((event,sequence_number)=>'event: '+event.type+'\ndata: '+JSON.stringify({...event,sequence_number})+'\n\n').join(''),{headers:{'content-type':'text/event-stream','x-token-flow-compaction':'not-reduced'}});
+    }
+    throw error;
+   }
+   if(!compacted.ok)return compacted;
    const result=await json(compacted);const item=items(result.output).at(-1)!;
    const id='resp_tf_'+randomBytes(16).toString('hex');
    const terminal={id,object:'response',created_at:Math.floor(Date.now()/1000),status:'completed',model:body.model,output:[item],usage:result.usage};

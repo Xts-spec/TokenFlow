@@ -109,6 +109,21 @@ it('invalidates summaries that grow the final context after preserved messages a
  const response=await restarted.response('responses/compact',{model:'qoder/m',input},'a','s',async()=>{calls++;return stream('Next: test.');});
  expect(response.ok).toBe(true);expect(calls).toBe(2);
 });
+it('completes a compaction trigger without a checkpoint when history cannot shrink',async()=>{
+ // Codex sends a compaction_trigger and reads the result as a normal Responses turn.
+ // A 422 here aborts the user's conversation, so an unreducible history must not fail it.
+ const {context}=await setup();let calls=0;
+ const input=[{role:'user',content:'x'.repeat(8000)},{role:'assistant',content:'y'.repeat(100)},...history.slice(-8)];
+ const send=async()=>{calls++;return stream('Summary detail. '.repeat(60));};
+ const response=await context.response('responses',{model:'qoder/m',input:[...input,{type:'compaction_trigger'}],store:false},'a','s',send);
+ expect(response.status).toBe(200);
+ expect(response.headers.get('x-token-flow-compaction')).toBe('not-reduced');
+ const body=await response.json();
+ expect(body).toMatchObject({status:'completed',output:[]});
+ expect(calls).toBeGreaterThan(0);
+ // The same history still fails explicitly on the dedicated compact endpoint.
+ await expect(context.response('responses/compact',{model:'qoder/m',input},'a','s',send)).rejects.toMatchObject({statusCode:422,code:'compaction_not_reduced'});
+});
 it('does not erase known charges when a later summary omits usage',async()=>{
  const {context}=await setup();const input:Record<string,unknown>[]=[{role:'user',content:'Preserve API.'}];
  for(let i=0;i<60;i++)input.push({type:'function_call',call_id:'c'+i,name:'read',arguments:'{}'},{type:'function_call_output',call_id:'c'+i,output:'result '.repeat(500)});
