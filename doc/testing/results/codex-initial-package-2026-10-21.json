@@ -1,0 +1,28 @@
+{
+  "package": {
+    "version": "10.15.26.46",
+    "sourceCommit": "d1fdb8dafc32c4bf965ed572d6683bf4729f8783",
+    "distFilesVerified": 40,
+    "appAsarSHA256": "81119882074510249899d0f466dfda8c0305eb5ae534e430f9662e89f25bdc25",
+    "sidecarSHA256": "950cafe45d37d7ec61457c9724c8d638f7faa1bab961c8a2ab5eed42495f8441",
+    "installed": true,
+    "packagedRuntimeCheckPassed": true,
+    "typecheckPassed": true,
+    "targetedTestsPassed": 473,
+    "isolatedSnapshotTestsPassed": 21,
+    "backupPath": "/Users/why/whyself/miniprogram/TokenFlow/releases/installed-backups/TokenFlow-10.15.26.44.app"
+  },
+  "installation": {
+    "version": "10.15.26.46",
+    "appAsarSHA256": "81119882074510249899d0f466dfda8c0305eb5ae534e430f9662e89f25bdc25",
+    "pid": 66035,
+    "health": {
+      "status": "ok",
+      "service": "tokenflow"
+    },
+    "previousVersion": "10.15.26.44",
+    "sourceCommit": "d1fdb8dafc32c4bf965ed572d6683bf4729f8783",
+    "backupPath": "/Users/why/whyself/miniprogram/TokenFlow/releases/installed-backups/TokenFlow-10.15.26.44.app",
+    "verifiedAt": "2026-10-22T02:56:46.652272+00:00"
+  }
+}
