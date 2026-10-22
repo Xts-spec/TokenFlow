@@ -1,0 +1,83 @@
+{
+  "releaseInstalled": false,
+  "runningVersion": "10.15.26.50",
+  "clarificationPending": true,
+  "regressionTestsPassed": 157,
+  "typecheckPassed": true,
+  "nativeCodexVersion": "codex-cli 0.163.0-alpha.11",
+  "noCapacitySmallTools": {
+    "passed": true,
+    "normalInputTokens": 140000,
+    "tools": 6,
+    "localCompactions": 0,
+    "turnStatus": "completed"
+  },
+  "noCapacityManual": {
+    "passed": true,
+    "scope": "installed Codex runtime with synthetic loopback providers",
+    "advertisedWindow": null,
+    "firstCompaction": false,
+    "followupTurns": 2,
+    "clientCompactions": 0,
+    "manualCompactions": 1,
+    "newThread": true,
+    "restoredOriginal": true,
+    "modelAuthorizationPreserved": true
+  },
+  "knownCapacityAutomatic": {
+    "passed": true,
+    "scope": "installed Codex runtime with synthetic loopback providers",
+    "advertisedWindow": 272000,
+    "firstCompaction": true,
+    "followupTurns": 2,
+    "clientCompactions": 3,
+    "manualCompactions": 0,
+    "newThread": true,
+    "restoredOriginal": true,
+    "modelAuthorizationPreserved": true
+  },
+  "noCapacityContextError": {
+    "passed": false,
+    "historyBytes": null,
+    "firstTurnStatus": null,
+    "clientCompactions": null,
+    "summaryCalls": null,
+    "errorCode": null
+  },
+  "smallWindowDownshiftRegression": {
+    "advertisedWindow": 131072,
+    "passed": false,
+    "failure": "Old model requested through the new gateway during compaction"
+  },
+  "retainedLogAudit": {
+    "retainedRecords": 1000,
+    "oldestAt": "2026-10-21T12:20:03.974Z",
+    "newestAt": "2026-10-22T07:04:06.588Z",
+    "errorCounts": {
+      "provider_error": 93,
+      "source_unavailable": 12,
+      "request_cancelled": 13,
+      "workbuddy_timeout": 2,
+      "upstream_invalid_request": 5,
+      "upstream_connection_closed": 16,
+      "upstream_tls": 2,
+      "source_cooldown": 34
+    },
+    "relevantErrors": [
+      {
+        "at": "2026-10-22T06:47:04.424Z",
+        "status": 504,
+        "code": "workbuddy_timeout",
+        "durationMs": 240582,
+        "modelProvider": "workbuddy"
+      },
+      {
+        "at": "2026-10-22T06:43:03.783Z",
+        "status": 502,
+        "code": "workbuddy_timeout",
+        "durationMs": 240592,
+        "modelProvider": "workbuddy"
+      }
+    ]
+  }
+}

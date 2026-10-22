@@ -18,13 +18,13 @@ it('reapplies unchanged selections to replace the legacy downshift window and ke
  const connections=new AgentConnections(root,{codex:configPath},async()=>[]);
  const apply=async(replaceId?:string)=>connections.apply({target:'codex',revision:(await connections.status()).find(t=>t.id==='codex')!.revision,origin:'http://127.0.0.1:9527',model,sourceId,keyId:randomUUID(),key:'fixture-key',...(replaceId?{replaceId}:{})});
  const legacy=catalogModule.codexModelCatalog;
- const mock=vi.spyOn(catalogModule,'codexModelCatalog').mockImplementation((...args)=>({models:legacy(...args).models.map(m=>({...m,context_window:131072}))}));
+ const mock=vi.spyOn(catalogModule,'codexModelCatalog').mockImplementation((...args)=>({models:legacy(...args).models.map(m=>({...m,context_window:131072,auto_compact_token_limit:65536}))}));
  let first;try{first=await apply();}finally{mock.mockRestore();}
  const before=parse(await readFile(configPath,'utf8'));
  const second=await apply(first.id),after=parse(await readFile(configPath,'utf8'));
  expect(after.model_catalog_json).not.toBe(before.model_catalog_json);
  const entry=JSON.parse(await readFile(String(after.model_catalog_json),'utf8')).models[0];
- expect(entry.slug).toBe(model);expect(entry.context_window).toBeUndefined();expect(entry.auto_compact_token_limit).toBe(65536);
+ expect(entry.slug).toBe(model);expect(entry.context_window).toBeUndefined();expect(entry.auto_compact_token_limit).toBeUndefined();
  await connections.restore(second.id);expect(await readFile(configPath,'utf8')).toBe(original);
 });
 it('replaces the Codex catalog when managing unchanged models with updated names, preserving history and original settings',async()=>{

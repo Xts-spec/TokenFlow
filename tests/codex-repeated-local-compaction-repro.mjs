@@ -45,8 +45,8 @@ try{
  if(compactScope){const doc=parse(await readFile(paths.codex,'utf8'));doc.model_auto_compact_token_limit_scope=compactScope;await writeFile(paths.codex,stringify(doc));}
  const config=await readFile(paths.codex,'utf8');const catalogPath=config.match(/model_catalog_json\s*=\s*"([^"]+)"/)[1];const catalog=JSON.parse(await readFile(catalogPath,'utf8'));
  if(omitCatalogLimit)for(const model of catalog.models)delete model.auto_compact_token_limit;
- // The production catalog caps each tool output at 10KB; lift only this isolated
- // fixture cap so six real outputs can cross the 65536-token history threshold.
+ // An optional diagnostic variant controls output retention only in this fixture.
+ // The production catalog itself no longer clips outputs or sets a token threshold.
  if(growth)for(const model of catalog.models)model.truncation_policy={mode:'bytes',limit:500000};
  if(omitCatalogLimit||growth)await writeFile(catalogPath,JSON.stringify(catalog));
  child=spawn(codexBinary,['app-server','--listen','stdio://'],{cwd,env:{PATH:process.env.PATH,HOME:fixture,CODEX_HOME:fixture},stdio:['pipe','pipe','pipe']});

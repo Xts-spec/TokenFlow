@@ -1,6 +1,5 @@
 import {initialParts,initialParallel,smallerParts,reuseInitialParts,type InitialPart} from './initial-compaction.js';
 import {compactionProgress} from './compaction-progress.js';
-import {CODEX_AUTO_COMPACT_TOKEN_LIMIT} from './codex-model-catalog.js';
 import { createCipheriv, createDecipheriv, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile, rename, rm, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -18,6 +17,9 @@ type ManagedWindow={hash:string;input:Item[];coveredUsers:string[]};
 type ManagedSession={initialized:boolean;connectionId?:string;foreign:string[];windows:ManagedWindow[]};
 type Send = (path:string, body:Item) => Promise<Response>;
 const PREFIX = 'tfctx1.';
+// Existing first-contact history organization target, independent of Codex's
+// automatic token threshold. Later turns still require the client's trigger.
+const INITIAL_CONTEXT_BYTES=256*1024;
 const zeroUsage = {input_tokens:0, output_tokens:0, total_tokens:0,input_tokens_details:{cached_tokens:0,cache_write_tokens:0},output_tokens_details:{reasoning_tokens:0}};
 const object = (value:unknown):value is Item => !!value && typeof value==='object' && !Array.isArray(value);
 const size = (value:unknown) => Buffer.byteLength(JSON.stringify(value));
@@ -316,7 +318,7 @@ export class GatewayContext {
   // this connection. Reuse saved prefixes before measuring the remaining work.
   // Later tool turns always wait for Codex's explicit compaction request.
   if(body.context_management!=null||firstRequest){
-   const rules=body.context_management??[{type:'compaction',compact_threshold:CODEX_AUTO_COMPACT_TOKEN_LIMIT*4}];
+   const rules=body.context_management??[{type:'compaction',compact_threshold:INITIAL_CONTEXT_BYTES}];
    if(!Array.isArray(rules)||rules.length!==1||!object(rules[0])||rules[0].type!=='compaction'||!Number.isSafeInteger(rules[0].compact_threshold)||Number(rules[0].compact_threshold)<=0)throw new GatewayContextError('context_management requires one compaction rule with a positive compact_threshold');
    // A soft bootstrap target, never a request rejection or per-turn limit.
    if(size(input)>=Number(rules[0].compact_threshold)){

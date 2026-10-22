@@ -1,5 +1,4 @@
 import { apiModelDisplayName } from '../../../apps/shared/api-endpoint.js';
-export const CODEX_AUTO_COMPACT_TOKEN_LIMIT=65536;
 /** Codex reads this catalog at startup instead of its bundled OpenAI picker entries.
  * Keep it scoped to the models authorized by this connection's client key. */
 export function codexModelCatalog(selection:string|string[],labels:Record<string,string>={}){
@@ -9,9 +8,8 @@ export function codexModelCatalog(selection:string|string[],labels:Record<string
   default_reasoning_level:'medium',supported_reasoning_levels:[{effort:'medium',description:'默认'}],
   shell_type:'shell_command',base_instructions:'You are a coding assistant. Help the user complete their coding tasks.',
   supports_reasoning_summaries:false,support_verbosity:false,
-  // Do not declare a smaller window: Codex can otherwise compact with the old,
-  // unauthorized model during a downshift. The client owns this soft trigger.
-  auto_compact_token_limit:CODEX_AUTO_COMPACT_TOKEN_LIMIT,
+  // Do not impose a fixed context or automatic compaction threshold. Models
+  // without capacity metadata need compatibility validation before release.
   // Codex requires this field; its schema has no unlimited variant. Use the
   // largest exactly representable JSON integer so this catalog does not clip tools.
   apply_patch_tool_type:'freeform',truncation_policy:{mode:'bytes',limit:Number.MAX_SAFE_INTEGER},
