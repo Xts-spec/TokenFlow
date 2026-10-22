@@ -16,5 +16,6 @@
     "earliestRequirementPreserved": true,
     "turnStatus": "completed"
   },
-  "installedVersion": null
+  "installedVersion": "10.15.26.50",
+  "packagedRuntimeCheckPassed": true
 }

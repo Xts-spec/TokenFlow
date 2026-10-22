@@ -1,0 +1,52 @@
+{
+  "version": "10.15.26.50",
+  "sourceCommit": "52b9d9838a2cf7b30f8f822a98d1c7eceea5d9d2",
+  "distFilesVerified": 40,
+  "appAsarSHA256": "904ee6ea8344dc2e2d5afb7c4723782337017b932e137e793dfbf3ff78b5c679",
+  "sidecarSHA256": "4e726ab6fd508cd604fdcd9b125c6646e42b7dd7617cfa8c5b55b96a56380fe5",
+  "installed": true,
+  "typecheckPassed": true,
+  "buildPassed": true,
+  "testsPassed": 205,
+  "packagedRuntimeInitialFailure": "The isolated build omitted workspace node_modules; packaged smoke detected missing @tencent-ai/agent-sdk. Workspace dependencies were then copied from the unchanged installed dependencies and the candidate was rebuilt before replacement.",
+  "packagedRuntimeCheckPassed": true,
+  "installedVersion": "10.15.26.50",
+  "verifiedAt": "2026-10-22T06:59:33.736128+00:00",
+  "health": {
+    "status": "ok",
+    "service": "tokenflow"
+  },
+  "runningPIDs": [
+    29215
+  ],
+  "previousVersion": "10.15.26.49",
+  "backup": "releases/installed-backups/TokenFlow-10.15.26.49.app",
+  "installedAsarSHA256": "904ee6ea8344dc2e2d5afb7c4723782337017b932e137e793dfbf3ff78b5c679",
+  "codexRestarted": false,
+  "packagedRuntime": {
+    "passed": true,
+    "electron": "40.10.6",
+    "platform": "darwin",
+    "arch": "arm64",
+    "checks": [
+      "native zstd request decoded by the packaged gateway",
+      "no switch-time summary; current-thread lazy bootstrap and explicit later compaction",
+      "valid expanding summaries, immediate failed-summary retry and cached continuation",
+      "production dependencies",
+      "bundled licenses",
+      "Cursor native SDK",
+      "WorkBuddy SDK import",
+      "static UI",
+      "Responses gateway",
+      "Pi repair conversation",
+      "selected usage evidence",
+      "local usage worker",
+      "Claude native account attribution",
+      "existing Qoder and both WorkBuddy edition identities",
+      "Qoder IDE switch, restore and standalone isolation",
+      "automatic LAN listener, per-key source IPs and isolated model routes",
+      "Claude Desktop subagent roles and independent menu routes",
+      "Claude Desktop external gateway drift detection"
+    ]
+  }
+}
