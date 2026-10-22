@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest';
-import {mkdtemp,mkdir,readFile,rm,writeFile} from 'node:fs/promises';
+import {mkdtemp,mkdir,readFile,rm,writeFile,realpath} from 'node:fs/promises';
 import {createServer} from 'node:net';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
@@ -13,7 +13,7 @@ async function freePort(){
  const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));return port;
 }
 async function setup(){
- const root=await mkdtemp(join(tmpdir(),'gateway-lan-'));cleanup.push(()=>rm(root,{recursive:true,force:true,maxRetries:3,retryDelay:50}));
+ const root=await realpath(await mkdtemp(join(tmpdir(),'gateway-lan-')));cleanup.push(()=>rm(root,{recursive:true,force:true,maxRetries:3,retryDelay:50}));
  await writeFile(join(root,'gateway-access.json'),JSON.stringify({enabled:false,port:await freePort(),allowedIPs:[]}));
  await mkdir(join(root,'cliproxy'));
  await writeFile(join(root,'cliproxy','fixture-accounts.json'),JSON.stringify([{name:'codex.json',provider:'codex',status:'active',models:['first','second']}]));

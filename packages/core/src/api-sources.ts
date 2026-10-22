@@ -26,7 +26,7 @@ type StoredSource=z.infer<typeof storedSource>;
 export type ApiSource=Omit<StoredSource,'credentialRef'> & {hasKey:boolean};
 export const apiModelID=(sourceId:string,upstream:string)=>`api-${sourceId}/${upstream}`;
 const conflict=(message:string)=>new RunnerCoreError(message,{statusCode:409,code:'api_source_conflict'});
-const LIMIT=16*1024*1024;
+const MODEL_LIST_BYTES=16*1024*1024;
 const nativeHeader='x-token-flow-native';
 function safeSourceStream(body:ReadableStream<Uint8Array>){
  const decoder=new TextDecoder(),encoder=new TextEncoder();let buffer='';
@@ -37,7 +37,7 @@ function safeSourceStream(body:ReadableStream<Uint8Array>){
   return failed?'event: error\ndata: '+JSON.stringify({type:'error',code:'api_source_error',message:'API source stream failed',error:{type:'api_error',message:'API source stream failed'}})+'\n\n':frame+'\n\n';
  };
  return body.pipeThrough(new TransformStream<Uint8Array,Uint8Array>({
-  transform(chunk,out){buffer+=decoder.decode(chunk,{stream:true});buffer=buffer.replace(/\r\n/g,'\n');let end:number;while((end=buffer.indexOf('\n\n'))!==-1){const frame=buffer.slice(0,end);if(Buffer.byteLength(frame)>LIMIT)throw new Error('Source event too large');buffer=buffer.slice(end+2);out.enqueue(encoder.encode(safe(frame)));}if(Buffer.byteLength(buffer)>LIMIT)throw new Error('Source event too large');},
+  transform(chunk,out){buffer+=decoder.decode(chunk,{stream:true});buffer=buffer.replace(/\r\n/g,'\n');let end:number;while((end=buffer.indexOf('\n\n'))!==-1){const frame=buffer.slice(0,end);buffer=buffer.slice(end+2);out.enqueue(encoder.encode(safe(frame)));}},
   flush(out){buffer+=decoder.decode();if(buffer.trim())out.enqueue(encoder.encode(safe(buffer)));}
  }));
 }
@@ -142,7 +142,7 @@ export class ApiSources {
    throw failure('api_models_unavailable','无法连接模型列表接口，请检查网络和 API 地址后重试，或手动添加模型 ID。');
   }
  }
- private async boundedJSON(r:Response){let bytes=0;const chunks:Uint8Array[]=[];for await(const c of Readable.fromWeb(r.body as never)){bytes+=c.length;if(bytes>LIMIT)throw new Error('Response too large');chunks.push(c);}return JSON.parse(Buffer.concat(chunks).toString());}
+ private async boundedJSON(r:Response){let bytes=0;const chunks:Uint8Array[]=[];for await(const c of Readable.fromWeb(r.body as never)){bytes+=c.length;if(bytes>MODEL_LIST_BYTES)throw new Error('Response too large');chunks.push(c);}return JSON.parse(Buffer.concat(chunks).toString());}
  sidecarModelIDs(){return this.entries.filter(s=>s.enabled).flatMap(s=>s.models.map(model=>apiModelID(s.id,model)));}
  sidecarConfig(){
   const chat:unknown[]=[],responses:unknown[]=[],messages:unknown[]=[];
@@ -168,7 +168,7 @@ export class ApiSources {
     const match=/^\/([a-f0-9]{24})\/(?:v1\/)?(chat\/completions|responses(?:\/compact)?|messages(?:\/count_tokens)?)$/.exec(requestURL.pathname);
     const s=match&&this.entries.find(s=>s.id===match[1]);
     if(!s?.enabled||req.method!=='POST'){fail(503,'Source unavailable');return;}
-    let bytes=0;const chunks:Buffer[]=[];for await(const c of req){bytes+=c.length;if(bytes>LIMIT){fail(413,'Source request too large');return;}chunks.push(c);}
+    const chunks:Buffer[]=[];for await(const c of req)chunks.push(c);
     const body=JSON.parse(Buffer.concat(chunks).toString());if(!s.models.includes(body.model)){fail(403,'Source model mismatch');return;}
     const {protocol,baseURL}=apiModelRoute(s,body.model);
     // Chat streaming APIs commonly omit token usage unless explicitly requested.
@@ -194,7 +194,7 @@ export class ApiSources {
     const stream=Readable.fromWeb(((r.headers.get('content-type')??'').includes('text/event-stream')?safeSourceStream(r.body):r.body) as never);stream.once('error',()=>res.destroy());stream.pipe(res);
    }catch{if(res.headersSent)res.destroy();else fail(502,'API source unavailable or timed out');}finally{if(res.writableEnded)idle.close();}
   });
-  this.server.requestTimeout=30000;this.server.headersTimeout=15000;
+  this.server.requestTimeout=0;this.server.headersTimeout=15000;
   await new Promise<void>((ok,bad)=>{this.server!.once('error',bad);this.server!.listen(0,'127.0.0.1',ok);});
   this.relayURL=`http://127.0.0.1:${(this.server.address() as {port:number}).port}`;
  }

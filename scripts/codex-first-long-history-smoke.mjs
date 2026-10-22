@@ -7,6 +7,7 @@
 // --single-attempt disables stream reconnects in diagnostic variants, not compaction.
 // RESULT_PATH saves metadata only; no credentials or original conversation content.
 import assert from 'node:assert/strict';
+import {setTimeout as delay} from 'node:timers/promises';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
 import {mkdtemp,writeFile,readFile,rm,realpath,readdir} from 'node:fs/promises';
@@ -25,6 +26,8 @@ const root=await mkdtemp(join(await realpath(tmpdir()),'tf-first-long-history-')
 const binary=process.argv[2]??'/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex';
 const clientOnly=process.argv.includes('--client-only'),live=process.argv.includes('--live');
 const largeHistory=process.argv.includes('--large-history');
+const diagnosticDelayMs=Number(process.argv.find(value=>value.startsWith('--summary-delay-ms='))?.split('=')[1]??0);
+const clientIdleMs=Number(process.argv.find(value=>value.startsWith('--client-idle-ms='))?.split('=')[1]??0);
 const normalizeContextError=process.argv.includes('--normalize-context-error');
 const abort=new AbortController();
 const model=process.argv.find(value=>value.startsWith('--model='))?.slice(8)??'codex/gpt-6-luna';const marker='LONG_HISTORY_ANCHOR_'+randomUUID().replaceAll('-','');
@@ -88,6 +91,7 @@ const server=createServer(async(req,res)=>{
    const stream=result.body.pipeThrough(new TransformStream({transform(chunk,controller){pending+=decoder.decode(chunk,{stream:true});let end;while((end=pending.indexOf('\n'))>=0){const line=inspect(pending.slice(0,end));pending=pending.slice(end+1);controller.enqueue(new TextEncoder().encode(line+'\n'));}},flush(controller){if(pending)controller.enqueue(new TextEncoder().encode(inspect(pending)));console.log(JSON.stringify({upstreamEnd:entry}));}}));
    return clock.watch(new Response(stream,{status:result.status,headers:result.headers}));
   }
+  if(summary&&diagnosticDelayMs)await delay(diagnosticDelayMs,undefined,{signal:clock.signal});
   // Fixture capacity models a source smaller than the inherited raw history.
   // This is test data, not a production gateway request limit.
   if(bytes>256*1024){entry.status=400;return Response.json({error:{message:'Your input exceeds the context window of this model. Please adjust your input and try again.',type:'invalid_request_error',code:'context_length_exceeded',param:'input'}},{status:400});}
@@ -106,6 +110,7 @@ const server=createServer(async(req,res)=>{
 async function start(){
  const args=['app-server','--listen','stdio://'];
  if(phase>0){
+  if(clientIdleMs)args.push('-c','model_providers.token_flow.stream_idle_timeout_ms='+clientIdleMs);
   if(process.argv.includes('--single-attempt'))args.push('-c','model_providers.token_flow.stream_max_retries=0');
   if(process.argv.includes('--total-scope'))args.push('-c','model_auto_compact_token_limit_scope="total"');
   // Codex gates its remote compaction protocol on this provider identity.

@@ -1,6 +1,6 @@
 import {fakeWorkbuddySDK} from './fixtures/fake-workbuddy-sdk.js';
 import {afterEach,expect,it,vi} from 'vitest';
-import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,rm,realpath} from 'node:fs/promises';
 import {createServer} from 'node:net';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
@@ -9,7 +9,7 @@ import {GatewayKeys} from '../packages/core/src/gateway-keys.js';
 const cleanup:Array<()=>Promise<unknown>>=[];
 afterEach(async()=>{vi.restoreAllMocks();for(const fn of cleanup.splice(0).reverse())await fn();});
 async function setup(){
- const root=await mkdtemp(join(tmpdir(),'context-service-'));cleanup.push(()=>rm(root,{recursive:true,force:true}));
+ const root=await realpath(await mkdtemp(join(tmpdir(),'context-service-')));cleanup.push(()=>rm(root,{recursive:true,force:true}));
  const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
  await mkdir(join(root,'cliproxy'));await writeFile(join(root,'cliproxy','fixture-accounts.json'),JSON.stringify(['qoder','workbuddy','codex'].map(provider=>({name:provider+'.json',provider,email:provider+'@example.test',status:'active',models:['model']}))));
  const service=await createDesktopService({workbuddySDKFactory:fakeWorkbuddySDK,root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin-token',localKey:'internal-key',secrets:{get:async()=>'',set:async()=>{}}});cleanup.push(()=>service.app.close());await service.proxy.start();
@@ -105,4 +105,18 @@ it('accepts a large replay when a valid checkpoint replaces the oversized old to
  expect(large.statusCode,large.body).toBe(200);expect(forwarded).toBe(2);
  const native=await service.app.inject({method:'POST',url:'/v1/responses',headers:admin,payload:{model:'codex/model',store:false,max_output_tokens:123,input:'x'.repeat(17*1024*1024)}});
  expect(native.statusCode,native.body).toBe(200);expect(forwarded).toBe(3);
+});
+
+it('decodes Codex zstd bodies before JSON parsing without changing the effective request',async()=>{
+ const {zstdCompressSync}=await import('node:zlib');const {port,service,admin}=await setup();const realFetch=globalThis.fetch;const seen:unknown[]=[];
+ vi.spyOn(globalThis,'fetch').mockImplementation(async(url,init)=>{
+  if(new URL(String(url)).port!==String(port))return realFetch(url,init);
+  seen.push(JSON.parse(String(init?.body)));return Response.json({status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'Accepted complete history'}]}],usage:{input_tokens:10,output_tokens:2}});
+ });
+ const payload={model:'codex/model',input:[{role:'user',content:'Full Unicode history 首🙂尾 '+ 'x'.repeat(2*1024*1024)}],store:false};
+ const encoded=zstdCompressSync(Buffer.from(JSON.stringify(payload)));
+ const response=await service.app.inject({method:'POST',url:'/v1/responses',headers:{...admin,'content-type':'application/json','content-encoding':'zstd','content-length':String(encoded.length)},payload:encoded});
+ expect(response.statusCode,response.body).toBe(200);expect(seen.at(-1)).toEqual(payload);
+ const malformed=await service.app.inject({method:'POST',url:'/v1/responses',headers:{...admin,'content-type':'application/json','content-encoding':'zstd'},payload:Buffer.from('not-zstd')});
+ expect(malformed.statusCode).toBe(400);expect(seen).toHaveLength(1);
 });

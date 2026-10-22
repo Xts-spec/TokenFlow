@@ -1,3 +1,4 @@
+import {gatewayDecoding} from './gateway-decoding.js';
 import {gatewayAddresses,readGatewayInterfaceKinds,type InterfaceKinds} from './gateway-network.js';
 export {gatewayAddresses} from './gateway-network.js';
 import { readFile, rename, writeFile } from 'node:fs/promises';
@@ -54,6 +55,7 @@ export class GatewayAccess {
   }
 
   private constructor(private path: string, private gatewayKeys: Pick<GatewayKeys, 'authenticate'>) {
+    gatewayDecoding(this.app);
     this.app.setErrorHandler((error, _request, reply) => {
       if (error instanceof z.ZodError) return reply.code(400).send({ error: { message: '请求参数无效', type: 'invalid_request_error' } });
       const requestedStatus = error instanceof Error && 'statusCode' in error && typeof error.statusCode === 'number' ? error.statusCode : 500;

@@ -1,5 +1,5 @@
 import {randomUUID} from 'node:crypto';
-/** Start SSE keepalives only when initial compaction actually begins. No fake
+/** Start truthful SSE progress only when initial compaction actually begins. No fake
  * model text or usage is generated; failures remain terminal error events. */
 export function compactionProgress(task:Promise<Response>,onCancel?:()=>void,model?:string){
  const envelope={id:'resp_tf_initial_'+randomUUID().replaceAll('-',''),object:'response',created_at:Math.floor(Date.now()/1000),model,status:'failed',output:[]};
@@ -7,10 +7,10 @@ export function compactionProgress(task:Promise<Response>,onCancel?:()=>void,mod
  const encoder=new TextEncoder();
  const stream=new ReadableStream<Uint8Array>({
   async start(controller){
-   const pulse=()=>{if(!cancelled)controller.enqueue(encoder.encode(': token-flow initial history compaction in progress\n\n'));};
+   const pulse=()=>{if(!cancelled)controller.enqueue(encoder.encode('event: response.in_progress\ndata: '+JSON.stringify({type:'response.in_progress',response:{...envelope,status:'in_progress',usage:null}})+'\n\n'));};
    pulse();const timer=setInterval(pulse,15000);
    try{
-    const response=await task;
+    const response=await task;clearInterval(timer);
     if(cancelled){await response.body?.cancel();return;}
     if(!response.ok){const payload=await response.json();controller.enqueue(encoder.encode('data: '+JSON.stringify({type:'response.failed',response:{...envelope,error:payload.error??payload,usage:payload.usage}})+'\n\n'));}
     else if((response.headers.get('content-type')??'').includes('text/event-stream')){

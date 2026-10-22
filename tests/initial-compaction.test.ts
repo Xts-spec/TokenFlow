@@ -2,7 +2,7 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {mkdtemp,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {initialParts,initialParallel,smallerParts,compactionModelWindow} from '../packages/core/src/initial-compaction.js';
+import {initialParts,initialParallel,smallerParts,compactionModelWindow,reuseInitialParts} from '../packages/core/src/initial-compaction.js';
 import {GatewayContext,type ContextMigration,type CompactionReport} from '../packages/core/src/gateway-context.js';
 import {compactionProgress} from '../packages/core/src/compaction-progress.js';
 import {upstreamIdle,finishUpstream} from '../packages/core/src/upstream-idle.js';
@@ -58,8 +58,8 @@ it('keeps later automatic growth untouched and explicit Codex compaction serial'
 });
 it('keeps initial streaming alive and communicates a failed operation without pretending it completed',async()=>{
  vi.useFakeTimers();let reject!:(error:unknown)=>void;const task=new Promise<Response>((_r,j)=>{reject=j;});const response=compactionProgress(task);const reader=response.body!.getReader();
- expect(new TextDecoder().decode((await reader.read()).value)).toContain(': token-flow');
- await vi.advanceTimersByTimeAsync(15000);expect(new TextDecoder().decode((await reader.read()).value)).toContain(': token-flow');
+ expect(new TextDecoder().decode((await reader.read()).value)).toContain('event: response.in_progress');
+ await vi.advanceTimersByTimeAsync(15000);expect(new TextDecoder().decode((await reader.read()).value)).toContain('event: response.in_progress');
  reject({code:'compaction_transport_failed',message:'Source disconnected',usage:{input_tokens:200,output_tokens:20}});
  const terminal=new TextDecoder().decode((await reader.read()).value);expect(terminal).toContain('response.failed');expect(terminal).toContain('200');expect(terminal).not.toContain('response.completed');expect((await reader.read()).done).toBe(true);expect(vi.getTimerCount()).toBe(0);
 });
@@ -94,4 +94,39 @@ it('summarizes a large completed final answer when Codex requests first-contact 
 
 it('capacity fallback strictly reduces Unicode chunks without empty or repeated children',()=>{
  expect(smallerParts('🙂')).toEqual(['🙂']);const parts=smallerParts('首🙂尾');expect(parts.join('')).toBe('首🙂尾');expect(parts.every(part=>part.length>0&&Buffer.byteLength(part)<Buffer.byteLength('首🙂尾'))).toBe(true);
+});
+
+it('retains completed original groups after new messages extend an interrupted first compaction',async()=>{
+ const {root,context}=await setup();const done=new Set<string>();let first=true;
+ await expect(context.response('responses',{model:'codex/test',input:history},'key','source',async(_path,body)=>{
+  const key=JSON.stringify(body.input);if(first){first=false;throw Error('interrupted');}done.add(key);return answer();
+ },migration)).rejects.toMatchObject({code:'compaction_transport_failed'});
+ expect(done.size).toBeGreaterThan(0);
+ const extended=[...history,{role:'assistant',content:'Additional completed work. '.repeat(3000)},{role:'user',content:'NEW_REQUIREMENT'}];
+ let reused=0;const again=await GatewayContext.open(root);await again.response('responses',{model:'codex/test',input:extended},'key','source',async(_path,body)=>{
+  if(body.instructions)expect(done.has(JSON.stringify(body.input)),'completed original group must never be paid again').toBe(false);return answer();
+ },migration,{onCompaction:r=>{reused=r.reused;}});
+ expect(reused).toBeGreaterThanOrEqual(done.size);
+});
+
+it('freezes unchanged group text and age after appends and edits, including Unicode',()=>{
+ const original='首🙂'+('older log\n'.repeat(2000))+('recent state\n'.repeat(1500))+'尾';
+ const plan=initialParts(original,4096);const appended=original+'NEW_MESSAGES_🙂'.repeat(900);
+ const extended=reuseInitialParts(appended,plan,32768);
+ expect(extended.map(p=>p.text).join('')).toBe(appended);expect(extended.slice(0,plan.length)).toEqual(plan);expect(extended.at(-1)?.detail).toBe('working-detail');
+ const changed=plan.map((part,index)=>index===2?{...part,text:part.text.replace('older','EDITED_LONGER_')}:part);
+ const edited=changed.map(p=>p.text).join('')+'next group';const reused=reuseInitialParts(edited,plan,4096);
+ expect(reused.map(p=>p.text).join('')).toBe(edited);
+ for(const [index,part]of plan.entries())if(index!==2)expect(reused).toContainEqual(part);
+});
+
+it('retains original group boundaries when an interrupted conversation is shortened and then restored',async()=>{
+ const {root,context}=await setup();const completed=new Set<string>();
+ const initialSend=async(_path:string,body:Record<string,unknown>)=>{const text=JSON.stringify(body.input);if(text.includes('Recent history: retain detailed'))throw Error('interrupted');completed.add(text);return answer();};
+ await expect(context.response('responses',{model:'codex/test',input:history},'key','source',initialSend,migration)).rejects.toMatchObject({code:'compaction_transport_failed'});
+ const shortened=[...history.slice(0,22),{role:'user',content:'Temporarily edit this branch'}];
+ await expect(context.response('responses',{model:'codex/test',input:shortened},'key','source',async()=>{throw Error('interrupted branch');},migration)).rejects.toMatchObject({code:'compaction_transport_failed'});
+ const again=await GatewayContext.open(root);let report:CompactionReport|undefined;
+ await again.response('responses',{model:'codex/test',input:history},'key','source',async(_path,body)=>{if(body.instructions)expect(completed.has(JSON.stringify(body.input))).toBe(false);return answer();},migration,{onCompaction:r=>{report=r;}});
+ expect(report?.reused).toBeGreaterThanOrEqual(completed.size);
 });

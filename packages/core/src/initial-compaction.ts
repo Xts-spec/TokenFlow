@@ -41,3 +41,29 @@ export async function initialParallel<T,R>(parts:T[],run:(part:T,index:number)=>
  }));
  if(failed)throw error;return result;
 }
+
+/** Freeze earlier group boundaries. Unchanged groups keep their text and detail
+ * even after append/edit; gaps are new work and never shift matching groups. */
+export function reuseInitialParts(transcript:string,previous:InitialPart[],contextWindow?:number):InitialPart[]{
+ if(!previous.length)return initialParts(transcript,contextWindow);
+ const result:InitialPart[]=[];let offset=0,index=0;
+ const gap=(text:string,detail:InitialPart['detail'])=>{result.push(...initialParts(text,contextWindow).map(part=>({...part,detail})));};
+ // Consume the stable prefix first. Align remaining groups backwards so an
+ // edited repetitive group cannot steal the next unchanged group's position.
+ for(;index<previous.length;index++){
+  const part=previous[index]!;if(!part.text||!transcript.startsWith(part.text,offset))break;
+  result.push(part);offset+=part.text.length;
+ }
+ const anchors:{index:number;part:InitialPart}[]=[];let end=transcript.length;
+ for(let i=previous.length-1;i>=index;i--){
+  const part=previous[i]!;if(!part.text)continue;
+  const at=transcript.lastIndexOf(part.text,end-part.text.length);if(at<offset||at+part.text.length>end)continue;
+  anchors.push({index:at,part});end=at;
+ }
+ for(const anchor of anchors.reverse()){
+  if(anchor.index>offset)gap(transcript.slice(offset,anchor.index),anchor.part.detail);
+  result.push(anchor.part);offset=anchor.index+anchor.part.text.length;
+ }
+ if(offset<transcript.length)gap(transcript.slice(offset),'working-detail');
+ return result;
+}

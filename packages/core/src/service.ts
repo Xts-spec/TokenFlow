@@ -1,3 +1,4 @@
+import {gatewayDecoding} from './gateway-decoding.js';
 import {compactionModelWindow} from './initial-compaction.js';
 import {codexWebSearch} from './codex-web-search.js';
 import {sourceFailure} from './source-failure.js';
@@ -143,7 +144,7 @@ export async function createDesktopService(options:ServiceOptions) {
     };
   };
   const provider=async()=>new ResponsesProvider(config,await key(),undefined,config.kind==='cliproxy'?cursorFetch(config.model):undefined);
-  const app=createServer({allowedOrigins:[]});
+  const app=createServer({allowedOrigins:[]});gatewayDecoding(app);
   let mutationOwner:string|undefined;
   let selectionClearOwner:string|undefined;
   const maintenanceRequests=new Set<string>();

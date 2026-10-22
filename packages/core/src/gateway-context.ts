@@ -1,4 +1,4 @@
-import {initialParts,initialParallel,smallerParts} from './initial-compaction.js';
+import {initialParts,initialParallel,smallerParts,reuseInitialParts,type InitialPart} from './initial-compaction.js';
 import {compactionProgress} from './compaction-progress.js';
 import {CODEX_AUTO_COMPACT_TOKEN_LIMIT} from './codex-model-catalog.js';
 import { createCipheriv, createDecipheriv, createHmac, randomBytes, randomUUID } from 'node:crypto';
@@ -111,6 +111,7 @@ const reply = (body:Item, headers?:Headers) => {
  * Ordinary native Responses connections retain their own state implementation.
  */
 export class GatewayContext {
+ private planLocks=new Map<string,Promise<void>>();
  private pending=new Map<string,Promise<string>>();
  private summaries=new Map<string,string>();
  private lastCachePrune=0;
@@ -121,6 +122,36 @@ export class GatewayContext {
   try{await writeFile(path,randomBytes(32),{flag:'wx',mode:0o600});}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;}
   const secret=await readFile(path);if(secret.length!==32)throw new Error('Invalid gateway context key');
   const context=new GatewayContext(directory,secret);await context.pruneSummaries();return context;
+ }
+ private async initialPlan(transcript:string,scope:ContextScope,threadId:string,contextWindow?:number,onWriteFailure?:()=>void){
+  const key=createHmac('sha256',this.secret).update(JSON.stringify({scope,threadId})).digest('hex');
+  const path=join(this.directory,'managed-plan-'+key);const pending=this.planLocks.get(key)??Promise.resolve();
+  let result:InitialPart[]=[];
+  const task=pending.catch(()=>{}).then(async()=>{
+   // Keep deduplicated group text and lightweight layouts for edited branches.
+   // A temporary shorter history must not erase the original layout.
+   let groups:InitialPart[]=[],layouts:number[][]=[];
+   const validPart=(part:Item)=>typeof part?.text==='string'&&['overview','decisions','working-detail'].includes(String(part.detail));
+   try{
+    const saved=this.unseal(await readFile(path,'utf8'),scope),ledger=saved[0],savedGroups=ledger?.groups,savedLayouts=ledger?.layouts;
+    if(ledger?.format==='group-layouts-v1'&&Array.isArray(savedGroups)&&savedGroups.every(validPart)&&Array.isArray(savedLayouts)&&savedLayouts.every((layout:unknown)=>Array.isArray(layout)&&layout.every(id=>Number.isInteger(id)&&id>=0&&id<savedGroups.length))){groups=savedGroups as InitialPart[];layouts=savedLayouts;}
+    else if(saved.every(validPart)){groups=saved as InitialPart[];layouts=[groups.map((_part,index)=>index)];}
+   }catch{/* Derived plan can be rebuilt if unavailable. */}
+   let best=-1;
+   for(const layout of layouts){
+    const previous=layout.map(id=>groups[id]!),known=new Set(previous),candidate=reuseInitialParts(transcript,previous,contextWindow);
+    const reused=candidate.reduce((bytes,part)=>bytes+(known.has(part)?Buffer.byteLength(part.text):0),0);
+    if(reused>=best){best=reused;result=candidate;}
+   }
+   if(best<=0)result=initialParts(transcript,contextWindow);
+   const groupKey=(part:InitialPart)=>createHmac('sha256',this.secret).update(part.detail).update('\0').update(part.text).digest('hex');
+   const ids=new Map(groups.map((part,index)=>[groupKey(part),index]));
+   const layout=result.map(part=>{const key=groupKey(part),existing=ids.get(key);if(existing!==undefined)return existing;const id=groups.length;groups.push(part);ids.set(key,id);return id;});
+   if(!layouts.some(saved=>saved.length===layout.length&&saved.every((id,index)=>id===layout[index])))layouts.push(layout);
+   const temp=path+'.'+randomUUID();try{await writeFile(temp,this.seal([{format:'group-layouts-v1',groups,layouts}],scope),{mode:0o600,flag:'wx'});await rename(temp,path);}catch{onWriteFailure?.();}finally{await rm(temp,{force:true}).catch(()=>{});}
+  });
+  this.planLocks.set(key,task);
+  try{await task;return result;}finally{if(this.planLocks.get(key)===task)this.planLocks.delete(key);}
  }
  private rememberSummary(key:string,text:string){
   if(this.summaries.size>=256)this.summaries.delete(this.summaries.keys().next().value!);
@@ -261,7 +292,7 @@ export class GatewayContext {
     session.state.windows=session.state.windows.filter(window=>window.hash!==hash);
     session.state.windows.push({hash,input:replacement.filter(item=>!instruction(item)),coveredUsers:[...covered]});
     await remember();
-   }:undefined,!!migration,initial?{contextWindow:migration?.contextWindowTokens,signal:options.signal}:undefined);report.failed=false;return response;}
+   }:undefined,!!migration,initial?{contextWindow:migration?.contextWindowTokens,signal:options.signal,threadId:migration?.threadId}:undefined);report.failed=false;return response;}
    finally{report.durationMs=Date.now()-started;options.onCompaction?.({...report});if(initial)options.onInitialCompaction?.(false);}
   };
   for(const field of ['store','stream'])if(body[field]!=null&&typeof body[field]!=='boolean')throw new GatewayContextError(field+' must be boolean');
@@ -368,7 +399,7 @@ export class GatewayContext {
   }));
   const headers=new Headers(response.headers);headers.delete('content-length');if(checkpoint)headers.set('x-token-flow-compaction','model-summary-v1; threshold=utf8-upper-bound');return new Response(stream,{headers});
  }
- private async compact(body:RequestBody,input:Item[],scope:ContextScope,send:Send,cacheScope:ContextScope,report:CompactionReport,persistSummaries:boolean,coveredUsers:Set<string>,remember?:(prefix:Item[],replacement:Item[],covered:Set<string>)=>Promise<void>,durable=false,initial?:{contextWindow?:number;signal?:AbortSignal}) {
+ private async compact(body:RequestBody,input:Item[],scope:ContextScope,send:Send,cacheScope:ContextScope,report:CompactionReport,persistSummaries:boolean,coveredUsers:Set<string>,remember?:(prefix:Item[],replacement:Item[],covered:Set<string>)=>Promise<void>,durable=false,initial?:{contextWindow?:number;signal?:AbortSignal;threadId?:string}) {
   // Keep recent user turns; long tool loops may compact older exchanges within
   // a turn. Never cut across an unfinished tool call.
   const budget=contextBudget(body,input,!!initial);
@@ -480,7 +511,10 @@ export class GatewayContext {
    // Rules are carried verbatim in `preserved`; summarizing them again adds
    // paid chunks without reducing the continuation, especially on IDE rollouts
    // with many developer messages. User turns stay as factual task context.
-   let transcript=summaryTranscript(prefix.filter(item=>!preserved.includes(item)));let text='';
+   const history=prefix.filter(item=>!preserved.includes(item));
+   // One complete JSON record per line has a stable prefix when new messages
+   // arrive; array closing brackets must not alter the previous final group.
+   let transcript=initial?history.map(item=>summaryTranscript([item])+'\n').join(''):summaryTranscript(history);let text='';let rawInitial=true;
    const detailed=async(value:string,detail:string):Promise<string>=>{
     try{return await summarize(`Historical transcript; ${detail}. Preserve goals, active constraints, decisions and unresolved tasks regardless of age.\n${value}`);}
     catch(error){
@@ -494,7 +528,7 @@ export class GatewayContext {
    do {
     let summaries:string[];
     if(initial){
-     const planned=initialParts(transcript,initial.contextWindow);
+     const planned=rawInitial&&initial.threadId&&persistSummaries?await this.initialPlan(transcript,cacheScope,initial.threadId,initial.contextWindow,()=>{report.cacheWriteFailed=true;}):initialParts(transcript,initial.contextWindow);rawInitial=false;
      // Cursor's SDK already accepts one generation per account; queue its
      // pieces instead of causing its existing cursor_busy response.
      try{summaries=await initialParallel(planned,part=>detailed(part.text,part.detail==='overview'?'Older history: concise overview of outcomes, not a catalog of repetitive completed logs':part.detail==='decisions'?'Middle history: retain decisions and relevant implementation details':'Recent history: retain detailed working state, exact outstanding errors and next actions'),body.model.startsWith('cursor/')?1:4);}
