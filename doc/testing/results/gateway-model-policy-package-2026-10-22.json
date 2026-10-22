@@ -1,0 +1,64 @@
+{
+  "version": "10.15.26.51",
+  "sourceCommit": "3a8913e12502f0732e4a9923048aaafe412bf084",
+  "distFilesVerified": 40,
+  "appAsarSHA256": "f620f6610c97435846035048cda6be4ecc2d74ed9502eb16392336e7bb28a79c",
+  "sidecarSHA256": "4e726ab6fd508cd604fdcd9b125c6646e42b7dd7617cfa8c5b55b96a56380fe5",
+  "workbuddyRuntimeSHA256": "722e8d7709771c5f90bfbd781bf6183827a9eb4cf04686da60028d7d6e2862a4",
+  "workbuddyRuntimeMatchesSource": true,
+  "installed": true,
+  "typecheckPassed": true,
+  "buildPassed": true,
+  "testsPassed": 256,
+  "packagedRuntimeCheckPassed": true,
+  "installedVersion": "10.15.26.51",
+  "verifiedAt": "2026-10-22T07:40:17.216069+00:00",
+  "health": {
+    "status": "ok",
+    "service": "tokenflow"
+  },
+  "runningPIDs": [
+    61239
+  ],
+  "previousVersion": "10.15.26.50",
+  "backup": "releases/installed-backups/TokenFlow-10.15.26.50.app",
+  "installedAsarSHA256": "f620f6610c97435846035048cda6be4ecc2d74ed9502eb16392336e7bb28a79c",
+  "codexRestarted": false,
+  "compactionMetadata": {
+    "generatedCatalogs": 30,
+    "modelsVerified": 186,
+    "softLimits": {
+      "128000": 145,
+      "217600": 24,
+      "400000": 17
+    },
+    "userConfigUnchanged": true,
+    "configSHA256": "91e5d20696c735aedc6a85a365f367c8bc941fd49e21213c947305972a92d5b0"
+  },
+  "packagedRuntime": {
+    "passed": true,
+    "electron": "40.10.6",
+    "platform": "darwin",
+    "arch": "arm64",
+    "checks": [
+      "native zstd request decoded by the packaged gateway",
+      "no switch-time summary; current-thread lazy bootstrap and explicit later compaction",
+      "valid expanding summaries, immediate failed-summary retry and cached continuation",
+      "production dependencies",
+      "bundled licenses",
+      "Cursor native SDK",
+      "WorkBuddy SDK import",
+      "static UI",
+      "Responses gateway",
+      "Pi repair conversation",
+      "selected usage evidence",
+      "local usage worker",
+      "Claude native account attribution",
+      "existing Qoder and both WorkBuddy edition identities",
+      "Qoder IDE switch, restore and standalone isolation",
+      "automatic LAN listener, per-key source IPs and isolated model routes",
+      "Claude Desktop subagent roles and independent menu routes",
+      "Claude Desktop external gateway drift detection"
+    ]
+  }
+}

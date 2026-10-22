@@ -1,6 +1,8 @@
 {
   "version": "10.15.26.51",
-  "installed": false,
+  "installed": true,
+  "installedVersion": "10.15.26.51",
+  "packagedRuntimeCheckPassed": true,
   "regressionTestsPassed": 256,
   "typecheckPassed": true,
   "workbuddyLocalTimersRemoved": [

@@ -27,6 +27,10 @@ SSE 行解析器保持原实现。上游通常把流式输出写成许多数据�
 - 额外诊断：若来源不论实际输入如何都持续报告 140000，而软触发仅 128000，`total` 仍可每次压缩。`body_after_prefix` 可规避该夹具重复，但忽略携带前缀对真实窗口的占用，因此此次未切换范围。不能宣称一个未知容量的统一值覆盖所有隐藏 SDK 前缀或来源用量语义；没有伪造输入用量来掩盖问题。
 - 原生测试未调用真实模型，不把合成速度冒充厂商性能。
 
-候选版本为 10.15.26.51；包内与安装核验另行记录。
+10.15.26.51 已从源码提交 `3a8913e12502f0732e4a9923048aaafe412bf084` 构建并替换运行版。40 个 dist 文件逐一匹配；包内 WorkBuddy runtime 与新源码完全一致，包内运行验证通过。安装后版本、app.asar、sidecar 与主进程均已核验，健康检查正常。
+
+30 份现有目录、186 个模型条目的触发值核验通过：145 个为 128000，24 个为 217600，17 个为 400000。真实用户 config.toml SHA-256 与更新前相同。原 10.15.26.50 与目录更新前的副本均保留，Codex 未重启；新触发值需在其下次启动时读取。
+
+[回归元数据](results/gateway-model-policy-2026-10-22.json) · [打包与安装核验](results/gateway-model-policy-package-2026-10-22.json)
 
 官方参考：[压缩统计范围](https://learn.chatgpt.com/docs/config-file/config-reference) · [Prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)。缓存复用减少重复计算与费用，不使这些上下文从窗口中消失。
