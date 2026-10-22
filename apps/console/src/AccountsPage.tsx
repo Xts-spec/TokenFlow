@@ -154,9 +154,6 @@ export function AccountsPage({local,usage,disabled,actions,notify,onContext}:{lo
       </div>
       {!account.authenticationRequired&&refreshing!==provider.id&&account.modelError&&<small className="tfWarn">{account.modelError}</small>}
       {!account.authenticationRequired&&account.retryable&&<small className="tfHint">上次请求暂时失败，可稍后重试。</small>}
-      {provider.id==='qoder'&&(account.credentialCount??0)>1&&<small className="tfHint">同一账号已保存 {account.credentialCount} 份授权，可用于 Qoder 和 Qoder IDE。</small>}
-      {provider.id==='qoder'&&account.authorizations&&account.authorizations.length>1&&<details><summary>授权明细（{account.authorizations.length} 份）</summary><ul>{account.authorizations.map(grant=><li key={grant.id}>{grant.source}{grant.preferred?' · 默认优先':''} · {{disabled:'已停用',expired:'已过期',revoked:'已失效',unavailable:'暂不可用',refreshable:'待刷新',usable:'模型已验证',unverified:'待验证'}[grant.status]}<br/><small>授权时间：{grant.authorizedAt?new Date(grant.authorizedAt).toLocaleString():'未知'} · 最近刷新：{grant.refreshedAt?new Date(grant.refreshedAt).toLocaleString():'未知'} · 到期：{grant.expiresAt?new Date(grant.expiresAt).toLocaleString():'未知'}</small></li>)}</ul><small className="tfHint">调用时优先选择支持所选模型的可用授权；访问令牌过期时先尝试刷新。</small></details>}
-
       <div className="tfAccountColumns">
        <section className="tfQuotaSide" aria-label="账号额度"><h3>额度</h3>{account.authenticationRequired?<p className="tfWarn">{account.modelError||'登录授权已失效，请重新授权。'}</p>:refreshing===provider.id||local.quotaBusy?<LoadingSkeleton label="正在加载账号额度"/>:quota&&!account.disabled?<QuotaDetails quota={quota} label={account.label} compact/>:<small className="tfHint">{account.disabled?'已停用，不参与调用':'额度暂未提供'}</small>}</section>
        <ColumnDivider storageKey="token-flow.layout.account-split" label="调整额度与模型宽度"/>

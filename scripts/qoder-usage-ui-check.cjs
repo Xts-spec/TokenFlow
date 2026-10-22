@@ -43,7 +43,7 @@ const assert=require('node:assert/strict');
   assert.match(await evaluate('document.querySelector(".tfUsageFoldHead").innerText'),/160/);
   assert.match(await evaluate('document.querySelector(".tfPanel").innerText'),/company-model/);await screenshot('qoder-ide.png');
   await click('账号授权');await wait('!!document.querySelector(".tfProviderHead")');
-  await click('授权明细（2 份）','summary');assert.match(await evaluate('document.querySelector(".tfAccountDetail").innerText'),/默认优先.*模型已验证/s);assert.match(await evaluate('document.querySelector(".tfAccountDetail").innerText'),/Qoder IDE.*已过期/s);assert.match(await evaluate('document.querySelector(".tfAccountDetail").innerText'),/授权时间：未知/);
+  assert.doesNotMatch(await evaluate('document.querySelector(".tfAccountDetail").innerText'),/同一账号已保存|授权明细|调用时优先选择|授权时间：/);
   assert.match(await evaluate('document.querySelector(".tfAccountsPage .tfUsageFold").innerText'),/120/);
   assert.doesNotMatch(await evaluate('document.querySelector(".tfAccountsPage .tfUsageFold").innerText'),/Credits/);
   await evaluate('document.querySelector(".tfAccountsPage .tfUsageFoldHead").click()');await wait('!!document.querySelector(".tfUsagePopover")');
