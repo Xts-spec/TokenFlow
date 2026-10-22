@@ -3,7 +3,7 @@ import {mkdtemp,mkdir,writeFile,readFile,readdir,rm,realpath,stat,symlink} from 
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {DatabaseSync} from 'node:sqlite';
-import {CodexThreadMigration,needsInitialCodexCompaction,type MigrationClient} from '../packages/core/src/codex-thread-migration.js';
+import {CodexThreadMigration,type MigrationClient} from '../packages/core/src/codex-thread-migration.js';
 import {CodexHistoryBackups} from '../packages/core/src/codex-history-backups.js';
 async function fixture(){
  const root=await mkdtemp(join(await realpath(tmpdir()),'thread-migration-')),home=join(root,'codex');await mkdir(home);
@@ -11,7 +11,7 @@ async function fixture(){
  const db=new DatabaseSync(join(home,'state_5.sqlite'));db.exec('create table threads(id text,model_provider text,model text,rollout_path text,source text,archived integer)');
  for(const [id,provider,source,archived] of [['old','openai','vscode',0],['cli','openai','cli',0],['custom','other','vscode',0],['archived','openai','vscode',1],['test','openai','exec',0],['subagent','openai','{"subagent":1}',0],['draft','openai','vscode',0]] as const){const path=join(home,`${id}.jsonl`);await writeFile(path,`{"history":"${id}"}\n`);db.prepare('insert into threads values (?,?,?,?,?,?)').run(id,provider,id==='draft'?null:'native',path,source,archived);}
  let running=false,failOn='',archiveFailure=false,calls=0,compactionFailure=false;const compacted:string[]=[];
- const client=async():Promise<MigrationClient>=>({pid:100,setArchived:async(id,archived)=>{if(archived&&archiveFailure)throw Error('archive fixture failure');db.prepare('update threads set archived=? where id=?').run(Number(archived),id);},close:async()=>{},resume:async(id,provider,model,compact)=>{calls++;if(id===failOn)throw Error('fixture failure');const row=db.prepare('select rollout_path from threads where id=?').get(id);await readFile(String(row?.rollout_path));db.prepare('update threads set model_provider=?,model=? where id=?').run(provider,model,id);if(compact){compacted.push(id);if(compactionFailure)throw Error('compaction fixture failure');}}});
+ const client=async():Promise<MigrationClient>=>({pid:100,setArchived:async(id,archived)=>{if(archived&&archiveFailure)throw Error('archive fixture failure');db.prepare('update threads set archived=? where id=?').run(Number(archived),id);},close:async()=>{},resume:async(id,provider,model,compact?:boolean)=>{calls++;if(id===failOn)throw Error('fixture failure');const row=db.prepare('select rollout_path from threads where id=?').get(id);await readFile(String(row?.rollout_path));db.prepare('update threads set model_provider=?,model=? where id=?').run(provider,model,id);if(compact){compacted.push(id);if(compactionFailure)throw Error('compaction fixture failure');}}});
  const migration=new CodexThreadMigration(root,join(home,'config.toml'),async()=>running?[99]:[],client);
  return {root,home,db,migration,compacted,setCompactionFailure:(v:boolean)=>compactionFailure=v,reopen:()=>new CodexThreadMigration(root,join(home,'config.toml'),async()=>running?[99]:[],client),setArchiveFailure:(v:boolean)=>archiveFailure=v,setRunning:(v:boolean)=>running=v,setFailure:(v:string)=>failOn=v,calls:()=>calls,close:async()=>{db.close();await rm(root,{recursive:true,force:true});}};
 }
@@ -255,24 +255,15 @@ it.each(['directory','relative','symlink'])('validates live history before reusi
  }finally{await f.close();}
 });
 
-it('asks Codex to compact large first histories, retries after a route was already persisted, and does not repeat completed work',async()=>{
+it('backs up and switches large histories without starting any compaction',async()=>{
  const f=await fixture();try{
   const original=JSON.stringify({type:'response_item',payload:{role:'assistant',content:'old work '.repeat(40000)}})+'\n';
   await writeFile(join(f.home,'old.jsonl'),original);await f.migration.prepare('gateway');f.setCompactionFailure(true);
-  await expect(f.migration.migrate('gateway')).rejects.toThrow('compaction fixture failure');
+  // Upgrade from .43 must ignore its unfinished switch-time compaction marker.
+  for(const name of await readdir(join(f.root,'codex-thread-backups'))){const path=join(f.root,'codex-thread-backups',name,'manifest.json');const journal=JSON.parse(await readFile(path,'utf8'));for(const entry of journal.entries){entry.compactionChecked=true;entry.initialCompaction='pending';}await writeFile(path,JSON.stringify(journal));}
+  await f.migration.migrate('gateway');expect(f.compacted).toEqual([]);
   expect(f.db.prepare("select model_provider from threads where id='old'").get()?.model_provider).toBe('token_flow');
   expect(await readFile(join(f.home,'old.jsonl'),'utf8')).toBe(original);
-  f.setCompactionFailure(false);await f.reopen().migrate('gateway');expect(f.compacted).toEqual(['old','old']);
-  await f.reopen().migrate('gateway');expect(f.compacted).toEqual(['old','old']);
-  await f.reopen().restore();expect(f.compacted).toEqual(['old','old']);
+  await f.reopen().migrate('gateway');await f.reopen().restore();expect(f.compacted).toEqual([]);
  }finally{await f.close();}
-});
-it('counts only the current history window when deciding the first Codex compact task',()=>{
- const event=(payload:unknown)=>JSON.stringify({type:'response_item',payload})+'\n';
- const old=event({role:'assistant',content:'x'.repeat(300000)});
- expect(needsInitialCodexCompaction(old)).toBe(true);
- expect(needsInitialCodexCompaction(old+JSON.stringify({type:'compacted',payload:{replacement_history:[{role:'assistant',content:'small saved summary'}]}}))).toBe(false);
- expect(needsInitialCodexCompaction(event({type:'compaction',encrypted_content:'official-opaque'}))).toBe(true);
- expect(needsInitialCodexCompaction(old+event({type:'compaction',encrypted_content:'tfctx1.saved'})+event({role:'user',content:'continue'}))).toBe(false);
- expect(needsInitialCodexCompaction(event({type:'compaction',encrypted_content:'tfctx1.saved'})+old)).toBe(true);
 });

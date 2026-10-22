@@ -1,3 +1,4 @@
+import {CODEX_AUTO_COMPACT_TOKEN_LIMIT} from './codex-model-catalog.js';
 import { createCipheriv, createDecipheriv, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile, rename, rm, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -10,7 +11,7 @@ type RequestBody = Item & {model:string};
 export type ContextScope = {owner:string; model:string; source:string};
 export type CompactionReport={inputBytes:number;outputBytes:number;calls:number;reused:number;durationMs:number;inputTokens:number|null;outputTokens:number|null;cachedTokens:number|null;cacheWriteTokens:number|null;reasoningTokens:number|null;failed:boolean;unmetered:boolean;cacheWriteFailed?:boolean};
 export type ContextOptions={onCompaction?:(report:CompactionReport)=>void;onUsageIncomplete?:()=>void};
-export type ContextMigration = {scope:ContextScope;threadId?:string;connectionId?:string;recover:(item:Item)=>Promise<Item[]>;normalize?:(item:Item)=>Item[]};
+export type ContextMigration = {bootstrapOnFirstRequest?:boolean;scope:ContextScope;threadId?:string;connectionId?:string;recover:(item:Item)=>Promise<Item[]>;normalize?:(item:Item)=>Item[]};
 type ManagedWindow={hash:string;input:Item[];coveredUsers:string[]};
 type ManagedSession={initialized:boolean;connectionId?:string;foreign:string[];windows:ManagedWindow[]};
 type Send = (path:string, body:Item) => Promise<Response>;
@@ -270,11 +271,14 @@ export class GatewayContext {
    return new Response(events.map((event,sequence_number)=>'event: '+event.type+'\ndata: '+JSON.stringify({...event,sequence_number})+'\n\n').join(''),{headers:{'content-type':'text/event-stream','x-token-flow-compaction':'model-summary-v1'}});
   }
   let checkpoint:Item|undefined;let summaryUsage:unknown;
-  if(body.context_management!=null){
-   const rules=body.context_management;
+  // Bootstrap only the current managed conversation at its first request for
+  // this connection. Reuse saved prefixes before measuring the remaining work.
+  // Later tool turns always wait for Codex's explicit compaction request.
+  const firstRequest=migration?.bootstrapOnFirstRequest&&migration.connectionId&&session&&(!session.state.initialized||session.state.connectionId!==migration.connectionId);
+  if(body.context_management!=null||firstRequest){
+   const rules=body.context_management??[{type:'compaction',compact_threshold:CODEX_AUTO_COMPACT_TOKEN_LIMIT*4}];
    if(!Array.isArray(rules)||rules.length!==1||!object(rules[0])||rules[0].type!=='compaction'||!Number.isSafeInteger(rules[0].compact_threshold)||Number(rules[0].compact_threshold)<=0)throw new GatewayContextError('context_management requires one compaction rule with a positive compact_threshold');
-   // Only an explicit caller request enters this path. Ordinary managed
-   // Codex traffic never starts a gateway-owned compaction pass.
+   // A soft bootstrap target, never a request rejection or per-turn limit.
    if(size(input)>=Number(rules[0].compact_threshold)){
     const compacted=await compact(input);if(!compacted.ok)return compacted;
     const result=await json(compacted);checkpoint=items(result.output).at(-1);summaryUsage=result.usage;

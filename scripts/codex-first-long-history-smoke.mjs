@@ -16,8 +16,8 @@ import {randomUUID} from 'node:crypto';
 import YAML from 'yaml';
 import {GatewayContext} from '../packages/core/src/gateway-context.ts';
 import {CodexContext,codexContextScope,portableCodexItem} from '../packages/core/src/codex-context.ts';
-import {codexMigrationClient,needsInitialCodexCompaction} from '../packages/core/src/codex-thread-migration.ts';
 import {AgentConnections} from '../packages/core/src/agent-connections.ts';
+assert.ok(!process.argv.includes('--migration-bootstrap'),'Switch-time compaction was removed; run without --migration-bootstrap to test lazy first continuation.');
 const root=await mkdtemp(join(await realpath(tmpdir()),'tf-first-long-history-'));
 const binary=process.argv[2]??'/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex';
 const clientOnly=process.argv.includes('--client-only'),live=process.argv.includes('--live');
@@ -85,7 +85,7 @@ const server=createServer(async(req,res)=>{
   entry.status=200;return synthetic(forward,summary||localCompact?`Goal: preserve ${hasAnchor?marker:'ANCHOR_MISSING'}. Archived directory checks are complete. Continue with the latest user instruction.`:hasAnchor?marker:'ANCHOR_MISSING');
  };
  try{
-  const response=phase===0?await send('responses',body):await context.response(req.url.endsWith('/compact')?'responses/compact':'responses',body,'fixture-key','fixture-source',send,{scope:codexContextScope,connectionId:'test-gateway',...(clientOnly?{}:{threadId:req.headers.session_id??req.headers['session-id']}),recover:item=>migration.recover(item,[]),normalize:portableCodexItem},{onCompaction:report=>reports.push(report)});
+  const response=phase===0?await send('responses',body):await context.response(req.url.endsWith('/compact')?'responses/compact':'responses',body,'fixture-key','fixture-source',send,{bootstrapOnFirstRequest:true,scope:codexContextScope,connectionId:'test-gateway',...(clientOnly?{}:{threadId:req.headers.session_id??req.headers['session-id']}),recover:item=>migration.recover(item,[]),normalize:portableCodexItem},{onCompaction:report=>reports.push(report)});
   res.writeHead(response.status,Object.fromEntries(response.headers));if(response.body)for await(const chunk of response.body)res.write(chunk);res.end();
  }catch(error){console.log(JSON.stringify({gatewayError:{code:error.code,status:error.statusCode}}));res.writeHead(error.statusCode??500,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:error.message,code:error.code}}));}
 });
@@ -123,8 +123,8 @@ try{
  const connections=new AgentConnections(root,{codex:join(root,'config.toml')},async()=>[]);
  await connections.apply({target:'codex',revision:(await connections.status()).find(item=>item.id==='codex').revision,origin,model,sourceId:'a'.repeat(24),keyId:randomUUID(),key:'fixture-key'});
  const appliedConfig=await readFile(join(root,'config.toml'),'utf8');assert.ok(!/^model_auto_compact_token_limit\s*=/m.test(appliedConfig),'seed-only threshold leaked into the gateway test');
- phase=1;let bootstrapCompactions=0;
- if(process.argv.includes('--migration-bootstrap')&&needsInitialCodexCompaction(saved)){const bootstrap=await codexMigrationClient(root,binary);try{await bootstrap.resume(threadId,'token_flow',model,true);bootstrapCompactions++;}finally{await bootstrap.close();}}
+ assert.equal(reports.length,0,'switching must not start compaction');
+ phase=1;const bootstrapCompactions=0;
  client=await start();await client.rpc('thread/resume',{threadId,model,modelProvider:'token_flow',approvalPolicy:'never',sandbox:'read-only'});
  const continuation='Continue the archived task. Reply only with the exact audit marker from the earliest task requirement. Do not call tools or read files.';
  turnResult=await client.turn(threadId,continuation);const firstTurnStatus=turnResult.status;const firstError=turnResult.error;
