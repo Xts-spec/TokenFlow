@@ -104,7 +104,9 @@ export class QoderIdeLogin {
   if(restore&&(!journal||journal.state==='restored'))throw conflict('没有可恢复的 Qoder IDE 原登录备份。');
   if(journal&&journal.state!=='restored'){
    if(journal.path!==this.path())throw conflict('Qoder IDE 登录目录已变化，已保留原备份。');
-   if(journal.state==='prepared'&&!restore)throw conflict('上次切换未完成，请先恢复原登录。');
+   // An explicit new selection supersedes the previous switch; do not first restore
+   // old credentials over an external login. Revision/SQLite checks still apply.
+   if(!restore){if(state[0])await this.identity(state[0]);return;}
    const exact=[journal.after,...(restore?[journal.before,journal.pendingBefore]:[])].some(s=>nativeDigest(s)===revision);
    if(!exact&&!(restore&&state[0]===null)){
     const identity=state[0]?await this.identity(state[0]):null;

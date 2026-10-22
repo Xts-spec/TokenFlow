@@ -58,7 +58,8 @@ export class DesktopAccounts {
    if(this.provider!=='qoder'){const s=json(state.data);if(!s.account?.uid)return null;const text=(v:unknown)=>typeof v==='string'&&v.trim()?v.trim():undefined;return {accountId:String(s.account.uid),displayName:text(s.account.nickname)??text(s.account.displayName),email:text(s.account.email),domain:workbuddyLoginDomain(s.auth?.domain),enterpriseId:s.account.enterpriseId??''};}
    if(!decrypt||!this.options.crypto)return null;
    const s=JSON.parse(await this.options.crypto('decrypt',state.data));
-   if(s.schemaVersion!==1||!s.user?.id)throw Error();
+   if(s.schemaVersion!==1)throw Error();
+   if(!s.user?.id){if(!s.user&&!s.token&&!s.refreshToken)return null;throw Error();}
    return {accountId:String(s.user.id),email:typeof s.user.email==='string'?s.user.email:undefined,displayName:typeof s.user.name==='string'?s.user.name:undefined};
   }catch{if(decrypt)throw conflict('无法确认客户端现有登录，未覆盖原文件。请检查客户端版本或系统钥匙串。');return null;}
  }
@@ -103,7 +104,7 @@ export class DesktopAccounts {
    else{const revision=digest(state);if(refresh||this.identityCache?.revision!==revision)this.identityCache={revision,value:this.identity(state,true)};
     try{identity=await this.identityCache.value;}catch{readError='现有登录暂不可读取，请检查客户端版本与系统安全存储后刷新。';}}
   }
-  if(!identity&&state.data&&state.logout===null&&!readError)readError='检测到登录文件，但暂时无法确认账号。';
+  if(!identity&&state.data&&state.logout===null&&!readError&&this.provider!=='qoder')readError='检测到登录文件，但暂时无法确认账号。';
   return {revision:digest(state),...identity,loginState:identity?'signed-in' as const:readError?'unreadable' as const:'signed-out' as const,readError,pids:await this.processes(),backup:journal&&journal.state!=='restored'?{state:journal.state,createdAt:journal.createdAt}:null,unavailableReason:this.support()};
  }
  private async request(url:string,token:string,headers:Record<string,string>={}){
@@ -136,6 +137,9 @@ export class DesktopAccounts {
   if(restore&&(!journal||journal.state==='restored'||journal.path!==path))throw conflict('没有可恢复的原登录备份。');
   if(journal&&journal.state!=='restored'){
    if(journal.path!==path)throw conflict('官方登录目录已变化，请保留原备份并检查安装版本。');
+   // A new explicit Qoder switch may replace any readable current login or logout.
+   // Restoring the original backup still requires ownership of the current state.
+   if(this.provider==='qoder'&&!restore){if(state.data)await this.identity(state,true);return;}
    if(!(restore&&(state.data===null||state.logout!==null))&&!(journal.state==='prepared'&&digest(state)===digest(journal.before))&&digest(state)!==digest(journal.after)&&!equalIdentity(await this.identity(state,true),journal.identity))throw conflict('客户端已登录其他账号或退出登录，未覆盖当前状态。请先在客户端恢复上次切换的账号。');
   }else if(this.provider==='qoder'&&state.data)await this.identity(state,true);
  }

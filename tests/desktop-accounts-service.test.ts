@@ -13,7 +13,7 @@ it('shares Qoder authorization eligibility and keeps the two native identities i
  const path=join(root,'native/ide.vscdb'),native=join(root,'native/auth.v1.dat'),db=new DatabaseSync(path);db.exec('CREATE TABLE ItemTable (key TEXT PRIMARY KEY,value TEXT)');db.prepare('INSERT INTO ItemTable VALUES (?,?)').run('secret://aicoding.auth.userInfo',JSON.stringify(Buffer.from(JSON.stringify({id:'ide-user',email:'ide@example.test',token:'private-ide-token'}))));db.close();
  const original=JSON.stringify({schemaVersion:1,user:{id:'standalone-user',email:'standalone@example.test'},token:'private-standalone-token'});await writeFile(native,original);const originalDB=await readFile(path);
  const crypto=async(op:'encrypt'|'decrypt',value:string)=>op==='decrypt'?Buffer.from(value,'base64').toString():Buffer.from(value).toString('base64'),change=vi.fn(async(_target:string,work:()=>Promise<unknown>)=>work()),vault=new Map<string,string>();let rejected=false;
- const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async key=>vault.get(key)??'',set:async(key,value)=>{vault.set(key,value);}},agentPaths:{codex:join(root,'codex/config.toml'),claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/settings.json')},agentProcesses:async()=>[],desktopProcesses:async()=>[],nativeProcesses:async()=>[],claudeCredentialStore:null,antigravityPath:join(root,'antigravity.db'),desktopAccountChange:change,desktopAccounts:{paths:{qoder:native},crypto},qoderIde:{path,crypto,fetch:async()=>rejected?new Response('',{status:401}):new Response(JSON.stringify({id:'ide-user',email:'ide@example.test',whitelistStatus:'PASS'}))}});
+ const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async key=>vault.get(key)??'',set:async(key,value)=>{vault.set(key,value);}},agentPaths:{codex:join(root,'codex/config.toml'),claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/settings.json')},agentProcesses:async()=>[],desktopProcesses:async()=>[],nativeProcesses:async()=>[],claudeCredentialStore:null,antigravityPath:join(root,'antigravity.db'),desktopAccountChange:change,desktopAccounts:{paths:{qoder:native},crypto,fetch:async()=>new Response(JSON.stringify({id:'ide-user',email:'ide@example.test'}))},qoderIde:{path,crypto,fetch:async()=>rejected?new Response('',{status:401}):new Response(JSON.stringify({id:'ide-user',email:'ide@example.test',whitelistStatus:'PASS'}))}});
  const headers={host:'127.0.0.1:9527',authorization:'Bearer admin'};
  try{
   await service.proxy.start();const account=service.proxy.snapshot().accounts.find(a=>a.provider==='qoder')!;expect(account.label).toBe('ide@example.test');expect(account.nativeClients).toEqual(['qoder','qoder-ide']);
@@ -26,6 +26,19 @@ it('shares Qoder authorization eligibility and keeps the two native identities i
   const verify=new DatabaseSync(path,{readOnly:true});try{expect(JSON.parse(Buffer.from(JSON.parse(verify.prepare('SELECT value FROM ItemTable WHERE key=?').get('secret://aicoding.auth.userInfo')!.value as string).data).toString()).token).toBe('private-ide-token');}finally{verify.close();}
   expect(vault.has('native-login-qoder')).toBe(false);
   change.mockImplementationOnce(async(_target,work)=>{await work();throw Error('launch failed');});const unconfirmed=await service.app.inject({url:'/api/native-accounts/qoder-ide/switch',method:'POST',headers,payload:{sourceId:account.id,revision:restored.json().revision}});expect(unconfirmed.statusCode).toBe(409);expect(unconfirmed.json().error).toContain('原登录备份仍保留');expect((await service.app.inject({url:'/api/native-accounts/qoder-ide',headers})).json().backup).toMatchObject({state:'applied'});
+  // A new selection must directly replace either a later manual login or logout.
+  for(const target of ['qoder','qoder-ide']){
+   const url=`/api/native-accounts/${target}`,status=async()=>(await service.app.inject({url,headers})).json(),switchTo=(revision:string)=>service.app.inject({url:url+'/switch',method:'POST',headers,payload:{sourceId:account.id,revision}});
+   const first=await switchTo((await status()).revision);expect(first.statusCode,first.body).toBe(200);const oldRevision=first.json().revision;
+   if(target==='qoder')await writeFile(native,JSON.stringify({schemaVersion:1,user:{id:'manual-other'},token:'manual-token'}));
+   else{const db=new DatabaseSync(path);db.prepare('INSERT OR REPLACE INTO ItemTable VALUES (?,?)').run('secret://aicoding.auth.userInfo',JSON.stringify(Buffer.from(JSON.stringify({id:'manual-other',token:'manual-token'}))));db.close();}
+   expect((await switchTo(oldRevision)).statusCode).toBe(409);
+   const manual=await status();expect(manual.accountId).toBe('manual-other');const direct=await switchTo(manual.revision);expect(direct.statusCode,direct.body).toBe(200);expect(direct.json().accountId).toBe('ide-user');
+   if(target==='qoder')await rm(native);else{const db=new DatabaseSync(path);db.prepare('DELETE FROM ItemTable WHERE key=?').run('secret://aicoding.auth.userInfo');db.close();}
+   const loggedOut=await status();expect(loggedOut.loginState).toBe('signed-out');const again=await switchTo(loggedOut.revision);expect(again.statusCode,again.body).toBe(200);expect(again.json().accountId).toBe('ide-user');
+   const restored=await service.app.inject({url:url+'/restore',method:'POST',headers,payload:{revision:again.json().revision}});expect(restored.statusCode,restored.body).toBe(200);
+  }
+
  }finally{await service.app.close();await rm(root,{recursive:true,force:true});}
 });
 it('switches and restores desktop logins without removing independent custom gateway models',async()=>{
@@ -105,7 +118,7 @@ it('imports both detected Qoder editions into the pool and does not duplicate th
  const headers={host:'127.0.0.1:9527',authorization:'Bearer admin'};
  try{
   const imports:string[]=[];vi.spyOn(service.proxy,'importLocal').mockImplementation(async p=>{imports.push(p);return service.proxy.snapshot();});
-  await service.discoverLocal();expect(imports).toEqual(['zcode','trae']);
+  await service.discoverLocal();expect(imports).toEqual(['trae']);
   expect(service.proxy.snapshot().accounts.filter(a=>a.provider==='qoder')).toHaveLength(2);
   for(const target of ['qoder','qoder-ide']){
    const before=(await service.app.inject({url:`/api/native-accounts/${target}`,headers})).json();expect(before.loginState).toBe('signed-in');

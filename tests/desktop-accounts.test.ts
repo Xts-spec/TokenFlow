@@ -128,3 +128,17 @@ it.each(['workbuddy','workbuddy-ai'] as const)('imports %s native millisecond ex
  expect(await f.manager.importCredential()).toMatchObject({access_token:'native-access',refresh_token:'native-refresh',uid:'new',expired:'2035-01-01T00:00:00.000Z'});expect(await readFile(f.path,'utf8')).toBe(raw);
 });
 it('explains protected WorkBuddy credentials instead of importing ciphertext',async()=>{const f=await setup();await expect(f.manager.importCredential()).rejects.toThrow('加密');expect(await readFile(f.path)).toEqual(f.original);});
+
+it.each(['signed-out','other-account','signed-out-file'] as const)('directly switches Qoder from %s after an earlier switch while retaining the original backup',async state=>{
+ const f=await setup('qoder'),prepared=await f.manager.prepare(credentials());await f.manager.apply((await f.manager.status()).revision,prepared);
+ if(state==='signed-out')await rm(f.path);
+ else await writeFile(f.path,Buffer.from(await crypt('encrypt',JSON.stringify(state==='other-account'?{schemaVersion:1,user:{id:'external'},token:'external-token'}:{schemaVersion:1,user:null,token:null,refreshToken:null})),'base64'));
+ const status=await f.manager.status();if(state!=='other-account')expect(status.loginState).toBe('signed-out');
+ await f.manager.check(status.revision);await f.manager.apply(status.revision,prepared);expect(await f.manager.status()).toMatchObject({accountId:'new',backup:{state:'applied'}});
+ await f.manager.apply((await f.manager.status()).revision,null);expect(await readFile(f.path)).toEqual(f.original);
+});
+it('keeps explicit Qoder restore protected from replacing another external account',async()=>{
+ const f=await setup('qoder');await f.manager.apply((await f.manager.status()).revision,await f.manager.prepare(credentials()));
+ const external=Buffer.from(await crypt('encrypt',JSON.stringify({schemaVersion:1,user:{id:'external'},token:'external-token'})),'base64');await writeFile(f.path,external);
+ await expect(f.manager.apply((await f.manager.status()).revision,null)).rejects.toThrow('其他账号');expect(await readFile(f.path)).toEqual(external);
+});

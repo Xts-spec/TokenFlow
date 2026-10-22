@@ -87,7 +87,7 @@ it('rolls back owned rows when final vault persistence fails and recovers an int
  f.secrets.set.mockImplementation(async(key,value)=>{if(value&&JSON.parse(value).state==='applied'&&fail){fail=false;throw Error('vault unavailable');}return save(key,value);});
  await expect(f.manager.apply((await f.manager.status()).revision,prepared)).rejects.toThrow('vault unavailable');expect(allRows(f.path)).toEqual(original);expect((await f.manager.status()).backup).toBeNull();
  await f.manager.apply((await f.manager.status()).revision,prepared);const journal=JSON.parse(f.vault.get('native-login-qoder-ide')!);journal.state='prepared';f.vault.set('native-login-qoder-ide',JSON.stringify(journal));
- await expect(f.manager.check((await f.manager.status()).revision)).rejects.toThrow('上次切换');await f.manager.apply((await f.manager.status()).revision,null);expect(allRows(f.path)).toEqual(original);
+ await expect(f.manager.check((await f.manager.status()).revision)).resolves.toBeUndefined();await f.manager.apply((await f.manager.status()).revision,null);expect(allRows(f.path)).toEqual(original);
 });
 it('does not overwrite a concurrent external update or erase its recovery journal after persistence fails',async()=>{
  const f=await writable(),save=f.secrets.set.getMockImplementation()!;
@@ -103,4 +103,13 @@ it('refuses a concurrent SQLite writer and can retry after that writer exits',as
 it('passes the IDE display name into usage attribution when no email is available',async()=>{
  const f=await fixture({id:'ide-user',name:'IDE User',token:'private-ide-token'});
  expect(await f.reader.usageLogin()).toEqual({provider:'qoder',accountId:'ide-user',email:null,displayName:'IDE User'});
+});
+
+it.each(['signed-out','other-account','prepared'] as const)('directly switches Qoder IDE from %s after an earlier switch without manual restore',async state=>{
+ const f=await writable(),original=allRows(f.path),prepared=await f.manager.prepare(credential);await f.manager.apply((await f.manager.status()).revision,prepared);
+ if(state==='signed-out')put(f.path,authKey,null);
+ if(state==='other-account')put(f.path,authKey,encode({id:'external',token:'external-token'}));
+ if(state==='prepared'){const journal=JSON.parse(f.vault.get('native-login-qoder-ide')!);journal.state='prepared';f.vault.set('native-login-qoder-ide',JSON.stringify(journal));}
+ const status=await f.manager.status();await f.manager.check(status.revision);await f.manager.apply(status.revision,prepared);expect(await f.manager.status()).toMatchObject({accountId:'pooled-user',backup:{state:'applied'}});
+ await f.manager.apply((await f.manager.status()).revision,null);expect(allRows(f.path)).toEqual(original);
 });
