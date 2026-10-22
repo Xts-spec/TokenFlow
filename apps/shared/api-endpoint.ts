@@ -5,6 +5,17 @@ export function apiModelDisplayName(value:string){
  return value.replace(/^api-[a-f0-9]{24}\//,'');
 }
 
+/** Hosts where plain HTTP stays on the machine or the local network. */
+export function isLocalHttpHost(hostname:string){
+ const host=hostname.toLowerCase();
+ if(host==='localhost'||host.endsWith('.localhost')||host.endsWith('.local')||host==='[::1]')return true;
+ const parts=host.split('.');
+ if(parts.length!==4||parts.some(part=>!/^\d{1,3}$/.test(part)))return false;
+ const [a,b,c,d]=parts.map(Number);
+ if([a,b,c,d].some(part=>part>255))return false;
+ return a===10||a===127||(a===172&&b>=16&&b<=31)||(a===192&&b===168)||(a===169&&b===254);
+}
+
 /** A version suffix alone cannot distinguish OpenAI protocols. */
 export function protocolFromURL(value:string):ApiProtocol|undefined{
  try{

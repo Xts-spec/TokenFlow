@@ -21,6 +21,7 @@ describe('API source protocol detection',()=>{
  it('validates the three fields locally before any request',()=>{
   expect(()=>validateQuickSource({baseURL:'nope',apiKey:'k',model:'m'})).toThrow('API 地址');
   expect(()=>validateQuickSource({baseURL:'http://example.com/v1',apiKey:'k',model:'m'})).toThrow('HTTPS');
+  expect(validateQuickSource({baseURL:'http://10.2.6.48:9555/v1',apiKey:'k',model:'m'})).toEqual({baseURL:'http://10.2.6.48:9555/v1',models:['m']});
   expect(()=>validateQuickSource({baseURL:'https://example.com/v1',apiKey:'bad key',model:'m'})).toThrow('API Key');
   expect(()=>validateQuickSource({baseURL:'https://example.com/v1',apiKey:'k',model:' , '})).toThrow('模型名称');
   expect(validateQuickSource({baseURL:'https://example.com/v1/chat/completions/',apiKey:'k',model:'a, b\na'})).toEqual({baseURL:'https://example.com/v1',models:['a','b']});

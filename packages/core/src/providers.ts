@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { z } from 'zod';
+import { isLocalHttpHost } from '../../../apps/shared/api-endpoint.js';
 type FunctionCallItem = {
   arguments?: string;
   call_id?: string;
@@ -56,8 +57,8 @@ export const providerSchema = z.object({
     catch { ctx.addIssue({code:z.ZodIssueCode.custom,message:'请输入完整的 API 地址，例如 https://api.example.com/v1。'});return; }
     if(url.username || url.password || url.search || url.hash)
       ctx.addIssue({code:z.ZodIssueCode.custom,message:'API 地址不能包含用户名、密码、查询参数或片段。'});
-    else if(url.protocol !== 'https:' && !(url.protocol === 'http:' && ['127.0.0.1','localhost','[::1]'].includes(url.hostname)))
-      ctx.addIssue({code:z.ZodIssueCode.custom,message:'请使用 HTTPS 地址；HTTP 仅支持本机回环地址。'});
+    else if(url.protocol !== 'https:' && !(url.protocol === 'http:' && isLocalHttpHost(url.hostname)))
+      ctx.addIssue({code:z.ZodIssueCode.custom,message:'请使用 HTTPS 地址；HTTP 仅支持本机或局域网地址。'});
   }),
   model: z.string().trim().max(200),
   historyMode: z.enum(['stateless','previous_response_id']).default('stateless'),
