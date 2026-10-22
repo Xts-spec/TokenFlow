@@ -1,17 +1,23 @@
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
-const fixture=vi.hoisted(()=>({failed:false,onlyHelpers:false,windowsCodex:false,calls:[] as string[][]}));
+const fixture=vi.hoisted(()=>({failed:false,onlyHelpers:false,windowsCodex:false,windowsClaude:false,calls:[] as string[][]}));
 vi.mock('node:child_process',()=>{
  const execFile=Object.assign(()=>{}, {[Symbol.for('nodejs.util.promisify.custom')]:async(_file:string,args:string[])=>{
   fixture.calls.push(args);
   if(fixture.failed)throw Error('private-command-secret');
   if(fixture.onlyHelpers)return {stdout:'900 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Helpers/browser_crashpad_handler\n901 /Users/test/.codex/computer-use/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService\n'};
   if(_file==='tasklist')return {stdout:fixture.windowsCodex?'"Codex.exe","1001"\n"CodexCLI.exe","1002"\n"ChatGPT.exe","1003"\n"node.exe","555"':'"Pi Agent Desktop.exe","999"\n"node.exe","555"'};
-  if(_file==='powershell.exe')return {stdout:JSON.stringify([{ProcessId:555,CommandLine:'"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\test\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js" --api-key private-command-secret'},{ProcessId:777,CommandLine:'node unrelated.js --prompt pi'}])};
+  if(_file==='powershell.exe')return {stdout:JSON.stringify(fixture.windowsClaude?[
+   {ProcessId:3001,Name:'Claude.exe',ExecutablePath:'C:\\Program Files\\WindowsApps\\AnthropicPBC.Claude_3.1623.0.0_x64__fnn82j28hfe8t\\app\\Claude.exe',CommandLine:'"C:\\Program Files\\WindowsApps\\AnthropicPBC.Claude_3.1623.0.0_x64__fnn82j28hfe8t\\app\\Claude.exe"'},
+   {ProcessId:3002,Name:'claude.exe',ExecutablePath:'C:\\Users\\test\\AppData\\Local\\Claude-3p\\claude-code\\2.1.304\\aed62990\\claude.exe',CommandLine:'"C:\\Users\\test\\AppData\\Local\\Claude-3p\\claude-code\\2.1.304\\aed62990\\claude.exe" --output-format stream-json'},
+   {ProcessId:3003,Name:'claude.exe',ExecutablePath:'C:\\Users\\test\\.local\\bin\\claude.exe',CommandLine:'"C:\\Users\\test\\.local\\bin\\claude.exe"'},
+   {ProcessId:3004,Name:'node.exe',ExecutablePath:'C:\\Program Files\\nodejs\\node.exe',CommandLine:'"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\test\\node_modules\\@anthropic-ai\\claude-code\\cli.js" --api-key private-command-secret'},
+   {ProcessId:3005,Name:'node.exe',ExecutablePath:'C:\\Program Files\\nodejs\\node.exe',CommandLine:'"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\test\\unrelated.js" claude.exe'}
+  ]:[{ProcessId:555,CommandLine:'"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\test\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js" --api-key private-command-secret'},{ProcessId:777,CommandLine:'node unrelated.js --prompt pi'}])};
   return {stdout:args.includes('pid=,comm=')?'123 node\n456 node\n678 node\n789 pi\n880 /Applications/Claude.app/Contents/MacOS/Claude\n881 /Applications/Claude.app/Contents/Frameworks/Claude Helper.app/Contents/MacOS/Claude Helper\n882 /Users/test/.local/bin/claude\n883 /Users/test/.npm-global/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe\n884 /Users/test/.local/share/claude/versions/2.1.121\n222 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT\n223 /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex\n224 /Applications/Codex.app/Contents/MacOS/Codex\n225 /usr/local/bin/codex\n900 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Helpers/browser_crashpad_handler\n901 /Users/test/.codex/computer-use/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService\n902 /Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex-code-mode-host\n903 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)\n999 /Applications/Pi Agent Desktop.app/Contents/MacOS/Pi Agent Desktop\n':'123 node /fixture/bin/dsh --api-key private-command-secret\n456 node /fixture/unrelated.js --prompt dsh\n678 node /fixture/@earendil-works/pi-coding-agent/dist/bundle/cli.js --api-key private-command-secret\n'};
  }});return {execFile};
 });
 import {agentProcesses} from '../packages/core/src/agent-connections';
-beforeEach(()=>{fixture.failed=false;fixture.onlyHelpers=false;fixture.windowsCodex=false;fixture.calls=[];});
+beforeEach(()=>{fixture.failed=false;fixture.onlyHelpers=false;fixture.windowsCodex=false;fixture.windowsClaude=false;fixture.calls=[];});
 const platformDescriptor=Object.getOwnPropertyDescriptor(process,'platform')!;
 afterEach(()=>{Object.defineProperty(process,'platform',platformDescriptor);vi.restoreAllMocks();});
 it('identifies a DeepSeek Node launcher without treating prompt arguments as program names or exposing them',async()=>{
@@ -40,3 +46,9 @@ it('blocks on real Codex clients but ignores crash reporters and helpers that su
 it('allows migration once the Mac desktop exits even while its crash reporter remains',async()=>{fixture.onlyHelpers=true;expect(await agentProcesses('codex')).toEqual([]);});
 
 it('does not block Claude Code installation on the Claude desktop chat app',async()=>{expect(await agentProcesses('claude')).toEqual([882,883,884]);});
+
+it('ignores Claude Desktop and its embedded helper on Windows but keeps standalone Claude Code',async()=>{
+ Object.defineProperty(process,'platform',{value:'win32',configurable:true});fixture.windowsClaude=true;
+ expect(await agentProcesses('claude')).toEqual([3003,3004]);
+ expect(fixture.calls[0]).toContain('-EncodedCommand');
+});

@@ -2,7 +2,7 @@ import {macAppIdentity} from './agent-lifecycle.js';
 import {codexDefaultModel} from './codex-runtime.js';
 import { a2aCapabilities } from '@cua-sample/contracts/a2a';
 import { readFile, writeFile, mkdir, rename, lstat, unlink, open, rm, mkdtemp, copyFile, chmod, realpath } from 'node:fs/promises';
-import { basename, dirname, join, resolve, parse as parsePath } from 'node:path';
+import { basename, dirname, join, resolve, parse as parsePath, win32 } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -66,15 +66,40 @@ export async function agentProcesses(target:Target|'antigravity'|'workbuddy-ai'|
         const desktop=(await new WindowsAgentLifecycle().processes(target)).map(p=>p.pid);
         if(target!=='deepseek'||desktop.length)return desktop;
       }
+      if(target==='claude'){
+        // Claude Desktop ships its own Claude.exe tree and an embedded Claude Code helper.
+        // Only the standalone CLI counts as a Claude Code session.
+        const runtime=basename(process.execPath).replaceAll("'","''");
+        const script=`Get-CimInstance Win32_Process -Filter "Name='claude.exe' OR Name='node.exe' OR Name='${runtime}'" | Select-Object ProcessId,Name,ExecutablePath,CommandLine | ConvertTo-Json -Compress`;
+        const result=await exec('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{timeout:15000,maxBuffer:2*1024*1024,windowsHide:true});
+        const rows=result.stdout.trim()?JSON.parse(result.stdout):[];
+        const desktopRoots=[process.env.LOCALAPPDATA&&win32.join(process.env.LOCALAPPDATA,'Claude-3p'),process.env.LOCALAPPDATA&&win32.join(process.env.LOCALAPPDATA,'AnthropicClaude'),process.env.LOCALAPPDATA&&win32.join(process.env.LOCALAPPDATA,'Programs','Claude'),process.env.LOCALAPPDATA&&win32.join(process.env.LOCALAPPDATA,'Claude')].filter((root):root is string=>!!root);
+        const desktop=(path:string)=>{
+          const normalized=win32.normalize(path).toLowerCase();
+          if(/[\\/]windowsapps[\\/]anthropicpbc\.claude_/.test(normalized))return true;
+          // Desktop installs also live in another user's profile; match the layout, not only the current home.
+          if(/[\\/]appdata[\\/]local[\\/](?:claude-3p[\\/]claude-code|anthropicclaude|programs[\\/]claude|claude)[\\/]/.test(normalized))return true;
+          return desktopRoots.some(root=>{const base=win32.normalize(root).toLowerCase();return normalized===base||normalized.startsWith(base+win32.sep);});
+        };
+        const launcher=/[\\/]@anthropic-ai[\\/]claude-code[\\/]cli\.js$/i;
+        return [...new Set((Array.isArray(rows)?rows:[rows]).flatMap(row=>{
+          if(!Number.isInteger(row?.ProcessId)||row.ProcessId<=1||row.ProcessId===process.pid)return [];
+          const quote=typeof row.CommandLine==='string'?row.CommandLine.match(/^\s*(?:"([^"]+)"|(\S+))/):null;
+          const first=typeof row.ExecutablePath==='string'&&row.ExecutablePath?row.ExecutablePath:quote?.[1]??quote?.[2];
+          if(typeof first==='string'&&/[\\/]claude\.exe$/i.test(first))return desktop(first)?[]:[row.ProcessId as number];
+          const m=typeof row.CommandLine==='string'?row.CommandLine.match(/^\s*(?:"[^"]*"|\S+)\s+(?:"([^"]+)"|'([^']+)'|(\S+))/):null;
+          return m&&launcher.test(m[1]??m[2]??m[3]??'')?[row.ProcessId as number]:[];
+        }))];
+      }
       const {stdout}=await exec('tasklist',['/FO','CSV','/NH'],{timeout:15000,maxBuffer:2*1024*1024});
       const names=target==='deepseek'?'dsh':`${target}${target==='antigravity'?'(?: IDE)?':''}`;
       const found=stdout.split('\n').flatMap(line=>{const m=line.match(/^"([^"]+)","(\d+)"/);return m&&new RegExp(`^${names}(?:\\.exe)?$`,'i').test(m[1])?[Number(m[2])]:[];});
-      if(!['pi','deepseek','claude'].includes(target))return found;
+      if(!['pi','deepseek'].includes(target))return found;
       const runtime=basename(process.execPath).replaceAll("'","''");
       const script=`Get-CimInstance Win32_Process -Filter "Name='node.exe' OR Name='${runtime}'" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress`;
       const result=await exec('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{timeout:15000,maxBuffer:2*1024*1024,windowsHide:true});
       const nodes=result.stdout.trim()?JSON.parse(result.stdout):[];
-      const launcher=target==='pi'?/[\\/](?:@earendil-works|@mariozechner)[\\/]pi-coding-agent[\\/]dist[\\/](?:bundle[\\/])?cli\.js$/i:target==='claude'?/[\\/]@anthropic-ai[\\/]claude-code[\\/]cli\.js$/i:/[\\/]@deepseek-ai[\\/]dsh[\\/]lib[\\/]bin\.js$/i;
+      const launcher=target==='pi'?/[\\/](?:@earendil-works|@mariozechner)[\\/]pi-coding-agent[\\/]dist[\\/](?:bundle[\\/])?cli\.js$/i:/[\\/]@deepseek-ai[\\/]dsh[\\/]lib[\\/]bin\.js$/i;
       return [...new Set([...found,...(Array.isArray(nodes)?nodes:[nodes]).flatMap(node=>{const m=typeof node.CommandLine==='string'?node.CommandLine.match(/^\s*(?:"[^"]*"|\S+)\s+(?:"([^"]+)"|(\S+))/):null;return m&&Number.isInteger(node.ProcessId)&&launcher.test(m[1]??m[2])?[node.ProcessId]:[];})])];
     }
     const {stdout}=await exec('ps',['-axo','pid=,comm='],{timeout:5000,maxBuffer:2*1024*1024});

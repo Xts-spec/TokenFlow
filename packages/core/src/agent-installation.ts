@@ -56,12 +56,14 @@ export function agentCompatibility(target:Target|'claude-desktop'|'workbuddy-ai'
 }
 const versionOf=(text:string)=>text.match(/\b(\d+\.\d+\.\d+(?:-[\w.-]+)?)\b/)?.[1];
 // Microsoft Store desktop clients install under a protected WindowsApps directory, so they are found by package identity.
-const storePackages:Partial<Record<Target,string>>={codex:'OpenAI.Codex'};
+// Claude's Store build (MSIX) also never appears in the classic Uninstall registry keys the fallback searches.
+const storePackages:Partial<Record<Target|'claude-desktop'|'workbuddy-ai'|'qoder-ide',string>>={codex:'OpenAI.Codex','claude-desktop':'AnthropicPBC.Claude',workbuddy:'WorkBuddy.WorkBuddy',qoder:'com.qodercn.app'};
+export const storePackageFor=(target:Target|'claude-desktop'|'workbuddy-ai'|'qoder-ide')=>storePackages[target];
 export type StoreApp={version?:string;location?:string;appId?:string;cli?:string};
 type PowerShell=(script:string)=>Promise<string>;
 const runPowerShell:PowerShell=async script=>(await exec('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{timeout:8000,maxBuffer:64*1024,windowsHide:true})).stdout;
 /** Fixed package name only; the optional CLI search reads the package directory and never executes anything. */
-export async function windowsStoreApp(target:Target,options:{cli?:boolean;run?:PowerShell}={}):Promise<StoreApp|undefined>{
+export async function windowsStoreApp(target:Target|'claude-desktop'|'workbuddy-ai',options:{cli?:boolean;run?:PowerShell}={}):Promise<StoreApp|undefined>{
  const name=storePackages[target];if(!name)return;
  const script=`$p=Get-AppxPackage -Name '${name}' -ErrorAction SilentlyContinue|Select-Object -First 1
 if($p){
@@ -76,9 +78,9 @@ $c=${options.cli?"Get-ChildItem -LiteralPath $p.InstallLocation -Filter codex.ex
   return {version:versionOf(text(value.version)??''),location:text(value.location),appId:text(value.appId),cli:text(value.cli)};
  }catch{return;}
 }
-const storeCache=new Map<Target,{expires:number;value:Promise<StoreApp|undefined>}>();
+const storeCache=new Map<Target|'claude-desktop'|'workbuddy-ai',{expires:number;value:Promise<StoreApp|undefined>}>();
 // Status polling asks repeatedly; avoid starting PowerShell for every refresh.
-const cachedStoreApp=(target:Target)=>{
+const cachedStoreApp=(target:Target|'claude-desktop'|'workbuddy-ai')=>{
  const cached=storeCache.get(target);if(cached&&cached.expires>Date.now())return cached.value;
  const value=windowsStoreApp(target);storeCache.set(target,{expires:Date.now()+15000,value});return value;
 };
@@ -157,8 +159,8 @@ async function desktopInstallation(target:Target|'claude-desktop'|'workbuddy-ai'
   const registered=names.length?await cachedRegistryApp(names):undefined;
   if(registered?.path)return {installed:true,channel:'application',path:registered.path,version:registered.version,download:recipes[target].download,automatic:false,...agentCompatibility(target)};
  }
- if(process.platform==='win32'&&storePackages[target as Target]){
-  const store=await cachedStoreApp(target as Target);
+ if(process.platform==='win32'&&storePackages[target]){
+  const store=await cachedStoreApp(target);
   if(store?.location)return {installed:true,channel:'application',path:store.location,version:store.version,download:recipes[target].download,automatic:false,...agentCompatibility(target)};
  }
 }

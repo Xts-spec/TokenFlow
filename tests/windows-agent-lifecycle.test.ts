@@ -1,9 +1,9 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {join,win32} from 'node:path';
 import {createPackage} from '@electron/asar';
-import {electronPackageName,electronDesktopIdentity,qoderIdeWindowsIdentity,codexCliWindowsIdentity,WindowsAgentLifecycle,type WindowsProcess,type WindowsTarget} from '../packages/core/src/windows-agent-lifecycle.js';
+import {electronPackageName,electronDesktopIdentity,qoderIdeWindowsIdentity,codexCliWindowsIdentity,windowsAppIdentity,WindowsAgentLifecycle,type WindowsProcess,type WindowsTarget} from '../packages/core/src/windows-agent-lifecycle.js';
 
 const identities={'claude-desktop':'@ant/desktop',qoder:'qoder','qoder-ide':'qoder-ide',codex:'openai-codex-electron',workbuddy:'@genie/workbuddy-desktop','workbuddy-ai':'@genie/workbuddy-desktop:international',deepseek:'@deepseek-ai/dsh-desktop'};
 const paths={'qoder-ide':'D:\\Apps\\Qoder IDE\\Qoder.exe','claude-desktop':'D:\\Apps\\Claude\\Claude.exe',qoder:'D:\\中文 程序\\Qoder\\Qoder.exe',codex:'D:\\Apps\\Codex\\Codex.exe',workbuddy:'D:\\Apps\\WorkBuddy\\WorkBuddy.exe','workbuddy-ai':'D:\\Apps\\WorkBuddy AI\\WorkBuddyAI.exe',deepseek:'D:\\Apps\\DeepSeek\\DeepSeek Harness.exe'};
@@ -25,6 +25,11 @@ function fixture(target:WindowsTarget='qoder'){
  const scripts=()=>run.mock.calls.map(([,args])=>decode(args));
  return {state,identity,run,lifecycle,scripts};
 }
+it('attributes Claude Desktop managed Claude Code processes to the desktop, not a standalone CLI',async()=>{
+ const previous=process.env.LOCALAPPDATA;process.env.LOCALAPPDATA='D:\\Local';
+ try{expect(await windowsAppIdentity(win32.join('D:\\Local','Claude-3p','claude-code','2.1.304','aed62990b91e','claude.exe'))).toBe('claude-desktop-helper');expect(await windowsAppIdentity('D:\\Apps\\Claude\\Claude.exe')).toBeUndefined();}
+ finally{if(previous===undefined)delete process.env.LOCALAPPDATA;else process.env.LOCALAPPDATA=previous;}
+});
 it.each(['qoder','qoder-ide','codex','workbuddy','workbuddy-ai','deepseek','claude-desktop'] as const)('gracefully restarts the verified %s installation, including Electron helper processes',async target=>{
  const f=fixture(target);f.state.rows.push(proc(target,{pid:101,parent:100}));
  await expect(f.lifecycle.restart(target)).resolves.toHaveProperty('message');
@@ -98,6 +103,18 @@ it('uses verified Store package registration rather than a Start menu display na
 it('refuses an unregistered running Store application before closing it',async()=>{
  const f=fixture('codex');f.state.rows=[proc('codex',{path:'C:\\Program Files\\WindowsApps\\Codex\\Codex.exe'})];f.identity.mockResolvedValue(identities.codex);
  await expect(f.lifecycle.stop('codex')).rejects.toThrow('启动入口');expect(f.scripts().some(s=>s.includes('# tokenflow:close'))).toBe(false);
+});
+it('uses verified Store package registration for the Microsoft Store Claude desktop',async()=>{
+ const f=fixture('claude-desktop');const path='C:\\Program Files\\WindowsApps\\AnthropicPBC.Claude_3.1623.0.0_x64__fnn82j28hfe8t\\Claude.exe';
+ f.state.rows=[];f.state.store=[{path,appId:'AnthropicPBC.Claude_fnn82j28hfe8t!Claude'}];f.identity.mockImplementation(async p=>p===path?identities['claude-desktop']:undefined);
+ await f.lifecycle.stop('claude-desktop');
+ f.state.beforeInspect=()=>{if(f.scripts().some(s=>s.includes('# tokenflow:open')))f.state.rows=[proc('claude-desktop',{path})];};
+ await f.lifecycle.open('claude-desktop');
+ const storeScript=f.scripts().find(s=>s.includes('# tokenflow:store'))!;
+ expect(storeScript).toContain("Get-AppxPackage -Name 'AnthropicPBC.Claude'");
+ expect(storeScript).not.toContain('OpenAI.Codex');
+ const script=f.scripts().find(s=>s.includes('# tokenflow:open'))!;
+ expect(script).toContain('shell:AppsFolder\\AnthropicPBC.Claude_fnn82j28hfe8t!Claude');
 });
 it('fails closed on a process-query error or malformed response',async()=>{
  const f=fixture();f.run.mockResolvedValue({stdout:'private invalid output'});

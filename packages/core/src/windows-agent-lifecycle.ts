@@ -3,7 +3,7 @@ import {promisify} from 'node:util';
 import {open,readFile,lstat,access} from 'node:fs/promises';
 import {win32,join} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
-import {desktopCandidates,desktopNames,windowsRegistryApp} from './agent-installation.js';
+import {desktopCandidates,desktopNames,windowsRegistryApp,storePackageFor} from './agent-installation.js';
 
 export type WindowsTarget='claude-desktop'|'qoder'|'qoder-ide'|'codex'|'workbuddy'|'workbuddy-ai'|'deepseek';
 export type WindowsRun=(file:string,args:string[])=>Promise<{stdout:string}>;
@@ -67,8 +67,11 @@ export function codexCliWindowsIdentity(path:string):string|undefined{
 }
 export async function windowsAppIdentity(path:string):Promise<string|undefined>{
  if(!win32.isAbsolute(path)||!path.toLowerCase().endsWith('.exe'))return;
- try{const identity=await electronDesktopIdentity(win32.join(win32.dirname(path),'resources','app.asar'));if(identity)return identity;}catch{}
  const base=win32.basename(path).toLowerCase();
+ // Claude Desktop spawns its managed Claude Code build from the integration data directory; it is not a standalone install.
+ const claudeHelper=process.env.LOCALAPPDATA?win32.join(process.env.LOCALAPPDATA,'Claude-3p','claude-code'):undefined;
+ if(base==='claude.exe'&&claudeHelper&&win32.normalize(path).toLowerCase().startsWith(canonical(claudeHelper)+win32.sep))return 'claude-desktop-helper';
+ try{const identity=await electronDesktopIdentity(win32.join(win32.dirname(path),'resources','app.asar'));if(identity)return identity;}catch{}
  if(base==='qoder.exe')try{return await qoderIdeWindowsIdentity(win32.join(win32.dirname(path),'resources','app'));}catch{}
  if(base==='codex.exe'||base==='codexcli.exe')try{return codexCliWindowsIdentity(path);}catch{}
 }
@@ -100,14 +103,16 @@ if($p){try{[pscustomobject]@{pid=$p.Id;parent=$_.ParentProcessId;path=$p.Path;st
   // Uninstall registration covers custom install directories that the fixed roots miss.
   const registered=await windowsRegistryApp(desktopNames[target]??[]).catch(()=>undefined);
   if(registered?.path&&win32.isAbsolute(registered.path))choices.push({path:registered.path});
-  if(target==='codex'){
+  const storePackage=storePackageFor(target);
+  if(storePackage){
    // Resolve the Store package's manifest, never a display-name match in the Start menu.
-   const text=await powershell(this.run,`# tokenflow:store\n$rows=@(Get-AppxPackage -Name 'OpenAI.Codex' | ForEach-Object {
+   const text=await powershell(this.run,`# tokenflow:store\n$rows=@(Get-AppxPackage -Name '${storePackage}' | ForEach-Object {
 $p=$_;$manifest=Get-AppxPackageManifest -Package $p.PackageFullName
-foreach($a in $manifest.Package.Applications.Application){if([IO.Path]::GetFileName([string]$a.Executable) -in @('Codex.exe','ChatGPT.exe')){[pscustomobject]@{path=(Join-Path $p.InstallLocation $a.Executable);appId=($p.PackageFamilyName+'!'+$a.Id)}}}
+foreach($a in $manifest.Package.Applications.Application){if([IO.Path]::GetFileName([string]$a.Executable) -in @('${apps[target].images.join("','")}')){[pscustomobject]@{path=(Join-Path $p.InstallLocation $a.Executable);appId=($p.PackageFamilyName+'!'+$a.Id)}}}
 })\nConvertTo-Json -Compress -InputObject @($rows)`);
-   const rows=JSON.parse(text);if(!Array.isArray(rows))throw failure('无法确认 Codex 的商店安装身份。');
-   for(const row of rows)if(typeof row.path==='string'&&win32.isAbsolute(row.path)&&typeof row.appId==='string'&&/^OpenAI\.Codex_[\w]+![\w.-]+$/.test(row.appId))choices.push(row);
+   const rows=JSON.parse(text);if(!Array.isArray(rows))throw failure(`无法确认 ${apps[target].name} 的商店安装身份。`);
+   const appIds=new RegExp(`^${storePackage.replaceAll('.','\\.')}_\\w+![\\w.-]+$`);
+   for(const row of rows)if(typeof row.path==='string'&&win32.isAbsolute(row.path)&&typeof row.appId==='string'&&appIds.test(row.appId))choices.push(row);
   }
   const verified=new Map<string,{path:string;appId?:string}>();
   for(const candidate of choices)if(await this.identity(candidate.path)===apps[target].package)verified.set(canonical(candidate.path),candidate);

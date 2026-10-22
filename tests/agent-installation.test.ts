@@ -84,8 +84,21 @@ it('finds the Microsoft Store Codex by its fixed package identity and tolerates 
  expect(scripts[0]).toContain("Get-AppxPackage -Name 'OpenAI.Codex'");expect(scripts[0]).toContain('-Filter codex.exe');
  expect(await windowsStoreApp('codex',{run:async()=>''})).toBeUndefined();
  expect(await windowsStoreApp('codex',{run:async()=>{throw Error('no powershell');}})).toBeUndefined();
- // Only packages with a known identity are queried.
- expect(await windowsStoreApp('qoder',{run:async()=>{throw Error('must not run');}})).toBeUndefined();
+ // Every supported agent with a known Store identity is queried; others never run PowerShell.
+ const workbuddy=await windowsStoreApp('workbuddy',{run:async script=>{scripts.push(script);return JSON.stringify({version:'5.8.3.0',location:'C:\\Program Files\\WindowsApps\\WorkBuddy.WorkBuddy_5.8.3.0_x64__abc',appId:'WorkBuddy.WorkBuddy_abc!App'})+'\r\n';}});
+ expect(workbuddy?.location).toContain('WorkBuddy.WorkBuddy');expect(scripts.at(-1)).toContain("Get-AppxPackage -Name 'WorkBuddy.WorkBuddy'");
+ const qoder=await windowsStoreApp('qoder',{run:async script=>{scripts.push(script);return JSON.stringify({version:'0.4.8.0',location:'C:\\Program Files\\WindowsApps\\com.qodercn.app_0.4.8.0_x64__abc',appId:'com.qodercn.app_abc!App'})+'\r\n';}});
+ expect(qoder?.location).toContain('com.qodercn.app');expect(scripts.at(-1)).toContain("Get-AppxPackage -Name 'com.qodercn.app'");
+ expect(await windowsStoreApp('workbuddy-ai',{run:async()=>{throw Error('must not run');}})).toBeUndefined();
+});
+it('finds the Microsoft Store Claude desktop by its fixed package identity',async()=>{
+ const {windowsStoreApp}=await import('../packages/core/src/agent-installation');
+ const scripts:string[]=[];
+ const found=await windowsStoreApp('claude-desktop',{run:async script=>{scripts.push(script);return JSON.stringify({version:'3.1623.0.0',location:'C:\\Program Files\\WindowsApps\\AnthropicPBC.Claude_3.1623.0.0_x64__fnn82j28hfe8t',appId:'AnthropicPBC.Claude_fnn82j28hfe8t!Claude'})+'\r\n';}});
+ expect(found).toEqual({version:'3.1623.0',location:'C:\\Program Files\\WindowsApps\\AnthropicPBC.Claude_3.1623.0.0_x64__fnn82j28hfe8t',appId:'AnthropicPBC.Claude_fnn82j28hfe8t!Claude'});
+ expect(scripts[0]).toContain("Get-AppxPackage -Name 'AnthropicPBC.Claude'");
+ // The CLI search stays Codex-specific: no codex.exe filter is injected for Claude.
+ expect(scripts[0]).not.toContain('codex.exe');
 });
 
 it('runs the required Claude installer and verifies the executable, not just package metadata',async()=>{
