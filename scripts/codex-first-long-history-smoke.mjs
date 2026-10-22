@@ -14,6 +14,8 @@ import {join} from 'node:path';
 import {homedir,tmpdir} from 'node:os';
 import {randomUUID} from 'node:crypto';
 import YAML from 'yaml';
+import {compactionModelWindow} from '../packages/core/src/initial-compaction.ts';
+import {upstreamIdle,finishUpstream} from '../packages/core/src/upstream-idle.ts';
 import {GatewayContext} from '../packages/core/src/gateway-context.ts';
 import {CodexContext,codexContextScope,portableCodexItem} from '../packages/core/src/codex-context.ts';
 import {AgentConnections} from '../packages/core/src/agent-connections.ts';
@@ -28,7 +30,8 @@ const model='codex/gpt-6-luna';const marker='LONG_HISTORY_ANCHOR_'+randomUUID().
 const runStarted=performance.now();
 const calls=[],upstream=[],progress=[],reports=[];let phase=0,child,responseID=0,turnResult,reply='',seedTools=0;
 const context=await GatewayContext.open(root),migration=new CodexContext(root,join(root,'config.toml'),context);
-let endpoint,key;
+let endpoint,key;const contextWindowTokens=live?await compactionModelWindow(model,[],join(homedir(),'.codex/config.toml')):undefined;
+console.log(JSON.stringify({modelContextWindow:contextWindowTokens??null}));
 let seedAnswer='';
 if(largeHistory){const lines=[];let bytes=0;while(bytes<1024*1024){const line=`archive/component.ts record ${lines.length}: build=${randomUUID()} dependency=${randomUUID()} validation=passed; archived synthetic fixture only.\n`;lines.push(line);bytes+=Buffer.byteLength(line);}seedAnswer=lines.join('');}
 if(live){const config=YAML.parse(await readFile(join(homedir(),'Library/Application Support/desktop-browser-agent/cliproxy/config.yaml'),'utf8'));endpoint=`http://127.0.0.1:${config.port}/v1/responses`;key=config['api-keys'][0];}
@@ -46,13 +49,14 @@ const server=createServer(async(req,res)=>{
  const body=JSON.parse(raw||'{}'),trigger=body.input?.some(item=>item.type==='compaction_trigger'),localCompact=JSON.stringify(body.input?.at(-1)).includes('CONTEXT CHECKPOINT COMPACTION');
  const request={phase,path:req.url,bytes:Buffer.byteLength(raw),items:body.input?.length,trigger:!!trigger,localCompact,model:body.model};calls.push(request);
  if(phase>0||calls.length===1)console.log(JSON.stringify({clientRequest:request}));
- const send=async(_path,forward)=>{
+ const lifetime=upstreamIdle();let initial=false;const cancel=()=>lifetime.abort();abort.signal.addEventListener('abort',cancel,{once:true});res.on('close',()=>{if(!res.writableFinished)cancel();});
+ const rawSend=async(_path,forward,clock)=>{
   const summary=forward.instructions?.startsWith('Summarize the supplied'),bytes=Buffer.byteLength(JSON.stringify(forward)),hasAnchor=JSON.stringify(forward.input).includes(marker);
   const upstreamStarted=performance.now();const entry={phase,summary:!!summary,bytes,hasAnchor,model:forward.model};upstream.push(entry);
   if(phase===0)return largeHistory?synthetic(forward,seedAnswer):synthetic(forward,'Archived directory checks completed.',seedTools++<48);
   if(live){
    assert.equal(forward.model,model,'live requests must use only the authorized selected model');
-   const result=await fetch(endpoint,{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify(forward),signal:abort.signal});
+   const result=await fetch(endpoint,{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify(forward),signal:clock.signal});
    entry.status=result.status;if(!result.ok){const error=await result.clone().json().catch(()=>null);entry.errorCode=error?.error?.code??error?.code;entry.errorType=error?.error?.type;entry.errorMessage=String(error?.error?.message??error?.message??'').slice(0,500); }console.log(JSON.stringify({upstream:entry}));
    if(!result.body||(result.headers.get('content-type')??'').indexOf('text/event-stream')<0)return result;
    const decoder=new TextDecoder();let pending='';entry.events={};
@@ -80,17 +84,22 @@ const server=createServer(async(req,res)=>{
     return line;
    };
    const stream=result.body.pipeThrough(new TransformStream({transform(chunk,controller){pending+=decoder.decode(chunk,{stream:true});let end;while((end=pending.indexOf('\n'))>=0){const line=inspect(pending.slice(0,end));pending=pending.slice(end+1);controller.enqueue(new TextEncoder().encode(line+'\n'));}},flush(controller){if(pending)controller.enqueue(new TextEncoder().encode(inspect(pending)));console.log(JSON.stringify({upstreamEnd:entry}));}}));
-   return new Response(stream,{status:result.status,headers:result.headers});
+   return clock.watch(new Response(stream,{status:result.status,headers:result.headers}));
   }
   // Fixture capacity models a source smaller than the inherited raw history.
   // This is test data, not a production gateway request limit.
   if(bytes>256*1024){entry.status=400;return Response.json({error:{message:'Your input exceeds the context window of this model. Please adjust your input and try again.',type:'invalid_request_error',code:'context_length_exceeded',param:'input'}},{status:400});}
   entry.status=200;return synthetic(forward,summary||localCompact?`Goal: preserve ${hasAnchor?marker:'ANCHOR_MISSING'}. Archived directory checks are complete. Continue with the latest user instruction.`:hasAnchor?marker:'ANCHOR_MISSING');
  };
+ const send=async(path,forward)=>{
+  const clock=initial?upstreamIdle():lifetime;const stop=()=>clock.abort();if(initial)lifetime.signal.addEventListener('abort',stop,{once:true});if(lifetime.signal.aborted)clock.abort();
+  const detach=()=>lifetime.signal.removeEventListener('abort',stop);
+  try{const result=await rawSend(path,forward,clock);return initial?finishUpstream(result,clock,detach):result;}catch(error){if(initial){clock.close();detach();}throw error;}
+ };
  try{
-  const response=phase===0?await send('responses',body):await context.response(req.url.endsWith('/compact')?'responses/compact':'responses',body,'fixture-key','fixture-source',send,{bootstrapOnFirstRequest:true,scope:codexContextScope,connectionId:'test-gateway',...(clientOnly?{}:{threadId:req.headers.session_id??req.headers['session-id']}),recover:item=>migration.recover(item,[]),normalize:portableCodexItem},{onCompaction:report=>reports.push(report)});
+  const response=phase===0?await send('responses',body):await context.response(req.url.endsWith('/compact')?'responses/compact':'responses',body,'fixture-key','fixture-source',send,{bootstrapOnFirstRequest:true,contextWindowTokens,scope:codexContextScope,connectionId:'test-gateway',...(clientOnly?{}:{threadId:req.headers.session_id??req.headers['session-id']}),recover:item=>migration.recover(item,[]),normalize:portableCodexItem},{signal:lifetime.signal,onCancel:cancel,onInitialCompaction:active=>{initial=active;if(active)lifetime.pause();else lifetime.resume();},onCompaction:report=>reports.push(report)});
   res.writeHead(response.status,Object.fromEntries(response.headers));if(response.body)for await(const chunk of response.body)res.write(chunk);res.end();
- }catch(error){console.log(JSON.stringify({gatewayError:{code:error.code,status:error.statusCode}}));res.writeHead(error.statusCode??500,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:error.message,code:error.code}}));}
+ }catch(error){console.log(JSON.stringify({gatewayError:{code:error.code,status:error.statusCode}}));res.writeHead(error.statusCode??500,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:error.message,code:error.code}}));}finally{lifetime.close();abort.signal.removeEventListener('abort',cancel);}
 });
 async function start(){
  const args=['app-server','--listen','stdio://'];

@@ -1,0 +1,88 @@
+{
+  "timing": {
+    "firstTurnMs": 3230,
+    "firstCompaction": {
+      "inputBytes": 12687088,
+      "outputBytes": 34582,
+      "calls": 141,
+      "reused": 0,
+      "durationMs": 3097,
+      "inputTokens": 8700,
+      "outputTokens": 1740,
+      "cachedTokens": null,
+      "cacheWriteTokens": null,
+      "reasoningTokens": null,
+      "failed": false,
+      "unmetered": false
+    },
+    "reuse": [
+      {
+        "durationMs": 19,
+        "status": "completed",
+        "earliestRequirementPreserved": true
+      }
+    ]
+  },
+  "passed": true,
+  "clientOnly": false,
+  "live": false,
+  "largeHistory": true,
+  "bootstrapCompactions": 0,
+  "normalizeContextError": false,
+  "remoteCompaction": false,
+  "seedThresholdCleared": true,
+  "seedReportedInputTokens": 150000,
+  "totalScope": false,
+  "persistedCompactions": 1,
+  "resumed": [
+    {
+      "durationMs": 19,
+      "status": "completed",
+      "earliestRequirementPreserved": true
+    }
+  ],
+  "firstTurnStatus": "completed",
+  "firstError": null,
+  "retryTurn": false,
+  "singleAttempt": false,
+  "knownUsage": true,
+  "model": "codex/gpt-6-luna",
+  "turnStatus": "completed",
+  "errorCode": null,
+  "historyBytes": 12666534,
+  "clientCompactions": 1,
+  "gatewayCompactions": 1,
+  "summaryCalls": 141,
+  "sourceContextErrors": 0,
+  "earliestRequirementPreserved": true,
+  "requests": [
+    {
+      "phase": 1,
+      "path": "/v1/responses",
+      "bytes": 12707010,
+      "items": 28,
+      "trigger": true,
+      "localCompact": false,
+      "model": "codex/gpt-6-luna"
+    },
+    {
+      "phase": 1,
+      "path": "/v1/responses",
+      "bytes": 96451,
+      "items": 17,
+      "trigger": false,
+      "localCompact": false,
+      "model": "codex/gpt-6-luna"
+    },
+    {
+      "phase": 1,
+      "path": "/v1/responses",
+      "bytes": 97191,
+      "items": 19,
+      "trigger": false,
+      "localCompact": false,
+      "model": "codex/gpt-6-luna"
+    }
+  ],
+  "upstreamRequests": 143
+}

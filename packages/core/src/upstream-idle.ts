@@ -10,23 +10,25 @@ export const UPSTREAM_IDLE_TIMEOUT_MS=300_000;
 export const UPSTREAM_TOTAL_TIMEOUT_MS=600_000;
 export function upstreamIdle(milliseconds=UPSTREAM_IDLE_TIMEOUT_MS,totalMilliseconds=UPSTREAM_TOTAL_TIMEOUT_MS) {
  const controller=new AbortController();
- let timeoutKind:'idle'|'total'|undefined;
+ let timeoutKind:'idle'|'total'|undefined;let paused=false;
  let timer:ReturnType<typeof setTimeout>|undefined;
  let totalTimer:ReturnType<typeof setTimeout>|undefined;
  const close=()=>{clearTimeout(timer);clearTimeout(totalTimer);};
  const touch=()=>{
   clearTimeout(timer);
-  if(!controller.signal.aborted)timer=setTimeout(()=>{timeoutKind='idle';controller.abort(new Error('Upstream idle timeout'));},milliseconds);
+  if(!paused&&!controller.signal.aborted)timer=setTimeout(()=>{timeoutKind='idle';controller.abort(new Error('Upstream idle timeout'));},milliseconds);
  };
  controller.signal.addEventListener('abort',close,{once:true});
- totalTimer=setTimeout(()=>{timeoutKind='total';controller.abort(new Error('Upstream total deadline'));},totalMilliseconds);
- touch();
+ const resume=()=>{paused=false;close();if(controller.signal.aborted)return;totalTimer=setTimeout(()=>{timeoutKind='total';controller.abort(new Error('Upstream total deadline'));},totalMilliseconds);touch();};
+ resume();
  return {
   signal:controller.signal,
   get timedOut(){return timeoutKind!==undefined;},
   get timeoutKind(){return timeoutKind;},
   abort:()=>controller.abort(),
   close,
+  pause:()=>{paused=true;close();},
+  resume,
   watch(response:Response) {
    touch();
    if(!response.body)return response;
@@ -36,4 +38,16 @@ export function upstreamIdle(milliseconds=UPSTREAM_IDLE_TIMEOUT_MS,totalMillisec
    return new Response(body,{status:response.status,statusText:response.statusText,headers:response.headers});
   }
  };
+}
+
+/** Each parallel summary has its own idle/total clock, linked to client cancel.
+ * Closing one completed child must not affect the other workers. */
+export function finishUpstream(response:Response,clock:ReturnType<typeof upstreamIdle>,detach:()=>void=()=>{}){
+ const close=()=>{clock.close();detach();};
+ if(!response.body){close();return response;}
+ const reader=response.body.getReader();
+ return new Response(new ReadableStream<Uint8Array>({
+  async pull(controller){try{const {done,value}=await reader.read();if(done){close();controller.close();reader.releaseLock();}else controller.enqueue(value);}catch(error){close();reader.releaseLock();controller.error(error);}},
+  async cancel(reason){close();await reader.cancel(reason).catch(()=>{});reader.releaseLock();}
+ }),{status:response.status,headers:response.headers});
 }

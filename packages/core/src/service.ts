@@ -1,3 +1,4 @@
+import {compactionModelWindow} from './initial-compaction.js';
 import {codexWebSearch} from './codex-web-search.js';
 import {sourceFailure} from './source-failure.js';
 import {providerUsage} from './gateway-observation.js';
@@ -25,7 +26,7 @@ import { detectProtocol, validateQuickSource, sourceNameFromURL, type ProtocolPr
 import { NativeAccounts, nativeCredentialSchema, nativeProviderSchema, type NativeProvider } from './native-accounts.js';
 import { ClaudeAccountStore, claudeSettingsState, type CredentialStore } from './claude-accounts.js';
 import { AntigravityAccountStore, antigravityDatabasePath } from './antigravity-accounts.js';
-import { upstreamIdle, UPSTREAM_IDLE_TIMEOUT_MS, UPSTREAM_TOTAL_TIMEOUT_MS } from './upstream-idle.js';
+import { upstreamIdle, finishUpstream, UPSTREAM_IDLE_TIMEOUT_MS, UPSTREAM_TOTAL_TIMEOUT_MS } from './upstream-idle.js';
 import { GatewayContext, GatewayContextError, type CompactionReport } from './gateway-context.js';
 import {CodexContext,codexContextScope,portableCodexItem} from './codex-context.js';
 import { CodexAccounts } from './codex-accounts.js';
@@ -1192,23 +1193,30 @@ export async function createDesktopService(options:ServiceOptions) {
       if(cursorModel&&proxy.snapshot().state!=='running'){record(503);await settle({inputTokens:null,outputTokens:null},false);abort.close();return reply.code(503).send({error:{message:'网关未启动',type:'provider_error'}});}
       // Resolve capability from the configured receiver, never the source model or caller headers.
       const nativeCodexReceiver=fixed?fixed.target==='codex':client?.agents.length===1&&client.agents[0]==='codex';
-      const send=async(route:string,body:unknown)=>{
+      let initialCompaction=false;
+      const send=async(route:string,body:unknown,clock=abort)=>{
         const protocol=apiSource?apiModelRoute(apiSource,(body as {model:string}).model).protocol:undefined;
         const native=apiSource&&(protocol==='responses'&&route.startsWith('responses')||protocol==='chat'&&route==='chat/completions'||protocol==='messages'&&route.startsWith('messages'));
-        if(native){const headers:Record<string,string>={};for(const name of ['anthropic-version','anthropic-beta'])if(typeof req.headers[name]==='string')headers[name]=req.headers[name];return abort.watch(await apiSources.response(apiSource.id,route,body as {model:string},abort.signal,headers));}
-        return abort.watch(await fetch(`${upstreamURL.replace(/\/$/,'')}/${route}`,{method:req.method,headers:{'X-Token-Flow-Image-Generation':nativeCodexReceiver?'allow':'deny',...(selectedAuth?{'X-Token-Flow-Auth':selectedAuth}:{}),Authorization:`Bearer ${upstreamKey}`,'Content-Type':'application/json',...(typeof req.headers['anthropic-version']==='string'?{'anthropic-version':req.headers['anthropic-version']}:{}),...(typeof req.headers['anthropic-beta']==='string'?{'anthropic-beta':req.headers['anthropic-beta']}:{}),...(typeof req.headers['x-stainless-lang']==='string'?{'x-stainless-lang':req.headers['x-stainless-lang']}:{})},body:req.method==='POST'?JSON.stringify(body):undefined,redirect:'error',signal:abort.signal}));
+        if(native){const headers:Record<string,string>={};for(const name of ['anthropic-version','anthropic-beta'])if(typeof req.headers[name]==='string')headers[name]=req.headers[name];return clock.watch(await apiSources.response(apiSource.id,route,body as {model:string},clock.signal,headers));}
+        return clock.watch(await fetch(`${upstreamURL.replace(/\/$/,'')}/${route}`,{method:req.method,headers:{'X-Token-Flow-Image-Generation':nativeCodexReceiver?'allow':'deny',...(selectedAuth?{'X-Token-Flow-Auth':selectedAuth}:{}),Authorization:`Bearer ${upstreamKey}`,'Content-Type':'application/json',...(typeof req.headers['anthropic-version']==='string'?{'anthropic-version':req.headers['anthropic-version']}:{}),...(typeof req.headers['anthropic-beta']==='string'?{'anthropic-beta':req.headers['anthropic-beta']}:{}),...(typeof req.headers['x-stainless-lang']==='string'?{'x-stainless-lang':req.headers['x-stainless-lang']}:{})},body:req.method==='POST'?JSON.stringify(body):undefined,redirect:'error',signal:clock.signal}));
       };
       const model=(req.body as {model?:string})?.model;
       const bridgeContext=(path==='responses'||path==='responses/compact')&&!!(client||config.kind==='cliproxy'||apiSource)&&typeof model==='string'&&(fixed?.target==='codex'||/^(qoder|workbuddy|cursor)\//.test(model)||!!apiSource);
       const workbuddyModel=!!model?.startsWith('workbuddy/')&&!apiSource;
       const sdkSourceId=client?.modelSources?.[model!]??client?.sourceId??proxy.snapshot().accounts.find(a=>a.provider==='workbuddy'&&!a.disabled&&a.models?.includes(model!))?.id;
-      const transport=cursorModel?async(route:string,body:unknown)=>abort.watch(await proxy.cursor.response(route,body,abort.signal,client?.modelSources?.[model!]??client?.sourceId)):workbuddyModel&&path!=='messages/count_tokens'?async(route:string,body:unknown)=>{
+      const transport=cursorModel?async(route:string,body:unknown,clock=abort)=>clock.watch(await proxy.cursor.response(route,body,clock.signal,client?.modelSources?.[model!]??client?.sourceId)):workbuddyModel&&path!=='messages/count_tokens'?async(route:string,body:unknown,clock=abort)=>{
         if(!sdkSourceId)throw new Error('WorkBuddy source unavailable');
-        return abort.watch(await workbuddySDK.response(sdkSourceId,route,body,abort.signal));
+        return clock.watch(await workbuddySDK.response(sdkSourceId,route,body,clock.signal));
       }:send;
-      const dispatch=(route:string,body:unknown)=>transport(route,nativeCodexReceiver&&route.startsWith('responses')?codexWebSearch(body as Record<string,any>):body);
+      const dispatch=async(route:string,body:unknown)=>{
+        const forward=nativeCodexReceiver&&route.startsWith('responses')?codexWebSearch(body as Record<string,any>):body;
+        if(!initialCompaction)return transport(route,forward);
+        const clock=upstreamIdle();const cancel=()=>clock.abort();abort.signal.addEventListener('abort',cancel,{once:true});if(abort.signal.aborted)clock.abort();
+        const detach=()=>abort.signal.removeEventListener('abort',cancel);
+        try{return finishUpstream(await transport(route,forward,clock),clock,detach);}catch(error){clock.close();detach();throw error;}
+      };
       const sessionId=req.headers['session_id']??req.headers['session-id'];
-      const response=bridgeContext?await gatewayContext.response(path,req.body as {model:string},client?.id??'workspace',client?.modelSources?.[model]??client?.sourceId??apiSource?.id??upstreamURL,dispatch,fixed?.target==='codex'?{bootstrapOnFirstRequest:true,scope:codexContextScope,threadId:typeof sessionId==='string'?sessionId:undefined,connectionId:client?.id,normalize:portableCodexItem,recover:async item=>codexContext.recover(item,await codexContextScopes())}:undefined,{onCompaction:report=>{compaction=report;},onUsageIncomplete:()=>{contextUsageIncomplete=true;if(compaction)compaction={...compaction,unmetered:true};}}):await dispatch(path,req.body);
+      const response=bridgeContext?await gatewayContext.response(path,req.body as {model:string},client?.id??'workspace',client?.modelSources?.[model]??client?.sourceId??apiSource?.id??upstreamURL,dispatch,fixed?.target==='codex'?{bootstrapOnFirstRequest:true,contextWindowTokens:await compactionModelWindow(model,proxy.snapshot().models,connections.paths.codex),scope:codexContextScope,threadId:typeof sessionId==='string'?sessionId:undefined,connectionId:client?.id,normalize:portableCodexItem,recover:async item=>codexContext.recover(item,await codexContextScopes())}:undefined,{signal:abort.signal,onCancel:()=>abort.abort(),onInitialCompaction:active=>{initialCompaction=active;if(active)abort.pause();else abort.resume();},onCompaction:report=>{compaction=report;},onUsageIncomplete:()=>{contextUsageIncomplete=true;if(compaction)compaction={...compaction,unmetered:true};}}):await dispatch(path,req.body);
       if(!response.ok){
         if(response.status===401){const failedSource=client?.modelSources?.[model!]??client?.sourceId;if(failedSource)refreshFailedSource(failedSource);}
         await settle({inputTokens:null,outputTokens:null},response.status>=500);

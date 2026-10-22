@@ -33,7 +33,7 @@ export async function readSummaryResponse(response:Response):Promise<Item>{
  if(!response.body)throw new Error('Summary response has no body');
  const reader=response.body.getReader();const decoder=new TextDecoder();let buffer='';
  const done=new Map<number,Item>(),deltas=new Map<string,string>();let terminal:Item|undefined;
- const safeTerminal=(value:Item):Item=>value.status==='failed'?{...value,error:upstreamError(502,JSON.stringify({error:value.error}))}:value;
+ const safeTerminal=(value:Item):Item=>value.status==='failed'?{...value,error:['context_length_exceeded','context_too_large'].includes(value.error?.code)?{code:'context_length_exceeded',type:'invalid_request_error',message:'Upstream context window exceeded.'}:upstreamError(502,JSON.stringify({error:value.error}))}:value;
  const frame=(text:string)=>{
   const data=text.split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5).trimStart()).join('\n');
   if(!data||data==='[DONE]')return;

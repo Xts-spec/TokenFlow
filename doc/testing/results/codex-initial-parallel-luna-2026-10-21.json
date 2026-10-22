@@ -1,0 +1,1734 @@
+{
+  "timing": {
+    "firstTurnMs": 126586,
+    "firstCompaction": {
+      "inputBytes": 12687954,
+      "outputBytes": 29175,
+      "calls": 42,
+      "reused": 0,
+      "durationMs": 122916,
+      "inputTokens": 4785200,
+      "outputTokens": 12016,
+      "cachedTokens": 0,
+      "cacheWriteTokens": 0,
+      "reasoningTokens": 4221,
+      "failed": false,
+      "unmetered": false
+    },
+    "reuse": [
+      {
+        "durationMs": 4172,
+        "status": "completed",
+        "earliestRequirementPreserved": true
+      }
+    ],
+    "followup": {
+      "durationMs": 36479,
+      "rawHistoryBytes": 12973825,
+      "newSummaryCalls": 5,
+      "report": {
+        "inputBytes": 315849,
+        "outputBytes": 78607,
+        "calls": 5,
+        "reused": 0,
+        "durationMs": 36327,
+        "inputTokens": 47516,
+        "outputTokens": 961,
+        "cachedTokens": 0,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 245,
+        "failed": false,
+        "unmetered": false
+      }
+    }
+  },
+  "passed": true,
+  "clientOnly": false,
+  "live": true,
+  "largeHistory": true,
+  "bootstrapCompactions": 0,
+  "normalizeContextError": false,
+  "remoteCompaction": false,
+  "seedThresholdCleared": true,
+  "seedReportedInputTokens": 100,
+  "totalScope": false,
+  "persistedCompactions": 1,
+  "resumed": [
+    {
+      "durationMs": 4172,
+      "status": "completed",
+      "earliestRequirementPreserved": true
+    }
+  ],
+  "firstTurnStatus": "completed",
+  "firstError": null,
+  "retryTurn": false,
+  "singleAttempt": false,
+  "knownUsage": false,
+  "model": "codex/gpt-6-luna",
+  "turnStatus": "completed",
+  "errorCode": null,
+  "historyBytes": 12666536,
+  "clientCompactions": 1,
+  "gatewayCompactions": 3,
+  "summaryCalls": 47,
+  "sourceContextErrors": 0,
+  "earliestRequirementPreserved": true,
+  "requests": [
+    {
+      "phase": 1,
+      "path": "/v1/responses",
+      "bytes": 12707837,
+      "items": 29,
+      "trigger": false,
+      "localCompact": false,
+      "model": "codex/gpt-6-luna"
+    },
+    {
+      "phase": 1,
+      "path": "/v1/responses",
+      "bytes": 12748764,
+      "items": 32,
+      "trigger": true,
+      "localCompact": false,
+      "model": "codex/gpt-6-luna"
+    },
+    {
+      "phase": 1,
+      "path": "/v1/responses",
+      "bytes": 89962,
+      "items": 18,
+      "trigger": false,
+      "localCompact": false,
+      "model": "codex/gpt-6-luna"
+    },
+    {
+      "phase": 1,
+      "path": "/v1/responses",
+      "bytes": 12973891,
+      "items": 61,
+      "trigger": true,
+      "localCompact": false,
+      "model": "codex/gpt-6-luna"
+    }
+  ],
+  "upstream": [
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 438522,
+      "hasAnchor": true,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 197,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 10322,
+      "usage": {
+        "input_tokens": 163552,
+        "output_tokens": 317,
+        "total_tokens": 163869,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 114
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 438425,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 154,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 8780,
+      "usage": {
+        "input_tokens": 164348,
+        "output_tokens": 228,
+        "total_tokens": 164576,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 68
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 438492,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 219,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 11075,
+      "usage": {
+        "input_tokens": 163720,
+        "output_tokens": 328,
+        "total_tokens": 164048,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 103
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 438425,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 136,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 10002,
+      "usage": {
+        "input_tokens": 164249,
+        "output_tokens": 230,
+        "total_tokens": 164479,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 88
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 438489,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 192,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 12458,
+      "usage": {
+        "input_tokens": 164056,
+        "output_tokens": 330,
+        "total_tokens": 164386,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 132
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 438428,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 166,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 14240,
+      "usage": {
+        "input_tokens": 163878,
+        "output_tokens": 308,
+        "total_tokens": 164186,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 136
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 438425,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 157,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 10681,
+      "usage": {
+        "input_tokens": 164364,
+        "output_tokens": 231,
+        "total_tokens": 164595,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 68
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 438492,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 218,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 16749,
+      "usage": {
+        "input_tokens": 163660,
+        "output_tokens": 369,
+        "total_tokens": 164029,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 145
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 438425,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 162,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 11526,
+      "usage": {
+        "input_tokens": 164281,
+        "output_tokens": 251,
+        "total_tokens": 164532,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 83
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 438490,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 213,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 10271,
+      "usage": {
+        "input_tokens": 163866,
+        "output_tokens": 350,
+        "total_tokens": 164216,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 131
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 438427,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 163,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 14573,
+      "usage": {
+        "input_tokens": 164090,
+        "output_tokens": 266,
+        "total_tokens": 164356,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 97
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 438425,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 157,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 13487,
+      "usage": {
+        "input_tokens": 164333,
+        "output_tokens": 205,
+        "total_tokens": 164538,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 42
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 438492,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 189,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 11051,
+      "usage": {
+        "input_tokens": 163620,
+        "output_tokens": 347,
+        "total_tokens": 163967,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 152
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 438425,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 129,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 10286,
+      "usage": {
+        "input_tokens": 164282,
+        "output_tokens": 217,
+        "total_tokens": 164499,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 82
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 240824,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 127,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 7364,
+      "usage": {
+        "input_tokens": 90407,
+        "output_tokens": 220,
+        "total_tokens": 90627,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 87
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 329062,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 187,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 11890,
+      "usage": {
+        "input_tokens": 122635,
+        "output_tokens": 373,
+        "total_tokens": 123008,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 180
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 328994,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 174,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 9968,
+      "usage": {
+        "input_tokens": 123331,
+        "output_tokens": 254,
+        "total_tokens": 123585,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 74
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 328995,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 147,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 9418,
+      "usage": {
+        "input_tokens": 123399,
+        "output_tokens": 207,
+        "total_tokens": 123606,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 54
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 329062,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 186,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 17135,
+      "usage": {
+        "input_tokens": 122700,
+        "output_tokens": 335,
+        "total_tokens": 123035,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 143
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 328994,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 158,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 9652,
+      "usage": {
+        "input_tokens": 123264,
+        "output_tokens": 228,
+        "total_tokens": 123492,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 64
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 328995,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 149,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 9706,
+      "usage": {
+        "input_tokens": 123383,
+        "output_tokens": 238,
+        "total_tokens": 123621,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 83
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 329062,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 206,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 12162,
+      "usage": {
+        "input_tokens": 122634,
+        "output_tokens": 331,
+        "total_tokens": 122965,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 119
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 328995,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 121,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 9966,
+      "usage": {
+        "input_tokens": 123293,
+        "output_tokens": 227,
+        "total_tokens": 123520,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 100
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 328994,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 143,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 8650,
+      "usage": {
+        "input_tokens": 123343,
+        "output_tokens": 219,
+        "total_tokens": 123562,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 70
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 329060,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 247,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 11433,
+      "usage": {
+        "input_tokens": 123015,
+        "output_tokens": 362,
+        "total_tokens": 123377,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 109
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 328997,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 188,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 9128,
+      "usage": {
+        "input_tokens": 122996,
+        "output_tokens": 271,
+        "total_tokens": 123267,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 77
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 210433,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 171,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 13098,
+      "usage": {
+        "input_tokens": 78957,
+        "output_tokens": 297,
+        "total_tokens": 79254,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 120
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 219604,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 162,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 10476,
+      "usage": {
+        "input_tokens": 82387,
+        "output_tokens": 272,
+        "total_tokens": 82659,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 104
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 219665,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 213,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 10975,
+      "usage": {
+        "input_tokens": 82310,
+        "output_tokens": 315,
+        "total_tokens": 82625,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 96
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 219609,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 166,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 10091,
+      "usage": {
+        "input_tokens": 81766,
+        "output_tokens": 342,
+        "total_tokens": 82108,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 170
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 219603,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 248,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 10476,
+      "usage": {
+        "input_tokens": 82264,
+        "output_tokens": 360,
+        "total_tokens": 82624,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 106
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 219604,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 134,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 11266,
+      "usage": {
+        "input_tokens": 82439,
+        "output_tokens": 261,
+        "total_tokens": 82700,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 121
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 219603,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 145,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 9220,
+      "usage": {
+        "input_tokens": 82425,
+        "output_tokens": 225,
+        "total_tokens": 82650,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 74
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 219666,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 225,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 13170,
+      "usage": {
+        "input_tokens": 82136,
+        "output_tokens": 361,
+        "total_tokens": 82497,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 130
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 219608,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 179,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 8067,
+      "usage": {
+        "input_tokens": 81931,
+        "output_tokens": 231,
+        "total_tokens": 82162,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 46
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 219604,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 154,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 8874,
+      "usage": {
+        "input_tokens": 82278,
+        "output_tokens": 239,
+        "total_tokens": 82517,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 79
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 219603,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 196,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 10319,
+      "usage": {
+        "input_tokens": 82447,
+        "output_tokens": 357,
+        "total_tokens": 82804,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 155
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 219603,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 146,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 7869,
+      "usage": {
+        "input_tokens": 82382,
+        "output_tokens": 248,
+        "total_tokens": 82630,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 96
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 140576,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 145,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 9256,
+      "usage": {
+        "input_tokens": 52754,
+        "output_tokens": 231,
+        "total_tokens": 52985,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 80
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 18285,
+      "hasAnchor": true,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 278,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 10802,
+      "usage": {
+        "input_tokens": 3736,
+        "output_tokens": 389,
+        "total_tokens": 4125,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 105
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 11267,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 1,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 220,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 6456,
+      "usage": {
+        "input_tokens": 2482,
+        "output_tokens": 224,
+        "total_tokens": 2706,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 7784,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 278,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 11496,
+      "usage": {
+        "input_tokens": 1807,
+        "output_tokens": 422,
+        "total_tokens": 2229,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 138
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": false,
+      "bytes": 48083,
+      "hasAnchor": true,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 1,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 26,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 3540,
+      "usage": {
+        "input_tokens": 13491,
+        "output_tokens": 30,
+        "total_tokens": 13521,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 3712
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": false,
+      "bytes": 48829,
+      "hasAnchor": true,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 26,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 4081,
+      "usage": {
+        "input_tokens": 13553,
+        "output_tokens": 43,
+        "total_tokens": 13596,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 13312
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 11
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 49887,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 155,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 6921,
+      "usage": {
+        "input_tokens": 9760,
+        "output_tokens": 220,
+        "total_tokens": 9980,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 59
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 49856,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 118,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 6619,
+      "usage": {
+        "input_tokens": 9742,
+        "output_tokens": 181,
+        "total_tokens": 9923,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 57
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 49856,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 141,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 6549,
+      "usage": {
+        "input_tokens": 9637,
+        "output_tokens": 170,
+        "total_tokens": 9807,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 23
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 49856,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 140,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 7778,
+      "usage": {
+        "input_tokens": 9635,
+        "output_tokens": 196,
+        "total_tokens": 9831,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 50
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 45100,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 132,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 8422,
+      "usage": {
+        "input_tokens": 8742,
+        "output_tokens": 194,
+        "total_tokens": 8936,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 56
+        }
+      }
+    }
+  ]
+}
