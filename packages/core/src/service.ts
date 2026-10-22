@@ -301,7 +301,7 @@ export async function createDesktopService(options:ServiceOptions) {
       }
     }
     const credential=target==='qoder'?await desktopAccounts.qoder.importCredential():target==='qoder-ide'?await qoderIdeLogin.importCredential():target==='antigravity'?await antigravityAccountStore.importCredential():await localCredential(target,connections.paths,options.claudeCredentialStore);
-    return proxy.importCredential(target==='qoder-ide'?'qoder':target,credential,onlyNew);
+    return proxy.importCredential(target==='qoder-ide'?'qoder':target,target==='qoder'||target==='qoder-ide'?{...credential,native_client:target}:credential,onlyNew);
   };
   const discoverLocal=()=>discoveryTask??=(async()=>{
     discovery.state='loading';

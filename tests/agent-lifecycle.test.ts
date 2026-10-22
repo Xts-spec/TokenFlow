@@ -139,3 +139,15 @@ it('does not close a macOS IDE using a custom user-data directory',async()=>{
  const run=vi.fn(async(_file:string,args:string[])=>({stdout:args.includes('pid=,comm=')?'123 '+path:args.includes('args=')?path+' --user-data-dir=/private/profile':path}));
  await expect(new QoderLifecycle(run,'darwin',async()=>{},fixtureIdentity).change('qoder-ide',work)).rejects.toThrow('自定义配置');expect(work).not.toHaveBeenCalled();expect(run.mock.calls.some(([file])=>file==='/usr/bin/osascript')).toBe(false);
 });
+it('waits for Qoder IDE renderers to exit before applying login and ignores an orphan crash reporter',async()=>{
+ const path='/Applications/Qoder IDE.app';let main=true,renderer=true,polls=0;const work=vi.fn(async()=>{expect(renderer).toBe(false);});
+ const run=vi.fn(async(file:string,args:string[])=>{
+  if(file==='/usr/bin/osascript')main=false;
+  if(file==='/usr/bin/open')main=true;
+  if(file!=='/bin/ps')return {stdout:''};
+  if(args.includes('comm=')&&!main&&++polls>2)renderer=false;
+  return {stdout:[...(main?[`${path}/Contents/MacOS/Qoder`]:[]),...(renderer?[`${path}/Contents/Frameworks/Qoder Helper (Renderer).app/Contents/MacOS/Qoder Helper (Renderer)`]:[]),`${path}/Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler`].join('\n')};
+ });
+ await new QoderLifecycle(run,'darwin',async()=>{},fixtureIdentity).change('qoder-ide',work);
+ expect(work).toHaveBeenCalledOnce();expect(run).toHaveBeenCalledWith('/usr/bin/open',[path]);expect(run.mock.calls.some(([,args])=>args.some(a=>a.includes('TokenFlow')))).toBe(false);
+});

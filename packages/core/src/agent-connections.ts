@@ -1,4 +1,4 @@
-import {macAppIdentity} from './agent-lifecycle.js';
+import {macAppIdentity,macQoderIdeProcesses} from './agent-lifecycle.js';
 import {codexDefaultModel} from './codex-runtime.js';
 import { readFile, writeFile, mkdir, rename, lstat, unlink, open, rm, mkdtemp, copyFile, chmod, realpath } from 'node:fs/promises';
 import { basename, dirname, join, resolve, parse as parsePath } from 'node:path';
@@ -79,10 +79,7 @@ export async function agentProcesses(target:Target|'antigravity'|'workbuddy-ai'|
     if(process.platform==='darwin'&&(target==='workbuddy'||target==='workbuddy-ai'||target==='qoder'||target==='qoder-ide')){
       const bundle=target==='workbuddy'?'com.tencent.workbuddy.mac':target==='workbuddy-ai'?'com.workbuddy.workbuddy-ai':target==='qoder-ide'?'com.qoder.ide':'com.qoder.app';
       if(target==='qoder-ide'){
-       const rows=stdout.split('\n').flatMap(line=>{const m=line.trim().match(/^(\d+)\s+(\/.*?\.app)\/Contents\//);return m?[{pid:Number(m[1]),path:m[2]}]:[];});
-       const identities=new Map<string,Awaited<ReturnType<typeof macAppIdentity>>>();
-       for(const row of rows)if(!identities.has(row.path))identities.set(row.path,await macAppIdentity(row.path));
-       return rows.filter(row=>identities.get(row.path)?.bundle===bundle).map(row=>row.pid);
+       return (await macQoderIdeProcesses(stdout)).map(row=>row.pid);
       }
       const candidates=stdout.split('\n').flatMap(line=>{const m=line.trim().match(/^(\d+)\s+(\/.*\.app)\/Contents\/MacOS\/([^/]+)$/);return m?[{pid:Number(m[1]),path:m[2],executable:m[3]}]:[];});
       const verified=await Promise.all(candidates.map(async candidate=>{const identity=await macAppIdentity(candidate.path);return identity?.bundle===bundle&&identity.executable===candidate.executable?candidate.pid:null;}));

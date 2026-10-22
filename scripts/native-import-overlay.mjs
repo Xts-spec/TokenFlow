@@ -37,6 +37,15 @@ export function nativeImportOverlay(replacements,dir){
  const anchor='if errSave := storage.SaveToken(authDir); errSave != nil {\n\t\treturn nil, fmt.Errorf("failed to save imported Trae token: %w", errSave)\n\t}';
  if(!native.includes(anchor))throw Error('Trae local save boundary moved');
  native=native.replace(anchor,`// An empty destination is a read-only preview for the desktop pool.\n if authDir != "" {\n ${anchor}\n }`);
+ const callbackStart=native.indexOf('func ParseCallbackData('),callbackEnd=native.indexOf('\n// ExchangeAuthCode',callbackStart);
+ if(callbackStart<0||callbackEnd<0)throw Error('Trae callback parser moved');
+ let callback=native.slice(callbackStart,callbackEnd);
+ callback=callback.replace('ExpiredAtLower    string `json:"expiredAt"`','ExpiredAtLower    string `json:"expiredAt"`\n RefreshExpiredAt string `json:"refreshExpiredAt"`');
+ callback=callback.replace('if info.TokenExpireAt > 0 {','storage.RefreshExpiredAt = info.RefreshExpiredAt\n if info.TokenExpireAt > 0 {');
+ callback=callback.replace('if storage.AccessToken != "" {\n\t\treturn storage, nil','if storage.AccessToken != "" {\n if err := validateTraeCallback(ctx,storage); err != nil { return nil, err }\n\t\treturn storage, nil');
+ native=native.slice(0,callbackStart)+callback+native.slice(callbackEnd);
+ replacements[resolve('upstream/CLIProxyAPI/internal/auth/trae/native_callback.go')]=resolve('scripts/native-trae-callback.go');
+ replacements[resolve('upstream/CLIProxyAPI/internal/auth/trae/callback_expiry_test.go')]=resolve('tests/sidecar/trae_callback_expiry_test.go');
  const expiryFunction='func localSessionExpired(data TraeTokenData, now time.Time) bool {';
  if(!native.includes(expiryFunction))throw Error('Trae native expiry check moved');
  native=native.replace(expiryFunction,expiryFunction+'\n if access, ok := parseTraeTime(data.ExpiredAt); ok && access.After(now) { return false }');
@@ -56,6 +65,22 @@ export function nativeImportOverlay(replacements,dir){
  if errRead != nil { return nil, errRead }
  gj := gjson.ParseBytes(data)`);
  ztext=ztext.replace('if len(token) < 16 || len(token) > 8192 {','if strings.HasPrefix(token, "enc:") || len(token) < 16 || len(token) > 8192 {');
+ const storageAnchor='if provider == "bigmodel" {\n\t\treturn storage, nil';
+ if(!ztext.includes(storageAnchor))throw Error('ZCode native scope boundary moved');
+ ztext=ztext.replace(storageAnchor,`storage.NativeOAuth = true
+ storage.OAuthAccessToken = accessToken
+ storage.NativeProject = nativeZCodeProject(data, provider, storage.UID)
+ if provider == "bigmodel" {
+  return storage, nil`);
+ ztext=ztext.replace('storage.Email = strings.TrimSpace(user.Get("email").String())','storage.Email = strings.TrimSpace(firstNonEmpty(user.Get("email").String(),user.Get("rawProfile.email").String(),user.Get("rawProfile.data.email").String()))');
+ const tokenSource=resolve('upstream/CLIProxyAPI/internal/auth/zcode/token.go');
+ let tokenText=readFileSync(replacements[tokenSource]??tokenSource,'utf8');
+ tokenText=tokenText.replace('type ZCodeTokenStorage struct {',`type ZCodeTokenStorage struct {
+ NativeOAuth bool \`json:"native_oauth,omitempty"\`
+ NativeProject map[string]string \`json:"native_project,omitempty"\`
+ OAuthAccessToken string \`json:"oauth_access_token,omitempty"\`
+ `);
+ const tokenTarget=join(dir,'native-import-zcode-token.go');writeFileSync(tokenTarget,tokenText);replacements[tokenSource]=tokenTarget;
  const ztarget=join(dir,'native-import-zcode.go');writeFileSync(ztarget,ztext);replacements[zcode]=ztarget;
  replacements[resolve('upstream/CLIProxyAPI/internal/auth/zcode/native_crypto.go')]=resolve('scripts/native-zcode-crypto.go');
  replacements[resolve('upstream/CLIProxyAPI/internal/auth/zcode/native_cipher_test.go')]=resolve('tests/sidecar/zcode_native_cipher_test.go');
