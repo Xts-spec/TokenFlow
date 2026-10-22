@@ -635,9 +635,9 @@ export class CLIProxyManager {
     if(provider!=='claude'||model)this.sourceAuth(id,model??account?.models?.[0]??'');
     return this.nativeCredentialFile(provider,id);
   }
-  async importCredential(provider:'codex'|'claude',credential:Record<string,unknown>,onlyNew=false) {
+  async importCredential(provider:'codex'|'claude'|'qoder',credential:Record<string,unknown>,onlyNew=false) {
     await this.start();
-    const complete=provider==='codex'?['access_token','refresh_token','id_token'].every(key=>typeof credential[key]==='string'&&!!credential[key]):nativeCredentialSchema.safeParse(credential).success;
+    const complete=provider==='codex'?['access_token','refresh_token','id_token'].every(key=>typeof credential[key]==='string'&&!!credential[key]):provider==='qoder'?typeof credential.access_token==='string'&&!!credential.access_token&&(typeof credential.uid==='string'&&!!credential.uid||typeof credential.uid==='number')&&typeof credential.expired==='string'&&Number.isFinite(Date.parse(credential.expired)):nativeCredentialSchema.safeParse(credential).success;
     if(!complete){if(onlyNew)return this.snapshot();throw nativeConflict('本机登录凭据不完整，请先在客户端完成登录。');}
     const identity=credentialIdentity(provider,credential)??credentialFingerprint(credential);
     // Each authorization remains a separate file. Re-reading one grant updates only that grant.
@@ -646,8 +646,11 @@ export class CLIProxyManager {
     for(const account of this.accounts.filter(a=>a.provider===provider)){
       try{const existingName=this.names.get(account.id);if(!existingName||existingName.includes('/')||existingName.includes('\\'))continue;
         const raw=JSON.parse(await readConfig(join(this.root,'cliproxy','auth',existingName))??'null') as Record<string,unknown>;
-        if((credentialIdentity(provider,raw)??credentialFingerprint(raw))===identity&&credentialFingerprint(raw)===fingerprint){
-          if(compareCredentials({raw:credential},{raw})>=0)return this.snapshot();
+        // A Qoder uid holds exactly one live native grant: replace that file on token rotation
+        // instead of keeping an unrefreshable stale copy alongside it.
+        const sameGrant=(credentialIdentity(provider,raw)??credentialFingerprint(raw))===identity&&(provider==='qoder'||credentialFingerprint(raw)===fingerprint);
+        if(sameGrant){
+          if(provider==='qoder'?raw.access_token===credential.access_token:compareCredentials({raw:credential},{raw})>=0)return this.snapshot();
           name=existingName;break;
         }
       }catch{/* Incomplete grants never suppress a new import. */}

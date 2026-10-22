@@ -21,6 +21,9 @@ const snapshotSchema=z.object({data:z.string().max(3_000_000).nullable(),logout:
 const journalSchema=z.object({path:z.string().min(1),before:snapshotSchema,after:snapshotSchema,identity:z.object({accountId:z.string().min(1),email:z.string().optional(),displayName:z.string().optional(),domain:z.string().optional(),enterpriseId:z.string().optional()}),state:z.enum(['prepared','applied','restored']),createdAt:z.string()});
 type Journal=z.infer<typeof journalSchema>;
 export type DesktopAccountOptions={paths?:Partial<Record<DesktopProvider,string>>;crypto?:QoderCrypto;fetch?:typeof fetch;platform?:NodeJS.Platform};
+const qoderNativeStateSchema=z.object({token:z.string().min(1).max(30000),expiresAt:z.string().min(1).max(60),user:z.object({id:z.union([z.string().min(1),z.number()]),email:z.string().max(200).optional()}).optional()}).passthrough();
+const qoderGatewayCredentialSchema=z.object({access_token:z.string().min(1).max(30000),uid:z.union([z.string().min(1),z.number()]).transform(String),expired:z.string().refine(v=>Number.isFinite(Date.parse(v))&&Date.parse(v)>Date.now()+60000),email:z.string().max(200).optional()});
+export type QoderGatewayCredential=z.infer<typeof qoderGatewayCredentialSchema>;
 export function desktopLoginPaths(platform:NodeJS.Platform=process.platform,home=homedir(),env:NodeJS.ProcessEnv=process.env){
  const p=platform==='win32'?win32:posix;
  const base=platform==='win32'?(env.APPDATA||p.join(home,'AppData','Roaming')):platform==='darwin'?p.join(home,'Library','Application Support'):(env.XDG_CONFIG_HOME||p.join(home,'.config'));
@@ -76,6 +79,21 @@ export class DesktopAccounts {
   if(!identity&&this.provider==='qoder'&&this.options.crypto){const revision=digest(state);if(this.identityCache?.revision!==revision)this.identityCache={revision,value:this.identity(state,true)};identity=await this.identityCache.value;}
   if(!identity||this.provider!=='qoder'&&workbuddyLoginTarget(identity.domain)!==this.provider)return null;
   return {provider:this.provider,accountId:identity.accountId,email:identity.email??null,displayName:identity.displayName,...(identity.enterpriseId?{organizationId:identity.enterpriseId}:{})};
+ }
+ /** Exports the native grant for the gateway pool. The refresh token stays out:
+  * a gateway-side refresh would rotate it away from the official client. */
+ async localCredential():Promise<QoderGatewayCredential>{
+  if(this.provider!=='qoder')throw conflict('该客户端暂不支持导入本机登录。');
+  const reason=this.support();if(reason)throw conflict(reason);
+  const state=await this.snapshot(await this.path());
+  if(!state.data||state.logout!==null)throw conflict('未检测到 Qoder 客户端登录，请先在官方客户端完成登录。');
+  if(!this.options.crypto)throw conflict('请使用 TokenFlow 桌面版导入 Qoder 登录。');
+  let native:z.infer<typeof qoderNativeStateSchema>;
+  try{native=qoderNativeStateSchema.parse(JSON.parse(await this.options.crypto('decrypt',state.data)));}
+  catch{throw conflict('无法读取 Qoder 本机登录，请检查系统安全存储。');}
+  const credential=qoderGatewayCredentialSchema.safeParse({access_token:native.token,uid:native.user?.id,expired:native.expiresAt,email:typeof native.user?.email==='string'?native.user.email:undefined});
+  if(!credential.success)throw conflict('Qoder 登录缺少令牌、账号或有效期，请先在官方客户端完成登录。');
+  return credential.data;
  }
  async status(refresh=false){const path=await this.path(),state=await this.snapshot(path),journal=await this.journal();
   let identity=await this.identity(state)??(journal&&journal.state!=='restored'&&journal.path===path&&digest(state)===digest(journal.after)?journal.identity:null),readError='';

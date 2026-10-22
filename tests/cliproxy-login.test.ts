@@ -468,6 +468,20 @@ it('imports two members of one Codex workspace independently and keeps separate 
  await manager.importCredential('codex',first,true);expect((await names(join(root,'cliproxy/auth'))).filter(n=>n.startsWith('local-codex-'))).toHaveLength(3);
 });
 
+it('imports a Qoder native grant with its uid and keeps one file across unchanged and rotated tokens',async()=>{
+ const {manager,root}=await setup();await manager.start();
+ const grant=(token:string,expired:string)=>({access_token:token,uid:'019e-qoder-uid',expired,email:'dev@example.test'});
+ const readdir=(await import('node:fs/promises')).readdir;const files=async()=>(await readdir(join(root,'cliproxy/auth'))).filter(n=>n.startsWith('local-qoder-'));
+ await manager.importCredential('qoder',grant('first-pat','2035-01-01T00:00:00Z'),true);
+ expect(await files()).toHaveLength(1);expect(manager.snapshot().accounts.filter(a=>a.provider==='qoder'&&!a.isDuplicate)).toHaveLength(1);
+ await manager.importCredential('qoder',grant('first-pat','2035-01-01T00:00:00Z'),true);expect(await files()).toHaveLength(1);
+ // A rotated grant with a later expiry replaces the same file instead of adding a duplicate account.
+ await manager.importCredential('qoder',grant('second-pat','2036-01-01T00:00:00Z'),true);
+ expect(await files()).toHaveLength(1);expect(manager.snapshot().accounts.filter(a=>a.provider==='qoder'&&!a.isDuplicate)).toHaveLength(1);
+ const saved=JSON.parse(await readFile(join(root,'cliproxy/auth',(await files())[0]),'utf8'));
+ expect(saved).toMatchObject({type:'qoder',access_token:'second-pat',uid:'019e-qoder-uid',email:'dev@example.test',expired:'2036-01-01T00:00:00Z'});
+});
+
 it.each(['timeout','tls','unknown'])('distinguishes an authorization %s failure from a stopped local agent',async kind=>{
  const {manager}=await setup();await manager.start();const realFetch=globalThis.fetch;
  const mock=vi.spyOn(globalThis,'fetch').mockImplementation(async(url,init)=>{

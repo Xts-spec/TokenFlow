@@ -26,6 +26,18 @@ it('resolves roaming, macOS and Linux XDG paths without assuming path separators
 it('identifies an existing Qoder login before any TokenFlow switch without writing a journal',async()=>{
  const f=await setup('qoder');expect(await f.manager.status()).toMatchObject({accountId:'original',email:'original@example.test',backup:null});expect(f.secrets.set).not.toHaveBeenCalled();expect(await readFile(f.path)).toEqual(f.original);
 });
+it('exports a Qoder local grant for the gateway without its refresh token',async()=>{
+ const f=await setup('qoder');
+ await writeFile(f.path,Buffer.from(await crypt('encrypt',JSON.stringify({schemaVersion:1,user:{id:'original',email:'original@example.test'},token:'native-pat',refreshToken:'native-refresh',expiresAt:'2035-01-01T00:00:00Z'})),'base64'));
+ expect(await f.manager.localCredential()).toEqual({access_token:'native-pat',uid:'original',expired:'2035-01-01T00:00:00Z',email:'original@example.test'});
+ const plain=new DesktopAccounts('qoder',f.secrets,async()=>[],{paths:{qoder:f.path},platform:'darwin'});
+ await expect(plain.localCredential()).rejects.toThrow('TokenFlow 桌面版');
+ const missing=new DesktopAccounts('qoder',f.secrets,async()=>[],{paths:{qoder:join(f.root,'absent.dat')},crypto:crypt,platform:'darwin'});
+ await expect(missing.localCredential()).rejects.toThrow('未检测到 Qoder 客户端登录');
+ await writeFile(f.path,Buffer.from(await crypt('encrypt',JSON.stringify({schemaVersion:1,user:{id:'original',email:'original@example.test'},token:'native-pat',expiresAt:'2020-01-01T00:00:00Z'})),'base64'));
+ await expect(f.manager.localCredential()).rejects.toThrow('缺少令牌、账号或有效期');
+ await expect(new DesktopAccounts('workbuddy',f.secrets,async()=>[],{paths:{workbuddy:f.path},crypto:crypt,platform:'darwin'}).localCredential()).rejects.toThrow('该客户端暂不支持导入本机登录');
+});
 it('observes desktop usage identities without backups, respects skipped decryption and isolates international logins',async()=>{
  const q=await setup('qoder'),blocked={get:vi.fn(async()=>{throw Error('Must not read backups');}),set:vi.fn(async()=>{})};
  const skipped=new DesktopAccounts('qoder',blocked,async()=>[],{paths:{qoder:q.path},platform:'darwin'});expect(await skipped.usageLogin()).toBeNull();expect(blocked.get).not.toHaveBeenCalled();expect(await q.manager.usageLogin()).toMatchObject({provider:'qoder',accountId:'original',email:'original@example.test'});

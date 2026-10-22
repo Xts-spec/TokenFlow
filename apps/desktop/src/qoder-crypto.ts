@@ -1,6 +1,6 @@
 import {spawn} from 'node:child_process';
 import {app,safeStorage} from 'electron';
-import {rmSync} from 'node:fs';
+import {readSync,rmSync} from 'node:fs';
 import {isAbsolute} from 'node:path';
 import {qoderCryptoProfile,type QoderClient} from './qoder-crypto-profile.js';
 import type {QoderCrypto} from '../../../packages/core/src/desktop-accounts.js';
@@ -9,9 +9,13 @@ import type {QoderCrypto} from '../../../packages/core/src/desktop-accounts.js';
  * No credentials enter argv/environment/logs, and TokenFlow's keychain identity stays unchanged. */
 export const qoderCryptoFor=(client:QoderClient):QoderCrypto=>async(operation,value)=>{
  const profile=qoderCryptoProfile(process.platform,app.getPath('appData'),undefined,client);
+ const environment={...process.env};
+ // Node would serialize an undefined value as the literal string "undefined", which
+ // makes Electron start as Node and lose safeStorage.
+ delete environment.ELECTRON_RUN_AS_NODE;
  let closed=Promise.resolve();
  try{return await new Promise<string>((resolve,reject)=>{
- const child=spawn(process.execPath,[...(app.isPackaged?[]:[app.getAppPath()]),'--tokenflow-qoder-crypto',`--tokenflow-qoder-client=${client}`,`--tokenflow-qoder-profile=${profile}`],{stdio:['pipe','pipe','ignore'],windowsHide:true,env:{...process.env,ELECTRON_RUN_AS_NODE:undefined}});
+ const child=spawn(process.execPath,[...(app.isPackaged?[]:[app.getAppPath()]),'--tokenflow-qoder-crypto',`--tokenflow-qoder-client=${client}`,`--tokenflow-qoder-profile=${profile}`],{stdio:['pipe','pipe','ignore'],windowsHide:true,env:environment});
  closed=new Promise<void>(resolve=>child.once('close',()=>resolve()));
  let output='';let settled=false;
  const fail=()=>{if(settled)return;settled=true;clearTimeout(timer);child.kill();reject(new Error('Qoder 系统安全存储不可用，请允许系统钥匙串访问后重试。'));};
@@ -35,8 +39,10 @@ export async function runQoderCrypto(){
   const profile=process.argv.find(arg=>arg.startsWith('--tokenflow-qoder-profile='))?.slice('--tokenflow-qoder-profile='.length);
   if(!profile||!isAbsolute(profile))throw Error();
   app.setPath('userData',profile);app.setPath('sessionData',profile);
-  let input='';for await(const chunk of process.stdin){input+=chunk.toString();if(input.length>4_000_000)throw Error();}
-  const request=JSON.parse(input);await app.whenReady();app.dock?.hide();
+  // Electron's GUI main process does not deliver piped stdin through process.stdin on Windows.
+  const chunks:Buffer[]=[];let total=0;const buffer=Buffer.alloc(64*1024);
+  for(;;){const read=readSync(0,buffer,0,buffer.length,null);if(!read)break;total+=read;if(total>4_000_000)throw Error();chunks.push(Buffer.from(buffer.subarray(0,read)));}
+  const request=JSON.parse(Buffer.concat(chunks).toString());await app.whenReady();app.dock?.hide();
   if(!safeStorage.isEncryptionAvailable())throw Error();
   let value:string;
   if(request.operation==='encrypt'&&typeof request.value==='string')value=safeStorage.encryptString(request.value).toString('base64');

@@ -286,7 +286,9 @@ export async function createDesktopService(options:ServiceOptions) {
     }
     for(const provider of ['workbuddy','zcode','trae'] as const){
       try{await proxy.importLocal(provider,true);}catch{discovery.unavailable.push(provider);}
-    }}finally{
+    }
+    try{await proxy.importCredential('qoder',await desktopAccounts.qoder.localCredential(),true);}
+    catch{discovery.unavailable.push('qoder');}}finally{
       discovery.state='ready';
     }
   })();
@@ -988,7 +990,8 @@ export async function createDesktopService(options:ServiceOptions) {
   });
   app.post('/api/local-agent/import-local/:provider',async req=>{
 
-    const provider=z.enum(['trae','workbuddy','workbuddy-ai','zcode','cursor']).parse((req.params as {provider:string}).provider);
+    const provider=z.enum(['trae','workbuddy','workbuddy-ai','zcode','cursor','qoder']).parse((req.params as {provider:string}).provider);
+    if(provider==='qoder')return localOperation(async()=>proxy.importCredential('qoder',await desktopAccounts.qoder.localCredential()));
     return localOperation(()=>proxy.importLocal(provider));
   });
   const access=await GatewayAccess.open(root,gatewayKeys);
