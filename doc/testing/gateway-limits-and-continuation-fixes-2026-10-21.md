@@ -53,4 +53,6 @@
 
 [修复验证元数据](results/gateway-continuation-fixes-2026-10-21.json) · [真实原生 zstd 往返](results/gateway-native-zstd-fixed-2026-10-21.json) · [早期真实来源中断](results/gateway-native-zstd-upstream-failure-2026-10-21.json)
 
-本次候选版本为 10.15.26.49，从固定 Git 提交构建，包含当前已提交源码及本次修复。测试通过后按既有授权替换当前 10.15.26.46；安装核验另行记录，Codex 本身保持运行。
+10.15.26.49 已从固定源码提交 `c18f347d5955224e4e8072a7cc44208d201638be` 构建并替换原运行版 10.15.26.46。包内 Electron 40.10.6 的独立运行验证通过，包含原生 zstd 生成请求；40 个打包 dist 文件与构建产物逐一一致。安装后的 app.asar 和 sidecar 哈希与候选包一致，版本与新主进程已核验，`/health` 返回正常。旧版保存在 `releases/installed-backups/TokenFlow-10.15.26.46.app`，Codex 本身没有重启。
+
+[打包与安装核验](results/gateway-continuation-package-2026-10-21.json)。最终安装核验于本地 2026-10-21 完成（记录中使用 UTC 2026-10-22）。本次没有取消表中列明的剩余超时、软触发值或适配器边界。

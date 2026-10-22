@@ -1,0 +1,53 @@
+{
+  "version": "10.15.26.49",
+  "sourceCommit": "c18f347d5955224e4e8072a7cc44208d201638be",
+  "distFilesVerified": 40,
+  "appAsarSHA256": "01fcdccdba1e86f09cc3e922f542400fa20adbe4d0791d4f40e538fb0be26511",
+  "sidecarSHA256": "4e726ab6fd508cd604fdcd9b125c6646e42b7dd7617cfa8c5b55b96a56380fe5",
+  "installed": true,
+  "typecheckPassed": true,
+  "testsPassed": 189,
+  "packagedRuntimeCheckPassed": true,
+  "installedVersion": "10.15.26.49",
+  "verifiedAt": "2026-10-22T06:42:51.259012+00:00",
+  "health": {
+    "status": "ok",
+    "service": "tokenflow"
+  },
+  "runningPIDs": [
+    77375
+  ],
+  "previousVersion": "10.15.26.46",
+  "backup": "releases/installed-backups/TokenFlow-10.15.26.46.app",
+  "installedAsarSHA256": "01fcdccdba1e86f09cc3e922f542400fa20adbe4d0791d4f40e538fb0be26511",
+  "sidecarVerifiedPaths": [
+    "Contents/Resources/sidecars/darwin-arm64/cliproxyapi"
+  ],
+  "codexRestarted": false,
+  "packagedRuntime": {
+    "passed": true,
+    "electron": "40.10.6",
+    "platform": "darwin",
+    "arch": "arm64",
+    "checks": [
+      "native zstd request decoded by the packaged gateway",
+      "no switch-time summary; current-thread lazy bootstrap and explicit later compaction",
+      "valid expanding summaries, immediate failed-summary retry and cached continuation",
+      "production dependencies",
+      "bundled licenses",
+      "Cursor native SDK",
+      "WorkBuddy SDK import",
+      "static UI",
+      "Responses gateway",
+      "Pi repair conversation",
+      "selected usage evidence",
+      "local usage worker",
+      "Claude native account attribution",
+      "existing Qoder and both WorkBuddy edition identities",
+      "Qoder IDE switch, restore and standalone isolation",
+      "automatic LAN listener, per-key source IPs and isolated model routes",
+      "Claude Desktop subagent roles and independent menu routes",
+      "Claude Desktop external gateway drift detection"
+    ]
+  }
+}

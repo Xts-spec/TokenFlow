@@ -1,6 +1,7 @@
 // Run with the packaged Electron executable and ELECTRON_RUN_AS_NODE=1.
 // All service data/configuration lives in a disposable directory; no real account is used.
 import assert from 'node:assert/strict';
+import {zstdCompressSync} from 'node:zlib';
 import {mkdtemp,mkdir,writeFile,readFile,readdir,rm,realpath} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
@@ -147,5 +148,7 @@ try{
   assert.equal((await continuation(grown)).statusCode,200);assert.equal(summaryCalls,firstManagedSummaryCalls,'Later growth must wait for Codex');
   assert.equal((await continuation([...grown,{type:'compaction_trigger'}])).statusCode,200);assert.ok(summaryCalls>firstManagedSummaryCalls,'Explicit compaction must summarize new history');
  }finally{globalThis.fetch=originalFetch;}
- console.log(JSON.stringify({passed:true,electron:process.versions.electron,platform:process.platform,arch:process.arch,checks:['no switch-time summary; current-thread lazy bootstrap and explicit later compaction','valid expanding summaries, immediate failed-summary retry and cached continuation','production dependencies','bundled licenses','Cursor native SDK','WorkBuddy SDK import','static UI','Responses gateway','Pi repair conversation','selected usage evidence','local usage worker','Claude native account attribution','existing Qoder and both WorkBuddy edition identities','Qoder IDE switch, restore and standalone isolation','automatic LAN listener, per-key source IPs and isolated model routes','Claude Desktop subagent roles and independent menu routes','Claude Desktop external gateway drift detection']},null,2));
+ const zstd=await service.app.inject({method:'POST',url:'/v1/responses',headers:{...headers,authorization:`Bearer ${key.apiKey}`,'content-type':'application/json','content-encoding':'zstd'},payload:zstdCompressSync(Buffer.from(JSON.stringify({model:'qoder/kmodel_latest',input:'Packaged zstd complete history 首🙂尾',store:false})))});
+ assert.equal(zstd.statusCode,200,zstd.body);assert.equal(zstd.json().output[0].content[0].text,'qoder');
+ console.log(JSON.stringify({passed:true,electron:process.versions.electron,platform:process.platform,arch:process.arch,checks:['native zstd request decoded by the packaged gateway','no switch-time summary; current-thread lazy bootstrap and explicit later compaction','valid expanding summaries, immediate failed-summary retry and cached continuation','production dependencies','bundled licenses','Cursor native SDK','WorkBuddy SDK import','static UI','Responses gateway','Pi repair conversation','selected usage evidence','local usage worker','Claude native account attribution','existing Qoder and both WorkBuddy edition identities','Qoder IDE switch, restore and standalone isolation','automatic LAN listener, per-key source IPs and isolated model routes','Claude Desktop subagent roles and independent menu routes','Claude Desktop external gateway drift detection']},null,2));
 }finally{await service?.app.close();await rm(root,{recursive:true,force:true});}

@@ -41,7 +41,8 @@
     "totalDistinctTestsPassed": 189,
     "fullApiRerunPassed": true
   },
-  "installedAppChanged": false,
+  "installedAppChanged": true,
+  "installedVersion": "10.15.26.49",
   "initialExpandedRun": {
     "apiSourceTestsFailed": 3,
     "description": "Route sync timing assertions failed in the expanded run; all three passed on both pre-change and current isolated runs, followed by all 51 API tests passing without further source changes."
