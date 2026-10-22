@@ -309,7 +309,7 @@ export async function createDesktopService(options:ServiceOptions) {
       try{await importNative(target,true);}
       catch{discovery.unavailable.push(target);}
     }
-    for(const provider of ['zcode','trae'] as const){
+    for(const provider of ['trae'] as const){
       try{await proxy.importLocal(provider,true);}catch{discovery.unavailable.push(provider);}
     }}finally{
       discovery.state='ready';
@@ -594,7 +594,8 @@ export async function createDesktopService(options:ServiceOptions) {
   const desktopStatus=async(provider:DesktopProvider|'qoder-ide',refresh=false)=>{const status=await (provider==='qoder-ide'?qoderIdeLogin:desktopAccounts[provider]).status(refresh);return {...status,...(provider==='workbuddy-ai'?{installation:await detectAgent('workbuddy-ai')}:{}),accounts:(await proxy.desktopNativeAccounts(provider==='qoder-ide'?'qoder':provider)).map(a=>status.unavailableReason?{...a,switchable:false,reason:status.unavailableReason}:a),gatewayConnected:!!(await connections.status()).find(t=>t.id===provider)?.connection};};
   const cursorLocalLogin=new CursorLocalLogin(options.cursorLocalPath);
   app.get('/api/native-accounts/cursor',async req=>({...await cursorLocalLogin.status((req.query as {refresh?:string}).refresh==='1'),readOnly:true,pids:[],backup:null,gatewayConnected:false,accounts:proxy.cursor.snapshot().accounts.map(a=>({id:a.id,email:a.label,switchable:false,reason:'请在 Cursor 客户端切换本机登录。'}))}));
-  for(const provider of ['trae','zcode'] as const)app.get(`/api/native-accounts/${provider}`,()=>proxy.localImportStatus(provider));
+  app.get('/api/native-accounts/trae',()=>proxy.localImportStatus('trae'));
+  app.get('/api/native-accounts/zcode',async(_req,reply)=>reply.code(410).send({error:'ZCode 不支持本机认证，请通过官网授权添加账号。'}));
   app.get('/api/native-accounts/:provider',async req=>{const provider=officialProvider.parse((req.params as {provider:string}).provider);return provider==='workbuddy'||provider==='workbuddy-ai'||provider==='qoder'||provider==='qoder-ide'?desktopStatus(provider,(req.query as {refresh?:string}).refresh==='1'):nativeStatus(provider);});
   for(const action of ['switch','restore'] as const)app.post(`/api/native-accounts/:provider/${action}`,async req=>{
     const provider=officialProvider.parse((req.params as {provider:string}).provider);

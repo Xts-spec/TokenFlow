@@ -20,7 +20,7 @@ import {DragHandle,dropOrder,orderModels,useModelOrder} from './display-order';
 import { ProviderIcon } from './ProviderIcon';
 import type { Notify } from './notify';
 
-const importable=new Set(['codex','claude','qoder','antigravity','trae','workbuddy','zcode','cursor']);
+const importable=new Set(['codex','claude','qoder','antigravity','trae','workbuddy','cursor']);
 const pendingStates=['starting','waiting_for_browser','verifying'];
 const tabKey='token-flow.accounts.provider';
 
@@ -76,7 +76,7 @@ function LoginProgress({local,disabled,actions}:{local:LocalAgentSnapshot;disabl
 export function AccountsPage({local,usage,disabled,actions,notify,onContext}:{local:LocalAgentSnapshot;usage:UsageData;disabled:boolean;actions:AccountActions;notify:Notify;onContext?:(context:{provider?:string;sourceId?:string})=>void}){
  const [modelOrder,,modelRanks,moveModel]=useModelOrder();
  const [tab,setTab]=useState(()=>{try{return localStorage.getItem(tabKey)??'codex';}catch{return 'codex';}});
- const logins:Record<LoginProvider,ReturnType<typeof useNativeLogin>>={codex:useNativeLogin('codex',local),claude:useNativeLogin('claude',local),antigravity:useNativeLogin('antigravity',local),workbuddy:useNativeLogin('workbuddy',local),'workbuddy-ai':useNativeLogin('workbuddy-ai',local),qoder:useNativeLogin('qoder',local),'qoder-ide':useNativeLogin('qoder-ide',local),cursor:useNativeLogin('cursor',local,tab==='cursor'),trae:useNativeLogin('trae',local,tab==='trae'),zcode:useNativeLogin('zcode',local,tab==='zcode')};
+ const logins:Record<LoginProvider,ReturnType<typeof useNativeLogin>>={codex:useNativeLogin('codex',local),claude:useNativeLogin('claude',local),antigravity:useNativeLogin('antigravity',local),workbuddy:useNativeLogin('workbuddy',local),'workbuddy-ai':useNativeLogin('workbuddy-ai',local),qoder:useNativeLogin('qoder',local),'qoder-ide':useNativeLogin('qoder-ide',local),cursor:useNativeLogin('cursor',local,tab==='cursor'),trae:useNativeLogin('trae',local,tab==='trae'),zcode:useNativeLogin('zcode',local,false)};
  const [clients,setClients]=useState<Record<string,LoginProvider>>({workbuddy:'workbuddy',qoder:'qoder'});
  const [selectedAccounts,setSelectedAccounts]=useState<Record<string,string>>({});
  const [refreshing,setRefreshing]=useState('');
@@ -87,7 +87,7 @@ export function AccountsPage({local,usage,disabled,actions,notify,onContext}:{lo
  const providers=local.providers.map(provider=>({...provider,accounts:local.accounts.filter(a=>a.provider===provider.id&&!a.isDuplicate)}));
  const provider=providers.find(p=>p.id===tab)??providers[0];
  const variants=provider?.id==='workbuddy'?clientOptions.workbuddy:provider?.id==='qoder'?clientOptions.qoder:undefined;
- const client=provider?(clients[provider.id]??(provider.id in loginNames?provider.id as LoginProvider:undefined)):undefined;
+ const client=provider&&provider.id!=='zcode'?(clients[provider.id]??(provider.id in loginNames?provider.id as LoginProvider:undefined)):undefined;
  const login=client?logins[client]:undefined;
  const accounts=provider?.accounts.filter(a=>!variants||!!client&&(a.nativeClients?.includes(client)??login?.status?.accounts.some(c=>c.id===a.id)))??[];
  const accountKey=client??provider?.id??'';

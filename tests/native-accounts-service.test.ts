@@ -16,6 +16,8 @@ it('protects native account APIs, binds sources to providers, switches/restores 
  const headers={host:'127.0.0.1:9527',authorization:'Bearer admin'};
  try{
   await service.proxy.start();
+  const zcodeStatus=await service.app.inject({url:'/api/native-accounts/zcode',headers});expect(zcodeStatus.statusCode).toBe(410);expect(zcodeStatus.body).toContain('官网授权');
+  const zcodeImport=await service.app.inject({url:'/api/local-agent/import-local/zcode',method:'POST',headers,payload:{}});expect(zcodeImport.statusCode).toBe(400);expect(zcodeImport.body).toContain('官网授权');
   for(const provider of ['claude','antigravity']){
    const url=`/api/native-accounts/${provider}`;
    expect((await service.app.inject({url,headers:{host:headers.host}})).statusCode).toBe(401);

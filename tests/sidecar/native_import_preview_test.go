@@ -28,7 +28,7 @@ func TestNativeImportPreviewDoesNotWritePool(t *testing.T) {
  h:=&Handler{cfg:&config.Config{AuthDir:pool}}
  for _,tc:=range []struct{name,query string; handler gin.HandlerFunc}{
   {"workbuddy","",h.ImportWorkBuddyLocalToken}, {"workbuddy-ai","&region=overseas",h.ImportWorkBuddyLocalToken},
-  {"zcode","",h.ImportZCodeLocalToken}, {"trae","",h.ImportTraeLocalToken},
+  {"trae","",h.ImportTraeLocalToken},
  }{
   t.Run(tc.name,func(t *testing.T){
    w:=httptest.NewRecorder();c,_:=gin.CreateTestContext(w);c.Request=httptest.NewRequest("POST","/?preview=1"+tc.query,nil)
@@ -42,4 +42,11 @@ func TestNativeImportPreviewDoesNotWritePool(t *testing.T) {
    if _,err:=os.Stat(pool);!os.IsNotExist(err){t.Fatal("preview wrote the pool")}
   })
  }
+}
+
+func TestZcodeLocalImportDisabledEvenWithReadableNativeCredentials(t *testing.T) {
+ home:=t.TempDir();t.Setenv("HOME",home);t.Setenv("USERPROFILE",home)
+ path:=filepath.Join(home,".zcode","cli","config.json");os.MkdirAll(filepath.Dir(path),0700);os.WriteFile(path,[]byte(`{"access_token":"fixture-native","uid":"fixture-user","provider":"zai"}`),0600)
+ pool:=filepath.Join(home,"pool");h:=&Handler{cfg:&config.Config{AuthDir:pool}}
+ for _,query:=range []string{"","?preview=1"}{w:=httptest.NewRecorder();c,_:=gin.CreateTestContext(w);c.Request=httptest.NewRequest("POST","/"+query,nil);h.ImportZCodeLocalToken(c);if w.Code!=410{t.Fatalf("disabled native import returned %d",w.Code)};if _,err:=os.Stat(pool);!os.IsNotExist(err){t.Fatal("disabled import wrote the pool")}}
 }

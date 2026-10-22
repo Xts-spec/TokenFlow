@@ -615,7 +615,7 @@ it('routes account refresh requests to the selected account',async()=>{
  expect(result.statusCode,result.body).toBe(200);expect(refresh).toHaveBeenCalledWith(id);
 });
 
-it.each(['workbuddy','workbuddy-ai','trae','zcode'] as const)('discovers a new native %s identity even with an existing pool and keeps repeated imports idempotent',async target=>{
+it.each(['workbuddy','workbuddy-ai','trae'] as const)('discovers a new native %s identity even with an existing pool and keeps repeated imports idempotent',async target=>{
  const {manager,root}=await setup();const provider=target==='workbuddy-ai'?'workbuddy':target;
  const domain=target==='workbuddy-ai'?'www.workbuddy.ai':'copilot.tencent.com';
  const scope=provider==='workbuddy'?{domain}:provider==='trae'?{host:'https://api-sg-central.trae.ai'}:{provider:'zai'};
@@ -634,7 +634,7 @@ it.each(['workbuddy','workbuddy-ai','trae','zcode'] as const)('discovers a new n
  expect(JSON.stringify(manager.snapshot())).not.toMatch(/native-secret|native-refresh/);
 });
 
-it.each(['workbuddy','workbuddy-ai','trae','zcode'] as const)('preserves a newer pooled %s grant when the native client still has its old token',async target=>{
+it.each(['workbuddy','workbuddy-ai','trae'] as const)('preserves a newer pooled %s grant when the native client still has its old token',async target=>{
  const {manager,root}=await setup();const provider=target==='workbuddy-ai'?'workbuddy':target;
  const native={type:provider,uid:'same-user',access_token:'old-native',refresh_token:'same-refresh',expired:'2030-01-01T00:00:00Z',domain:target==='workbuddy-ai'?'www.workbuddy.ai':'copilot.tencent.com'};
  const saved=JSON.stringify({...native,access_token:'newer-pooled',expired:'2035-01-01T00:00:00Z',disabled:true});
@@ -646,7 +646,7 @@ it.each(['workbuddy','workbuddy-ai','trae','zcode'] as const)('preserves a newer
  expect(await readdir(join(root,'cliproxy/auth'))).toEqual(['saved.json']);
  expect(manager.snapshot().accounts[0].disabled).toBe(true);
 });
-it.each(['trae','zcode'] as const)('detects native %s without writing credentials and maps its imported identity',async provider=>{
+it.each(['trae'] as const)('detects native %s without writing credentials and maps its imported identity',async provider=>{
  const {manager,root}=await setup();await mkdir(join(root,'cliproxy'),{recursive:true});
  await writeFile(join(root,'cliproxy/fixture-options.json'),JSON.stringify({localCredentials:{[provider]:{type:provider,uid:'native-user',access_token:'private-native',refresh_token:'private-refresh'}}}));
  await manager.start();const before=await readdir(join(root,'cliproxy/auth'));
@@ -663,19 +663,59 @@ it('keeps the saved disabled flag when a native import updates the same grant',a
  await manager.start();await manager.importLocal('workbuddy',true);
  expect(JSON.parse(await readFile(join(root,'cliproxy/auth/saved.json'),'utf8'))).toMatchObject({access_token:'newer-native',disabled:true});
 });
-it('exchanges a native ZCode login for the scoped project token before pooling it, and refreshes that grant without duplicating it',async()=>{
- const {manager,root}=await setup();await mkdir(join(root,'cliproxy'),{recursive:true});
- const native={native_oauth:true,native_project:{organizationId:'org',projectId:'project',apiKeyId:'key'},provider:'bigmodel',uid:'native-person',access_token:'native-login-token',jwt:'fixture.jwt.value'};
- await writeFile(join(root,'cliproxy/fixture-options.json'),JSON.stringify({localCredentials:{zcode:native}}));
- const realFetch=globalThis.fetch;let exchanges=0;
+it('rejects native ZCode imports and leaves legacy native grants untouched without reading or exchanging credentials',async()=>{
+ const {manager,root}=await setup();await mkdir(join(root,'cliproxy/auth'),{recursive:true});
+ const native={type:'zcode',native_oauth:true,native_project:{organizationId:'org',projectId:'project',apiKeyId:'key'},provider:'bigmodel',uid:'native-person',access_token:'native-login-token'};
+ const saved=JSON.stringify(native);await writeFile(join(root,'cliproxy/auth/local-zcode-native.json'),saved);
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'local-zcode-native.json',provider:'zcode',status:'active',models:['legacy-model']}]));
+ const realFetch=globalThis.fetch;let nativeReads=0,exchanges=0;
  vi.stubGlobal('fetch',async(input:any,init?:RequestInit)=>{
-  if(String(input).startsWith('https://bigmodel.cn/api/biz/v1/')){exchanges++;expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer native-login-token');return new Response(JSON.stringify({code:0,data:{enable:true,accessToken:`project-token-${exchanges}`,tokenType:'Bearer',expiresIn:3600,expiresAt:Math.floor(Date.now()/1000)+3600}}));}
+  if(String(input).includes('/zcode-local-credential'))nativeReads++;
+  if(String(input).startsWith('https://bigmodel.cn/')){exchanges++;throw Error('must not exchange native ZCode credentials');}
   return realFetch(input,init);
  });
- try{await manager.importLocal('zcode');await manager.importLocal('zcode');const files=(await readdir(join(root,'cliproxy/auth'))).filter(n=>n.endsWith('.json'));expect(files).toHaveLength(1);let raw=JSON.parse(await readFile(join(root,'cliproxy/auth',files[0]),'utf8'));expect(raw).toMatchObject({access_token:'project-token-1',oauth_access_token:'native-login-token',auth_kind:'project_access'});expect(exchanges).toBe(1);
-  await writeFile(join(root,'cliproxy/auth',files[0]),JSON.stringify({...raw,expired:'2020-01-01'}));await manager.refreshAccounts('zcode',false);raw=JSON.parse(await readFile(join(root,'cliproxy/auth',files[0]),'utf8'));expect(raw.access_token).toBe('project-token-2');expect(exchanges).toBe(2);
-  expect(JSON.stringify(manager.snapshot())).not.toContain('native-login-token');
+ try{
+  await manager.start();await expect(manager.importLocal('zcode')).rejects.toThrow('官网授权');await expect(manager.importCredential('zcode',native)).rejects.toThrow('官网授权');
+  await manager.refreshAccounts('zcode',false);expect(nativeReads).toBe(0);expect(exchanges).toBe(0);expect(await readFile(join(root,'cliproxy/auth/local-zcode-native.json'),'utf8')).toBe(saved);
+  expect(manager.snapshot().accounts[0]).toMatchObject({unavailable:true,models:[]});expect(manager.snapshot().accounts[0].modelError).toContain('官网授权');
  }finally{vi.unstubAllGlobals();}
+});
+it('automatically removes only terminal Qoder grants with a verified sibling and preserves old source IDs across restart',async()=>{
+ const {manager,root,port}=await setup();await mkdir(join(root,'cliproxy/auth'),{recursive:true});
+ const valid={type:'qoder',uid:'person',email:'person@example.test',access_token:'valid',expired:'2035-01-01'};
+ for(const [name,extra] of Object.entries({'valid.json':{},'also-valid.json':{access_token:'other-valid'},'expired.json':{access_token:'expired',expired:'2020-01-01'},'refreshable.json':{access_token:'refreshable',expired:'2020-01-01',refresh_token:'can-refresh'}}))await writeFile(join(root,'cliproxy/auth',name),JSON.stringify({...valid,...extra}));
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify(['valid.json','also-valid.json','expired.json','refreshable.json'].map(name=>({name,provider:'qoder',status:'active',models:['shared']}))));
+ await manager.start();const oldId=createHash('sha256').update('expired.json').digest('hex').slice(0,24);
+ expect(await readdir(join(root,'cliproxy/auth'))).not.toContain('expired.json');expect(await readdir(join(root,'cliproxy/auth'))).toEqual(expect.arrayContaining(['valid.json','also-valid.json','refreshable.json']));
+ expect(manager.snapshot().accounts.filter(a=>!a.isDuplicate)).toHaveLength(1);expect(manager.snapshot().accounts.find(a=>!a.isDuplicate)?.authorizations).toHaveLength(3);expect(manager.sourceAuth(oldId,'qoder/shared')).toBeTruthy();
+ expect(await readFile(join(root,'cliproxy/auth/valid.json'),'utf8')).toBe(JSON.stringify(valid));
+ await manager.stop();const restarted=new CLIProxyManager(root,binary,'fixture-key',port);cleanup.push(()=>restarted.shutdown());await restarted.start();expect(restarted.sourceAuth(oldId,'qoder/shared')).toBeTruthy();
+ for(const name of ['valid.json','also-valid.json','refreshable.json']){const path=join(root,'cliproxy/auth',name),raw=JSON.parse(await readFile(path,'utf8'));await writeFile(path,JSON.stringify({...raw,uid:'different-person'}));}
+ await restarted.refreshAccounts('qoder',false);expect(()=>restarted.sourceAuth(oldId,'qoder/shared')).toThrow();
+});
+it('retains uncertain failures and requires an enabled verified sibling before automatic cleanup',async()=>{
+ const {manager,root}=await setup();await mkdir(join(root,'cliproxy/auth'),{recursive:true});
+ const native={type:'qoder',uid:'person',access_token:'valid',expired:'2035-01-01'};
+ const files=[{name:'uncertain.json',provider:'qoder',status:'error',unavailable:true},{name:'expired.json',provider:'qoder',status:'active'},{name:'disabled.json',provider:'qoder',status:'active',disabled:true},{name:'other-person.json',provider:'qoder',status:'active',models:['shared']}];
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify(files));
+ for(const file of files)await writeFile(join(root,'cliproxy/auth',file.name),JSON.stringify({...native,uid:file.name==='other-person.json'?'other':native.uid,expired:file.name==='expired.json'?'2020-01-01':native.expired,disabled:file.disabled}));
+ await manager.start();expect(await readdir(join(root,'cliproxy/auth'))).toEqual(expect.arrayContaining(files.map(f=>f.name)));expect(manager.snapshot().accounts.some(a=>a.authenticationRequired)).toBe(true);
+});
+it('does not delete a Qoder grant replaced during model verification',async()=>{
+ const {manager,root}=await setup();await mkdir(join(root,'cliproxy/auth'),{recursive:true});
+ const native={type:'qoder',uid:'person',access_token:'valid',expired:'2035-01-01'};
+ for(const name of ['valid.json','expired.json'])await writeFile(join(root,'cliproxy/auth',name),JSON.stringify({...native,expired:name==='expired.json'?'2020-01-01':'2035-01-01'}));
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify(['valid.json','expired.json'].map(name=>({name,provider:'qoder',status:'active',models:['shared']}))));
+ const realFetch=globalThis.fetch;const spy=vi.spyOn(globalThis,'fetch').mockImplementation(async(input,init)=>{const response=await realFetch(input,init);if(String(input).includes('/auth-files/models?name=valid.json'))await writeFile(join(root,'cliproxy/auth/expired.json'),JSON.stringify({...native,access_token:'new-valid-token'}));return response;});
+ try{await manager.start();expect(await readdir(join(root,'cliproxy/auth'))).toContain('expired.json');await manager.refreshAccounts('qoder',false);expect(manager.snapshot().accounts.filter(a=>a.authenticationRequired)).toEqual([]);}finally{spy.mockRestore();}
+});
+it('keeps all expired grants for user confirmation and rechecks a recovered grant before deletion',async()=>{
+ const {manager,root}=await setup();await mkdir(join(root,'cliproxy/auth'),{recursive:true});
+ const expired={type:'qoder',uid:'person',access_token:'expired',expired:'2020-01-01'};
+ await writeFile(join(root,'cliproxy/auth/expired.json'),JSON.stringify(expired));await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'expired.json',provider:'qoder',status:'active',models:['shared']}]));
+ await manager.start();const id=manager.snapshot().accounts[0].id;expect(manager.snapshot().accounts[0].authenticationRequired).toBe(true);expect(await readdir(join(root,'cliproxy/auth'))).toContain('expired.json');
+ await writeFile(join(root,'cliproxy/auth/expired.json'),JSON.stringify({...expired,access_token:'recovered',expired:'2035-01-01'}));await expect(manager.removeExpiredAccount(id)).rejects.toMatchObject({statusCode:409});
+ await writeFile(join(root,'cliproxy/auth/expired.json'),JSON.stringify(expired));const next=await manager.removeExpiredAccount(id);expect(next.accounts).toEqual([]);
 });
 it('presents Qoder grants with the same UID as one account while keeping both native authorizations',async()=>{
  const {manager,root}=await setup();await mkdir(join(root,'cliproxy/auth'),{recursive:true});
@@ -691,7 +731,7 @@ it('selects a verified Qoder grant by freshness and model support, then skips ex
  for(const name of ['new.json','backup.json','expired.json'])await writeFile(join(root,'cliproxy/auth',name),JSON.stringify({type:'qoder',uid:'same-user',email:'person@example.test',access_token:`access-${name}`,expired:name==='expired.json'?'2020-01-01':'2035-01-01',authorizedAt:name==='new.json'?'2026-10-21T00:00:00Z':undefined}));
  await manager.start();const id=(name:string)=>createHash('sha256').update(name).digest('hex').slice(0,24);
  expect(manager.sourceAuth(id('expired.json'),'qoder/shared')).toBe('new.json');expect(manager.sourceAuth(id('new.json'),'qoder/backup-only')).toBe('backup.json');
- const details=manager.snapshot().accounts.find(a=>a.id===id('new.json'))!.authorizations!;expect(details).toHaveLength(3);expect(details.find(g=>g.id===id('new.json'))).toMatchObject({preferred:true,authorizedAt:'2026-10-21T00:00:00.000Z'});expect(details.find(g=>g.id===id('expired.json'))?.status).toBe('expired');
+ const details=manager.snapshot().accounts.find(a=>a.id===id('new.json'))!.authorizations!;expect(details).toHaveLength(2);expect(details.find(g=>g.id===id('new.json'))).toMatchObject({preferred:true,authorizedAt:'2026-10-21T00:00:00.000Z'});expect(details.find(g=>g.id===id('expired.json'))).toBeUndefined();
  // Update the same saved grant through the management seam.
  await (manager as any).request('/auth-files?name=new.json','POST',{type:'qoder',uid:'same-user',email:'person@example.test',access_token:'access-new.json',expired:'2020-01-01'});
  await manager.refreshAccounts('qoder',false);expect(manager.sourceAuth(id('new.json'),'qoder/shared')).toBe('backup.json');

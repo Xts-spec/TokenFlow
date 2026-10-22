@@ -13,11 +13,14 @@ const assert=require('node:assert/strict');
  const rows=[{...base,target:'qoder-ide',model:'qoder/dfmodel'},{...base,target:'qoder',model:'qoder/kmodel_latest',inputTokens:0,outputTokens:0,cachedTokens:0,cacheBaseTokens:0,unmeasured:1,credits:0.16},{...base,target:'qoder-ide',model:'company-model',sourceId:'',channel:'api',inputTokens:30,outputTokens:10,cachedTokens:0,cacheBaseTokens:0}];
  const account={id:'account',provider:'qoder',label:'fixture@example.test',status:'active',disabled:false,models:['qoder/dfmodel'],nativeClients:['qoder','qoder-ide']};
  const grant={id:'grant-one',source:'Qoder',status:'usable',preferred:true,refreshedAt:'2026-10-21T00:00:00Z',expiresAt:'2035-01-01T00:00:00Z'};account.credentialCount=2;account.authorizations=[grant,{...grant,id:'grant-two',source:'Qoder IDE',preferred:false,status:'expired',refreshedAt:undefined,expiresAt:'2025-01-01T00:00:00Z'}];
- const local={state:'running',loginState:'idle',port:8317,logs:[],accounts:[account],models:[{id:'qoder/dfmodel',provider:'qoder',displayName:'DeepSeek V4 Flash'}],quotas:{},quotaBusy:false,providers:[{id:'qoder',label:'Qoder',flow:'callback',hint:'fixture'}]};
+ const local={state:'running',loginState:'idle',port:8317,logs:[],accounts:[account],models:[{id:'qoder/dfmodel',provider:'qoder',displayName:'DeepSeek V4 Flash'}],quotas:{},quotaBusy:false,providers:[{id:'qoder',label:'Qoder',flow:'callback',hint:'fixture'},{id:'zcode',label:'ZCode',flow:'device',hint:'fixture'},{id:'trae',label:'Trae',flow:'callback',hint:'fixture'}]};
  const target={id:'qoder',name:'Qoder',installation:{installed:true,version:'1.0'},exists:true,revision:'fixture',pids:[],connection:null,configurationState:'unmanaged',backups:[]};
  const coverage=['qoder','qoder-ide'].map(target=>({target,status:'ready',files:1,indexed:1,skipped:0}));
+ let zcodeNativeReads=0,deleted=0;
  const server=createServer(async(req,res)=>{
   const path=new URL(req.url,'http://localhost').pathname;
+  if(path==='/api/native-accounts/zcode')zcodeNativeReads++;
+  if(req.method==='DELETE'&&path==='/api/local-agent/accounts/expired-fixture/expired'){deleted++;local.accounts=local.accounts.filter(a=>a.id!=='expired-fixture');}
   if(path.startsWith('/api/')){
    res.setHeader('content-type','application/json');
    const value=path==='/api/local-agent'?local:path==='/api/a2a'?{targets:[target]}:path==='/api/a2a/program-updates'?{updates:{}}:path==='/api/codex-accounts'||path.includes('accounts/')?{revision:'fixture',accounts:[{id:'account',accountId:'uid',email:account.label,switchable:true}],accountId:'uid',email:account.label,loginState:'signed-in',pids:[],backup:null,gatewayConnected:false}:path==='/api/usage/overview'?{rows:[],nativeRows:rows,combinedRows:rows,allRows:rows,coverage,scanning:false}:path==='/api/gateway-keys'?{keys:[]}:path==='/api/gateway/activity'?{recent:[]}:path==='/api/activity/traces'?{records:[]}:path==='/api/maintenance'?{status:'idle',messages:[]}:{};
@@ -45,9 +48,13 @@ const assert=require('node:assert/strict');
   assert.doesNotMatch(await evaluate('document.querySelector(".tfAccountsPage .tfUsageFold").innerText'),/Credits/);
   await evaluate('document.querySelector(".tfAccountsPage .tfUsageFoldHead").click()');await wait('!!document.querySelector(".tfUsagePopover")');
   assert.equal(await evaluate('document.querySelector(".tfAccountsPage").innerText.includes("company-model")'),false);await evaluate('document.querySelector(".tfUsagePopover .iconButton").click()');await wait('!document.querySelector(".tfUsagePopover")');await screenshot('qoder-account.png');
+  await click('ZCode');await wait('document.querySelector(".tfProviderTitle h2")?.textContent==="ZCode"');await pause(150);assert.equal(await evaluate('[...document.querySelectorAll(".tfProviderHead button")].some(e=>e.textContent.includes("从本机导入"))'),false);assert.equal(zcodeNativeReads,0);
+  local.accounts.push({id:'expired-fixture',provider:'trae',label:'expired@example.test',status:'error',disabled:false,authenticationRequired:true,unavailable:true,models:[]});
+  await win.loadURL(win.webContents.getURL());await wait('!!document.querySelector("dialog[open]")');assert.match(await evaluate('document.querySelector("dialog[open]").innerText'),/expired@example.test.*1 份授权已确认失效/s);await click('暂时保留');await wait('!document.querySelector("dialog[open]")');assert.equal(deleted,0);
+  await win.loadURL(win.webContents.getURL());await wait('!!document.querySelector("dialog[open]")');await click('确定移除');await wait('!document.querySelector("dialog[open]")');assert.equal(deleted,1);assert.equal(local.accounts.some(a=>a.id==='expired-fixture'),false);
   await click('本地 Agent');await click('Qoder IDE');await win.setSize(760,1000);await pause(100);
   assert.equal(await evaluate('document.documentElement.scrollWidth>window.innerWidth'),false);await screenshot('qoder-ide-narrow.png');
-  console.log('PASS: Qoder and IDE account totals combine; custom API is Agent-only; Token style retained; Credits confined to expanded details; desktop/narrow layout checked.');
+  console.log('PASS: Qoder and IDE account totals combine; custom API is Agent-only; Token style retained; Credits confined to expanded details; desktop/narrow layout checked; ZCode has no native import/read; expired deletion requires confirmation and refreshes the prompt.');
  }catch(error){console.error(error);process.exitCode=1;}
  finally{win.destroy();await new Promise(r=>server.close(r));await rm(root,{recursive:true,force:true});app.exit(process.exitCode??0);}
 })();

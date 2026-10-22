@@ -6,7 +6,7 @@ import {resolve,join} from 'node:path';
 export function nativeImportOverlay(replacements,dir){
  const source=resolve('upstream/CLIProxyAPI/internal/api/handlers/management/auth_files_provider_oauth.go');
  let text=readFileSync(replacements[source]??source,'utf8');
- for(const name of ['ImportWorkBuddyLocalToken','ImportZCodeLocalToken','ImportTraeLocalToken']){
+ for(const name of ['ImportWorkBuddyLocalToken','ImportTraeLocalToken']){
   const start=text.indexOf(`func (h *Handler) ${name}(`),end=text.indexOf('\nfunc ',start+1);
   if(start<0||end<0)throw Error('Native import handler moved: '+name);
   let section=text.slice(start,end);
@@ -23,9 +23,12 @@ export function nativeImportOverlay(replacements,dir){
 `+anchor);
   text=text.slice(0,start)+section+text.slice(end);
  }
+ const zcodeStart=text.indexOf('func (h *Handler) ImportZCodeLocalToken('),zcodeEnd=text.indexOf('\nfunc ',zcodeStart+1);
+ if(zcodeStart<0||zcodeEnd<0)throw Error('ZCode local handler moved');
+ text=text.slice(0,zcodeStart)+'func (h *Handler) ImportZCodeLocalToken(c *gin.Context) { c.JSON(410,gin.H{"error":"ZCode local import is disabled; use official web authorization"}) }\n'+text.slice(zcodeEnd);
  const routesSource=resolve('upstream/CLIProxyAPI/internal/api/server_management.go');
  let routes=readFileSync(replacements[routesSource]??routesSource,'utf8');
- for(const [provider,handler] of [['workbuddy','ImportWorkBuddyLocalToken'],['zcode','ImportZCodeLocalToken'],['trae','ImportTraeLocalToken']]){
+ for(const [provider,handler] of [['workbuddy','ImportWorkBuddyLocalToken'],['trae','ImportTraeLocalToken']]){
   const anchor=`mgmt.POST("/${provider}-import-local", s.mgmt.${handler})`;
   if(!routes.includes(anchor))throw Error('Native route moved: '+provider);
   routes=routes.replace(anchor,anchor+`\n mgmt.GET("/${provider}-local-credential",func(c *gin.Context){q:=c.Request.URL.Query();q.Set("preview","1");c.Request.URL.RawQuery=q.Encode();s.mgmt.${handler}(c)})`);

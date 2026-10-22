@@ -1,5 +1,4 @@
 import {qoderAuthorization,type QoderAuthorization} from './qoder-authorizations.js';
-import {zcodeProjectCredential} from './zcode-credentials.js';
 import {qoderProfile,qoderCredentialSchema,QoderIdentityError} from './qoder-credentials.js';
 import {retryOfficialRead,OfficialReadTransportError,refreshNetworkHint} from './official-refresh.js';
 import {CredentialHistory} from './credential-history.js';
@@ -49,7 +48,7 @@ const qoderProfilesSchema=z.record(z.object({email:z.string().email().max(200),c
 const apiCallSchema = z.object({status_code: z.number().int(), header: z.record(z.array(z.string())).default({}), body: z.string().default('')});
 export function revokedCredential(file:{status?:string;status_message?:string}){return file.status==='error'&&/\b(?:invalid_grant|token_revoked|refresh_token_revoked|refresh_token_reused|refresh_token_expired)\b/i.test(file.status_message??'');}
 function credentialTokenRevision(raw:Record<string,unknown>){return typeof raw.access_token==='string'&&raw.access_token?createHash('sha256').update(JSON.stringify([raw.access_token,raw.refresh_token])).digest('hex'):undefined;}
-export type LocalAccount = {id: string; provider: string; label: string; nativeClients?:string[]; authorizations?:QoderAuthorization[]; status: string; disabled: boolean; unavailable: boolean; retryable?:boolean; authenticationRequired?:boolean; isDuplicate?: boolean;preferredCredentialId?:string;credentialCount?:number; modelError?:string; models?: string[]};
+export type LocalAccount = {id: string; provider: string; label: string; nativeClients?:string[]; authorizations?:QoderAuthorization[]; status: string; disabled: boolean; unavailable: boolean; retryable?:boolean; authenticationRequired?:boolean; isDuplicate?: boolean;credentialAlias?:boolean;preferredCredentialId?:string;credentialCount?:number; modelError?:string; models?: string[]};
 /** `provider` 为承接该模型的登录 Provider；未知类型（如 Gemini API Key）为空。 */
 // Unknown capabilities remain unknown; never infer vision from a model name.
 function modelImageCapabilities(model:z.infer<typeof modelSchema>,provider:string){
@@ -69,6 +68,7 @@ export class CLIProxyManager {
   private cursorLoginSelected=false;
   private authIDs = new Map<string,string>();
   private credentialGroups=new Map<string,string[]>();
+  private credentialAliases:Record<string,string>={};
   private child?: ChildProcess;
   private busy = false;
   private closing = false;
@@ -91,7 +91,6 @@ export class CLIProxyManager {
   private accounts: LocalAccount[] = [];
   private revokedTokens=new Map<string,string>();
   private qoderIdentityAttempts=new Map<string,{revision:string;at:number;message:string;reauthorize:boolean}>();
-  private zcodeRepairAttempts=new Map<string,{at:number;revision:string;message:string}>();
   private qoderProfileAttempts=new Map<string,number>();
   private names = new Map<string, string>();
   private quotaTargets = new Map<string, {authIndex: string; account: QuotaAccount}>();
@@ -140,6 +139,7 @@ export class CLIProxyManager {
   snapshot() {
     const cursor=this.cursor.snapshot();
     const accounts=this.accounts.map(account=>{const ids=this.credentialGroups.get(account.id);return !account.isDuplicate&&ids?.length?{...account,models:[...new Set(this.accounts.filter(a=>ids.includes(a.id)&&!a.disabled&&(!a.unavailable||a.retryable)).flatMap(a=>a.models??[]))]}:account;});
+    for(const id of Object.keys(this.credentialAliases)){if(accounts.some(a=>a.id===id))continue;const group=this.credentialGroups.get(id),account=accounts.find(a=>group?.includes(a.id)&&!a.isDuplicate);if(account)accounts.push({...account,id,isDuplicate:true,credentialAlias:true,preferredCredentialId:account.id,authorizations:undefined});}
     return structuredClone({state: this.state, loginState: this.login_.state, port: this.port,...(this.apiSyncTask?{apiRoutesSyncing:true}:{}),
       logs: this.recent,...(this.networkCheck?{networkCheck:this.networkCheck}:{}),...(this.options.networkSnapshot||this.network?{network:this.options.networkSnapshot?.()??this.network!.snapshot()}:{}), accounts: [...accounts,...cursor.accounts], models: [...this.models,...(this.state==='running'?cursor.models:[])], accountError: this.accountError, lastError: this.lastError,
       quotas: {...this.quotas,...cursor.quotas}, quotaBusy: this.quotaBusy, providers: [...loginProviderCatalog(),cursorCatalog], login: this.cursorLoginSelected?cursor.login:this.login_.snapshot()});
@@ -385,35 +385,40 @@ export class CLIProxyManager {
     this.qoderIdentityAttempts.set(file.name,{revision,at:Date.now(),message,reauthorize});
     return {raw,message,reauthorize};
   }
-  private async repairZcodeCredential(file:z.infer<typeof accountSchema>,raw:Record<string,unknown>,force:boolean):Promise<{raw:Record<string,unknown>;message?:string;reauthorize?:boolean}>{
-    if(file.disabled)return {raw};
-    const revision=credentialTokenRevision(raw)??'',previous=this.zcodeRepairAttempts.get(file.name);
-    if(!force&&previous?.revision===revision&&Date.now()-previous.at<300000)return {raw,message:previous.message};
-    try{
-      let candidate=raw;
-      if(file.name.startsWith('local-zcode-')&&!raw.native_oauth&&!raw.oauth_access_token){
-        const native=await this.readLocalCredential('zcode').catch(()=>undefined);
-        if(native&&native.access_token===raw.access_token&&native.uid===raw.uid&&native.provider===raw.provider)candidate={...raw,...native};
-      }
-      const next=await zcodeProjectCredential(candidate);
-      if(next!==raw&&JSON.stringify(next)!==JSON.stringify(raw)){
-        const current=JSON.parse(await readConfig(join(this.root,'cliproxy','auth',file.name))??'null');
-        if(!current||credentialTokenRevision(current)!==revision)return {raw:current??raw,message:'ZCode 授权已更新，请刷新以校验模型目录。'};
-        await this.request(`/auth-files?name=${encodeURIComponent(file.name)}`,'POST',{...next,type:'zcode',...(file.disabled!==undefined?{disabled:file.disabled}:{})});
-      }
-      this.zcodeRepairAttempts.delete(file.name);return {raw:next};
-    }catch(error){
-      const message=error instanceof Error&&'statusCode' in error?error.message:'ZCode 项目调用授权暂未恢复，请检查网络后刷新。';
-      this.zcodeRepairAttempts.set(file.name,{at:Date.now(),revision,message});return {raw,message};
+  private async pruneExpiredQoder(accounts:LocalAccount[],credentials:Map<string,{raw:Record<string,unknown>}>,identities:Map<string,string>){
+    let removed=0;
+    for(const account of accounts.filter(a=>a.provider==='qoder'&&a.authenticationRequired)){
+      const group=this.credentialGroups.get(account.id)??[];
+      const sibling=accounts.find(a=>group.includes(a.id)&&!a.disabled&&!a.unavailable&&!a.authenticationRequired&&credentialPreference(credentials.get(a.id)?.raw??{})[0]===2&&a.models?.some(model=>this.models.some(m=>m.id===model)));
+      const name=this.names.get(account.id),identity=identities.get(account.id),expected=credentials.get(account.id)?.raw;
+      if(!sibling||!name||!identity||!expected)continue;
+      try{
+        const path=join(this.root,'cliproxy','auth',name),raw=await readConfig(path);
+        // A grant refreshed or replaced during catalog discovery is not eligible for removal.
+        if(!raw||JSON.stringify(JSON.parse(raw))!==JSON.stringify(expected))continue;
+        const archive=join(this.root,'revoked-credentials');await mkdir(archive,{recursive:true,mode:0o700});await chmod(archive,0o700);await writeFile(join(archive,`${createHash('sha256').update(name+raw).digest('hex')}.json`),raw,{mode:0o600});
+        // Keep old scoped API keys bound to this exact account identity after removal/restart.
+        const aliases={...this.credentialAliases,[account.id]:identity},aliasPath=join(this.root,'credential-aliases.json');
+        await writeFile(aliasPath+'.tmp',JSON.stringify(aliases),{mode:0o600});await rename(aliasPath+'.tmp',aliasPath);this.credentialAliases=aliases;
+        // Recheck immediately before deletion, including the surviving grant.
+        if(await readConfig(path)!==raw)continue;
+        const siblingName=this.names.get(sibling.id),siblingRaw=siblingName&&await readConfig(join(this.root,'cliproxy','auth',siblingName));
+        if(!siblingRaw||JSON.stringify(JSON.parse(siblingRaw))!==JSON.stringify(credentials.get(sibling.id)?.raw))continue;
+        await this.request(`/auth-files?name=${encodeURIComponent(name)}`,'DELETE');delete this.quotas[account.id];removed++;
+      }catch{this.log('已保留暂时无法安全清理的失效授权，下次刷新后重试。');}
     }
+    if(removed)this.log(`已自动清理 ${removed} 份失效 Qoder 授权，保留同账号的可用授权。`);
+    return removed>0;
   }
-  private async loadAccounts(providerScope?:LoginProviderId,refreshUsage=true,accountId?:string) {
+  private async loadAccounts(providerScope?:LoginProviderId,refreshUsage=true,accountId?:string):Promise<LocalAgentSnapshot> {
     if (this.state !== 'running') throw new Error('请先启动 Local Agent');
     try {
       const result = z.object({files: z.array(accountSchema)}).parse(await this.request('/auth-files'));
       if(providerScope)result.files=result.files.filter(file=>(file.provider??file.type)===providerScope);
       if(accountId)result.files=result.files.filter(file=>file.name===this.names.get(accountId));
-      // Keep expired grants visible until the user confirms removal. Quota errors alone are not revocation.
+      // Keep terminal failures for confirmation unless a verified Qoder sibling can replace them.
+      this.credentialAliases=z.record(z.string().regex(/^[a-f0-9]{24}$/),z.string().regex(/^[a-f0-9]{64}$/)).parse(JSON.parse(await readConfig(join(this.root,'credential-aliases.json'))??'{}'));
+      // Quota and catalog errors alone are not revocation.
       result.files=result.files.filter(file=>!file.runtime_only);
       const retained=accountId?this.accounts.filter(account=>account.id!==accountId):providerScope?this.accounts.filter(account=>account.provider!==providerScope):[];
       const retainedIDs=new Set(retained.map(account=>account.id));
@@ -438,8 +443,10 @@ export class CLIProxyManager {
         if(!file.name.includes('/')&&!file.name.includes('\\')){
           try{const raw=await readConfig(join(this.root,'cliproxy','auth',file.name));if(raw)identity=JSON.parse(raw);}catch{/* Keep the sidecar label if the credential is being refreshed. */}
         }
-        const recovery=provider==='qoder'&&!file.name.includes('/')&&!file.name.includes('\\')?await this.repairQoderIdentity(file,identity,providerScope==='qoder'&&refreshUsage):provider==='zcode'&&!file.name.includes('/')&&!file.name.includes('\\')?await this.repairZcodeCredential(file,identity,providerScope==='zcode'):undefined;
+        const recovery=provider==='qoder'&&!file.name.includes('/')&&!file.name.includes('\\')?await this.repairQoderIdentity(file,identity,providerScope==='qoder'&&refreshUsage):undefined;
         if(recovery)identity=recovery.raw;
+        const unsupportedZcode=provider==='zcode'&&(identity.native_oauth===true||typeof identity.oauth_access_token==='string'||file.name.startsWith('local-zcode-'));
+        if(unsupportedZcode)unresolvedQoder.add(id);
         if(recovery?.message)unresolvedQoder.add(id);
         if(Object.keys(identity).length)await this.credentialHistory.remember(provider,[identity]);
         const identityKey=credentialIdentity(provider,identity,file);if(identityKey)identities.set(id,identityKey);
@@ -476,6 +483,7 @@ export class CLIProxyManager {
           ...(provider==='qoder'?{nativeClients:['qoder','qoder-ide']}:provider==='workbuddy'?{nativeClients:[workbuddyLoginTarget(typeof identity.domain==='string'?identity.domain:undefined)].filter((id):id is NonNullable<typeof id>=>!!id)}:{}),
           status: file.status ?? 'unknown',
           ...(recovery?.message?{modelError:recovery.message,models:[]}:{}),
+          ...(unsupportedZcode?{modelError:'ZCode 已停止本机凭证导入，请通过官网授权添加账号。旧记录已保留，可手动删除。',models:[]}:{}),
           ...(provider==='doubao'?{modelError:'旧接入将豆包与 MarsCode 混用，现已停用；原记录保留。',models:[]}:{}),
           disabled: file.disabled ?? false,
           unavailable: authenticationRequired||unresolvedQoder.has(id)||file.unavailable||false,
@@ -505,6 +513,7 @@ export class CLIProxyManager {
           if(identities.has(account.id))credentialGroups.set(account.id,group.map(a=>a.id));
         }
       }
+      for(const [alias,identity] of Object.entries(this.credentialAliases)){if(names.has(alias))continue;const group=groups.get(identity);if(group?.length)credentialGroups.set(alias,group.map(a=>a.id));}
       const retainedModels=new Set(retained.flatMap(account=>account.models??[]));
       const aliases: typeof this.aliases = accountId?Object.fromEntries(Object.entries(this.aliases).map(([provider,entries])=>[provider,entries.filter(entry=>retainedModels.has(entry.alias))])):providerScope?structuredClone(Object.fromEntries(Object.entries(this.aliases).filter(([id])=>id!==providerScope))):{};
       const discoveredAccounts = new Set<string>(unresolvedQoder);
@@ -598,6 +607,7 @@ export class CLIProxyManager {
       this.quotas = Object.fromEntries(Object.entries(this.quotas).filter(([id]) => names.has(id)));
       this.models = [...catalog.values()].filter(m => accountId&&retainedModels.has(m.id)||providerScope&&m.provider!==providerScope||available.has(m.id)).sort((a,b) => a.id.localeCompare(b.id));
       this.publishAPIModels(available);
+      if(!accountId&&await this.pruneExpiredQoder(accounts,credentials,identities))return this.loadAccounts(providerScope,refreshUsage);
       this.accountError = this.models.length < catalog.size || (this.options.apiModelIDs?.()??[]).some(id=>!this.apiModels.has(id)) ? '模型路由正在同步，网关会自动重试。' : accounts.some(a=>!a.disabled&&!a.unavailable&&!a.models?.length&&!a.modelError) ? '授权已读取，正在同步可用模型…' : undefined;
       // Load quotas after startup / new login without delaying account discovery or the workspace.
       if(refreshUsage)void (this.quotaTask ?? Promise.resolve()).then(() => {
@@ -716,6 +726,7 @@ export class CLIProxyManager {
     catch{throw nativeConflict('读取账号授权失败，请重新连接该账号。');}
   }
   async nativeCredential(provider:NativeProvider,id:string,model?:string){
+    if(this.credentialAliases[id]&&!this.names.has(id))id=this.preferredCredential(id,model);
     const account=this.accounts.find(a=>a.id===id);
     if(!account||account.disabled)throw nativeConflict('请选择有效的官方账号。');
     if(provider!=='claude'||model)this.sourceAuth(id,model??account?.models?.[0]??'');
@@ -723,11 +734,7 @@ export class CLIProxyManager {
   }
   async importCredential(provider:'codex'|'claude'|'qoder'|'antigravity'|'workbuddy'|'zcode'|'trae',credential:Record<string,unknown>,onlyNew=false) {
     await this.start();
-    if(provider==='zcode'&&credential.native_oauth===true){
-      const fingerprint=credentialFingerprint(credential);
-      for(const account of this.accounts.filter(a=>a.provider==='zcode')){const name=this.names.get(account.id);if(!name||name.includes('/')||name.includes('\\'))continue;try{const raw=JSON.parse(await readConfig(join(this.root,'cliproxy','auth',name))??'{}');if(raw.auth_kind==='project_access'&&credentialFingerprint(raw)===fingerprint&&raw.uid===credential.uid&&raw.provider===credential.provider){credential={...credential,...raw};break;}}catch{}}
-      credential=await zcodeProjectCredential(credential);
-    }
+    if(provider==='zcode'&&(credential.native_oauth===true||typeof credential.oauth_access_token==='string'))throw nativeConflict('ZCode 不支持本机凭证导入，请通过官网授权添加账号。');
     const complete=provider==='codex'?['access_token','refresh_token','id_token'].every(key=>typeof credential[key]==='string'&&!!credential[key]):provider==='qoder'?qoderCredentialSchema.safeParse(credential).success:['workbuddy','zcode','trae'].includes(provider)?typeof credential.access_token==='string'&&!!credential.access_token.trim():nativeCredentialSchema.safeParse(credential).success;
     if(!complete){if(onlyNew)return this.snapshot();throw nativeConflict('本机登录凭据不完整，请先在客户端完成登录。');}
     const identity=credentialIdentity(provider,credential)??credentialFingerprint(credential);
@@ -749,11 +756,11 @@ export class CLIProxyManager {
   }
   async removeExpiredAccount(id:string){
     const previous=this.snapshot().accounts.find(a=>a.id===id);
-    if(previous&&isLoginProvider(previous.provider))await this.refreshAccounts(previous.provider,false,id);
+    if(previous&&isLoginProvider(previous.provider))await this.refreshAccounts(previous.provider,false);
     const account=this.snapshot().accounts.find(a=>a.id===id);
-    if(!account?.authenticationRequired)throw Object.assign(new Error('此账号没有已确认失效的授权，请刷新后检查。'),{statusCode:409});
-    if(this.cursor.owns(id)){await this.cursor.remove(id);return this.snapshot();}
+    if(this.cursor.owns(id)){if(!account?.authenticationRequired)throw Object.assign(new Error('此账号没有已确认失效的授权，请刷新后检查。'),{statusCode:409});await this.cursor.remove(id);return this.snapshot();}
     const expired=(this.credentialGroups.get(id)??[id]).filter(candidate=>this.accounts.find(a=>a.id===candidate)?.authenticationRequired);
+    if(!account||!expired.length)throw Object.assign(new Error('此账号没有已确认失效的授权，请刷新后检查。'),{statusCode:409});
     const records:Record<string,unknown>[]=[];
     for(const candidate of expired){const name=this.names.get(candidate);if(!name)continue;const raw=await readConfig(join(this.root,'cliproxy','auth',name));if(raw){records.push(JSON.parse(raw));const archive=join(this.root,'revoked-credentials');await mkdir(archive,{recursive:true,mode:0o700});await chmod(archive,0o700);await writeFile(join(archive,`${createHash('sha256').update(name+raw).digest('hex')}.json`),raw,{mode:0o600});}await this.request(`/auth-files?name=${encodeURIComponent(name)}`,'DELETE');delete this.quotas[candidate];}
     if(records.length)await this.credentialHistory.forget(account.provider,records);
@@ -787,11 +794,12 @@ export class CLIProxyManager {
     return task;
   }
   async refreshAccount(id:string):Promise<LocalAgentSnapshot> {
+    if(this.credentialAliases[id]&&!this.names.has(id))id=this.preferredCredential(id);
     const account=this.snapshot().accounts.find(account=>account.id===id);
     if(!account)throw Object.assign(new Error('账号已变更，请刷新账号列表'),{statusCode:404});
     if(this.cursor.owns(id)){await this.cursor.refresh(true,id);return this.snapshot();}
     if(!isLoginProvider(account.provider))return this.snapshot();
-    await this.refreshAccounts(account.provider,false,id);
+    await this.refreshAccounts(account.provider,false,account.provider==='qoder'?undefined:id);
     return this.loadQuota(account.provider,id);
   }
   refreshProvider(provider:LoginProviderId|'cursor',force=true):Promise<LocalAgentSnapshot> {
@@ -857,11 +865,11 @@ export class CLIProxyManager {
   }
   // 登录层入口：所有 Provider 共用同一个会话控制器。
   async login(provider: LoginProviderId | 'cursor') {this.cursorLoginSelected=provider==='cursor';if(provider==='cursor'){if(this.login_.isPending())throw new Error('请先完成当前授权');await this.cursor.beginLogin();}else{if(['starting','waiting_for_browser'].includes(this.cursor.snapshot().login?.status??''))throw new Error('请先完成 Cursor 授权');await this.login_.login(provider);}return this.snapshot();}
-  private async readLocalCredential(provider:'trae'|'workbuddy'|'workbuddy-ai'|'zcode'){
+  private async readLocalCredential(provider:'trae'|'workbuddy'|'workbuddy-ai'){
     const route=provider==='workbuddy-ai'?'/workbuddy-local-credential?region=overseas':`/${provider}-local-credential`;
     return z.object({credential:z.object({access_token:z.string().trim().min(1).max(30000)}).passthrough()}).parse(await this.request(route)).credential;
   }
-  async localImportStatus(provider:'trae'|'zcode'){
+  async localImportStatus(provider:'trae'){
     const common={readOnly:true,pids:[],backup:null,gatewayConnected:false};
     try{
       const raw=await this.readLocalCredential(provider),identity=credentialIdentity(provider,raw)??credentialFingerprint(raw);
@@ -876,6 +884,7 @@ export class CLIProxyManager {
     }
   }
   async importLocal(provider: 'trae' | 'workbuddy' | 'workbuddy-ai' | 'zcode' | 'cursor', onlyNew=false) {
+    if(provider==='zcode')throw nativeConflict('ZCode 不支持本机凭证导入，请通过官网授权添加账号。');
     if(provider==='cursor'){await this.cursor.importLocal();return this.snapshot();}
     if (this.state !== 'running') await this.start();
     // Preview is management-only: native readers return credentials to this process,
