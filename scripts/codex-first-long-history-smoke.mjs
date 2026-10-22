@@ -16,7 +16,7 @@ import {homedir,tmpdir} from 'node:os';
 import {randomUUID} from 'node:crypto';
 import YAML from 'yaml';
 import {compactionModelWindow} from '../packages/core/src/initial-compaction.ts';
-import {upstreamIdle,finishUpstream} from '../packages/core/src/upstream-idle.ts';
+import {upstreamRequest,finishUpstream,inferenceFetch} from '../packages/core/src/upstream-request.ts';
 import {codexWebSearch} from '../packages/core/src/codex-web-search.ts';
 import {GatewayContext} from '../packages/core/src/gateway-context.ts';
 import {CodexContext,codexContextScope,portableCodexItem} from '../packages/core/src/codex-context.ts';
@@ -53,7 +53,7 @@ const server=createServer(async(req,res)=>{
  const body=JSON.parse(raw||'{}'),trigger=body.input?.some(item=>item.type==='compaction_trigger'),localCompact=JSON.stringify(body.input?.at(-1)).includes('CONTEXT CHECKPOINT COMPACTION');
  const request={phase,path:req.url,bytes:Buffer.byteLength(raw),items:body.input?.length,trigger:!!trigger,localCompact,model:body.model};calls.push(request);
  if(phase>0||calls.length===1)console.log(JSON.stringify({clientRequest:request}));
- const lifetime=upstreamIdle();let initial=false;const cancel=()=>lifetime.abort();abort.signal.addEventListener('abort',cancel,{once:true});res.on('close',()=>{if(!res.writableFinished)cancel();});
+ const lifetime=upstreamRequest();let initial=false;const cancel=()=>lifetime.abort();abort.signal.addEventListener('abort',cancel,{once:true});res.on('close',()=>{if(!res.writableFinished)cancel();});
  const rawSend=async(_path,forward,clock)=>{
   forward=codexWebSearch(forward);
   const summary=forward.instructions?.startsWith('Summarize the supplied'),bytes=Buffer.byteLength(JSON.stringify(forward)),hasAnchor=JSON.stringify(forward.input).includes(marker);
@@ -61,7 +61,7 @@ const server=createServer(async(req,res)=>{
   if(phase===0)return largeHistory?synthetic(forward,seedAnswer):synthetic(forward,'Archived directory checks completed.',seedTools++<48);
   if(live){
    assert.equal(forward.model,model,'live requests must use only the authorized selected model');
-   const result=await fetch(endpoint,{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify(forward),signal:clock.signal});
+   const result=await inferenceFetch(endpoint,{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify(forward),signal:clock.signal});
    entry.status=result.status;if(!result.ok){const error=await result.clone().json().catch(()=>null);entry.errorCode=error?.error?.code??error?.code;entry.errorType=error?.error?.type;entry.errorMessage=String(error?.error?.message??error?.message??'').slice(0,500); }console.log(JSON.stringify({upstream:entry}));
    if(!result.body||(result.headers.get('content-type')??'').indexOf('text/event-stream')<0)return result;
    const decoder=new TextDecoder();let pending='';entry.events={};
@@ -98,14 +98,14 @@ const server=createServer(async(req,res)=>{
   entry.status=200;return synthetic(forward,summary||localCompact?`Goal: preserve ${hasAnchor?marker:'ANCHOR_MISSING'}. Archived directory checks are complete. Continue with the latest user instruction.`:hasAnchor?marker:'ANCHOR_MISSING');
  };
  const send=async(path,forward)=>{
-  const clock=initial?upstreamIdle():lifetime;const stop=()=>clock.abort();if(initial)lifetime.signal.addEventListener('abort',stop,{once:true});if(lifetime.signal.aborted)clock.abort();
+  const clock=initial?upstreamRequest():lifetime;const stop=()=>clock.abort();if(initial)lifetime.signal.addEventListener('abort',stop,{once:true});if(lifetime.signal.aborted)clock.abort();
   const detach=()=>lifetime.signal.removeEventListener('abort',stop);
-  try{const result=await rawSend(path,forward,clock);return initial?finishUpstream(result,clock,detach):result;}catch(error){if(initial){clock.close();detach();}throw error;}
+  try{const result=await rawSend(path,forward,clock);return initial?finishUpstream(result,detach):result;}catch(error){if(initial){detach();}throw error;}
  };
  try{
-  const response=phase===0?await send('responses',body):await context.response(req.url.endsWith('/compact')?'responses/compact':'responses',body,'fixture-key','fixture-source',send,{bootstrapOnFirstRequest:true,contextWindowTokens,scope:codexContextScope,connectionId:'test-gateway',...(clientOnly?{}:{threadId:req.headers.session_id??req.headers['session-id']}),recover:item=>migration.recover(item,[]),normalize:portableCodexItem},{signal:lifetime.signal,onCancel:cancel,onInitialCompaction:active=>{initial=active;if(active)lifetime.pause();else lifetime.resume();},onCompaction:report=>{reports.push(report);console.log(JSON.stringify({compactionReport:report}));}});
+  const response=phase===0?await send('responses',body):await context.response(req.url.endsWith('/compact')?'responses/compact':'responses',body,'fixture-key','fixture-source',send,{bootstrapOnFirstRequest:true,contextWindowTokens,scope:codexContextScope,connectionId:'test-gateway',...(clientOnly?{}:{threadId:req.headers.session_id??req.headers['session-id']}),recover:item=>migration.recover(item,[]),normalize:portableCodexItem},{signal:lifetime.signal,onCancel:cancel,onInitialCompaction:active=>{initial=active;},onCompaction:report=>{reports.push(report);console.log(JSON.stringify({compactionReport:report}));}});
   res.writeHead(response.status,Object.fromEntries(response.headers));if(response.body)for await(const chunk of response.body)res.write(chunk);res.end();
- }catch(error){console.log(JSON.stringify({gatewayError:{code:error.code,status:error.statusCode}}));res.writeHead(error.statusCode??500,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:error.message,code:error.code}}));}finally{lifetime.close();abort.signal.removeEventListener('abort',cancel);}
+ }catch(error){console.log(JSON.stringify({gatewayError:{code:error.code,status:error.statusCode}}));res.writeHead(error.statusCode??500,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:error.message,code:error.code}}));}finally{abort.signal.removeEventListener('abort',cancel);}
 });
 async function start(){
  const args=['app-server','--listen','stdio://'];

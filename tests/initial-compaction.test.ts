@@ -5,7 +5,7 @@ import {join} from 'node:path';
 import {initialParts,initialParallel,smallerParts,compactionModelWindow,reuseInitialParts} from '../packages/core/src/initial-compaction.js';
 import {GatewayContext,type ContextMigration,type CompactionReport} from '../packages/core/src/gateway-context.js';
 import {compactionProgress} from '../packages/core/src/compaction-progress.js';
-import {upstreamIdle,finishUpstream} from '../packages/core/src/upstream-idle.js';
+import {upstreamRequest,finishUpstream} from '../packages/core/src/upstream-request.js';
 const roots:string[]=[];afterEach(async()=>{vi.useRealTimers();await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})));});
 async function setup(){const root=await mkdtemp(join(tmpdir(),'initial-compaction-'));roots.push(root);return {root,context:await GatewayContext.open(root)};}
 const answer=(text='SAVED_SUMMARY')=>Response.json({status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text}]}],usage:{input_tokens:100,output_tokens:20,total_tokens:120}});
@@ -63,12 +63,11 @@ it('keeps initial streaming alive and communicates a failed operation without pr
  reject({code:'compaction_transport_failed',message:'Source disconnected',usage:{input_tokens:200,output_tokens:20}});
  const terminal=new TextDecoder().decode((await reader.read()).value);expect(terminal).toContain('response.failed');expect(terminal).toContain('200');expect(terminal).not.toContain('response.completed');expect((await reader.read()).done).toBe(true);expect(vi.getTimerCount()).toBe(0);
 });
-it('pauses only the initial operation clock; independent workers still time out and inference gets its own deadline',async()=>{
- vi.useFakeTimers();const parent=upstreamIdle(100,200);parent.pause();const child=upstreamIdle(100,200);
- const childResult=finishUpstream(child.watch(new Response('finished')),child);await childResult.text();
- await vi.advanceTimersByTimeAsync(1000);expect(parent.signal.aborted).toBe(false);expect(child.signal.aborted).toBe(false);
- const stalled=upstreamIdle(100,200);await vi.advanceTimersByTimeAsync(101);expect(stalled.timeoutKind).toBe('idle');expect(parent.signal.aborted).toBe(false);
- parent.resume();await vi.advanceTimersByTimeAsync(101);expect(parent.timeoutKind).toBe('idle');expect(vi.getTimerCount()).toBe(0);
+it('allows initial summaries and inference to wait beyond the former deadlines',async()=>{
+ vi.useFakeTimers();const parent=upstreamRequest(),child=upstreamRequest();
+ const childResult=finishUpstream(child.watch(new Response('finished')));await childResult.text();
+ await vi.advanceTimersByTimeAsync(24*60*60*1000);expect(parent.signal.aborted).toBe(false);expect(child.signal.aborted).toBe(false);
+ expect(await parent.watch(new Response('late inference')).text()).toBe('late inference');expect(vi.getTimerCount()).toBe(0);
 });
 
 it('queues initial Cursor chunks for its single-generation SDK instead of failing cursor_busy',async()=>{

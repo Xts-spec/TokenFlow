@@ -24,7 +24,7 @@ rollout 文件大小不等于请求 Token 数：文件还包含事件、用量�
 - 历史缩减基准为 128 KiB；实际目标至少容纳固定工具定义、系统/开发者指令、最新用户消息和最近完整工具交换，并保留 32 KiB 历史空间。它用于首次续聊的兼容整理及客户端明确请求的压缩，不是模型窗口或请求字节上限。固定内容大时不由网关额外返回 413。
 - 模型目录不声明较小的 `context_window`：桌面运行时可能在窗口缩小时先用旧模型压缩，导致旧官方模型被发到新网关。首次续聊在当前请求内处理不可靠的旧用量；后续按客户端整个上下文的用量触发。
 - 上游真实 `context_too_large` / `context_length_exceeded` 在 HTTP JSON 和 SSE 错误中统一成 Codex 可识别的 `context_length_exceeded`，SSE 使用 `response.failed`。不把网络、额度或其他错误误报为超限，也不在错误后由网关另起摘要循环。非托管接入的旧会话仍可能需要用户在 Codex 手动压缩；错误归一化本身不保证所有客户端会自动重试压缩。
-- 上游真实响应块刷新 300 秒空闲计时，同时保留 600 秒请求总时限，覆盖本次摘要与回答。摘要请求采用流式传输；上游是否实际逐块返回仍取决于来源。Cursor SDK 当前等到运行完成才转换为响应事件，期间仍受空闲时限约束。
+- 通用生成请求没有网关的空闲计时或单请求总时限，摘要工作请求也不再设置 300/600 秒计时。Node HTTP 生成调用显式关闭响应头和正文的默认等待计时，同时沿用当前网络代理。上游响应、断流、客户端取消仍正常传递；WorkBuddy 等来源适配器自身的计时另见[等待策略核查](gateway-waiting-policy-2026-10-21.md)。
 
 ## 失败、复用与用量
 
@@ -57,7 +57,7 @@ rollout 文件大小不等于请求 Token 数：文件还包含事件、用量�
 ## 回归与真实验证
 
 ```sh
-npx vitest run tests/context-summary.test.ts tests/gateway-compaction-regression.test.ts tests/gateway-context.test.ts tests/codex-context.test.ts tests/gateway-context-service.test.ts tests/gateway-traces.test.ts tests/upstream-idle.test.ts
+npx vitest run tests/context-summary.test.ts tests/gateway-compaction-regression.test.ts tests/gateway-context.test.ts tests/codex-context.test.ts tests/gateway-context-service.test.ts tests/gateway-traces.test.ts tests/upstream-request.test.ts
 npx tsx scripts/context-codex-smoke.ts qoder/fixture
 npx tsx scripts/codex-context-migration-smoke.mjs /path/to/codex --long-recovery
 npx tsx scripts/codex-context-migration-smoke.mjs /path/to/codex --long-recovery --repeat-gateway

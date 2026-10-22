@@ -7,7 +7,7 @@ import { Readable } from 'node:stream';
 import { z } from 'zod';
 import { providerSchema, type ProviderConfig } from './providers.js';
 import { RunnerCoreError } from './errors.js';
-import { upstreamIdle } from './upstream-idle.js';
+import { upstreamRequest, inferenceFetch } from './upstream-request.js';
 import type { Secrets } from './service.js';
 
 const modelID=z.string().trim().min(1).max(200).refine(v=>!/[\x00-\x1f\x7f]/.test(v));
@@ -75,7 +75,7 @@ export class ApiSources {
  private server?:Server;
  private relayURL='';
  private relayKey=randomBytes(32).toString('hex');
- private requests=new Set<ReturnType<typeof upstreamIdle>>();
+ private requests=new Set<ReturnType<typeof upstreamRequest>>();
  private migration?:string;
  private migrationWarning?:string;
  warnings(){return this.migrationWarning?[this.migrationWarning]:[];}
@@ -107,7 +107,7 @@ export class ApiSources {
  /** Keep native API fields (including output limits) when no translation is needed. */
  async response(id:string,path:string,body:{model:string},signal:AbortSignal,headers:Record<string,string>={}){
   const s=this.assert(id,body.model);const model=s.models.find(m=>apiModelID(id,m)===body.model)!;
-  return fetch(`${this.relayURL}/${id}/v1/${path}`,{method:'POST',headers:{...headers,authorization:`Bearer ${this.relayKey}`,'content-type':'application/json',[nativeHeader]:'1'},body:JSON.stringify({...body,model}),signal,redirect:'error'});
+  return inferenceFetch(`${this.relayURL}/${id}/v1/${path}`,{method:'POST',headers:{...headers,authorization:`Bearer ${this.relayKey}`,'content-type':'application/json',[nativeHeader]:'1'},body:JSON.stringify({...body,model}),signal,redirect:'error'});
  }
  async save(input:z.input<typeof apiSourceInput>,id?:string){
   const value=parseApiSourceInput(input);const old=id?this.entries.find(s=>s.id===id):undefined;if(id&&!old)throw conflict('API 来源已变更，请刷新。');
@@ -157,7 +157,7 @@ export class ApiSources {
  }
  private async listen(){
   this.server=createServer(async(req,res)=>{
-   const idle=upstreamIdle();this.requests.add(idle);res.once('close',()=>{idle.abort();this.requests.delete(idle);});
+   const idle=upstreamRequest();this.requests.add(idle);res.once('close',()=>{idle.abort();this.requests.delete(idle);});
    const fail=(status:number,message:string)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify({error:{message,type:'api_source_error'}}));};
    try{
     const token=req.headers.authorization?.replace(/^Bearer /,'')??(typeof req.headers['x-api-key']==='string'?req.headers['x-api-key']:'');
@@ -184,7 +184,7 @@ export class ApiSources {
     const bodies=protocol==='messages'?[genericMessagesBody(body)]:protocol==='responses'&&req.headers[nativeHeader]!=='1'?genericResponsesBodies(body):[body];
     let r!:Response;
     for(const [index,attempt] of bodies.entries()){
-     r=idle.watch(await fetch(`${baseURL.replace(/\/$/,'')}/${match![2]}${protocol==='messages'?requestURL.search:''}`,{method:'POST',headers,body:JSON.stringify(attempt),redirect:'error',signal:idle.signal}));
+     r=idle.watch(await inferenceFetch(`${baseURL.replace(/\/$/,'')}/${match![2]}${protocol==='messages'?requestURL.search:''}`,{method:'POST',headers,body:JSON.stringify(attempt),redirect:'error',signal:idle.signal}));
      if(r.ok||r.status!==400||index===bodies.length-1)break;
      await r.body?.cancel();
     }
@@ -192,7 +192,7 @@ export class ApiSources {
     res.writeHead(r.status,{'content-type':r.headers.get('content-type')??'application/json','cache-control':'no-store'});
     if(!r.body){res.end();return;}
     const stream=Readable.fromWeb(((r.headers.get('content-type')??'').includes('text/event-stream')?safeSourceStream(r.body):r.body) as never);stream.once('error',()=>res.destroy());stream.pipe(res);
-   }catch{if(res.headersSent)res.destroy();else fail(502,'API source unavailable or timed out');}finally{if(res.writableEnded)idle.close();}
+   }catch{if(res.headersSent)res.destroy();else fail(502,'API source unavailable or timed out');}
   });
   this.server.requestTimeout=0;this.server.headersTimeout=15000;
   await new Promise<void>((ok,bad)=>{this.server!.once('error',bad);this.server!.listen(0,'127.0.0.1',ok);});

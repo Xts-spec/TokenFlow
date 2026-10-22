@@ -27,7 +27,7 @@ import { detectProtocol, validateQuickSource, sourceNameFromURL, type ProtocolPr
 import { NativeAccounts, nativeCredentialSchema, nativeProviderSchema, type NativeProvider } from './native-accounts.js';
 import { ClaudeAccountStore, claudeSettingsState, type CredentialStore } from './claude-accounts.js';
 import { AntigravityAccountStore, antigravityDatabasePath } from './antigravity-accounts.js';
-import { upstreamIdle, finishUpstream, UPSTREAM_IDLE_TIMEOUT_MS, UPSTREAM_TOTAL_TIMEOUT_MS } from './upstream-idle.js';
+import { upstreamRequest, finishUpstream, inferenceFetch } from './upstream-request.js';
 import { GatewayContext, GatewayContextError, type CompactionReport } from './gateway-context.js';
 import {CodexContext,codexContextScope,portableCodexItem} from './codex-context.js';
 import { CodexAccounts } from './codex-accounts.js';
@@ -1186,13 +1186,12 @@ export async function createDesktopService(options:ServiceOptions) {
     if(apiSource){try{if(client&&directKeys.has(client.id)&&path.startsWith('responses')&&apiModelRoute(apiSource,(req.body as {model:string}).model).protocol==='responses')apiSources.assert(apiSource.id,(req.body as {model:string}).model);else resolveSource(apiSource.id,(req.body as {model:string}).model);}catch{record(503);await settle({inputTokens:null,outputTokens:null},false);return reply.code(503).send({error:{message:'API source unavailable',type:'source_unavailable'}});}}
     const upstreamURL=client||apiSource?proxy.gateway().baseURL:config.baseURL;
     const upstreamKey=client||apiSource?proxy.gateway().apiKey:await key();
-    const abort=upstreamIdle();
-    const timeoutMessage=()=>abort.timeoutKind==='total'?`本次请求已达到 ${UPSTREAM_TOTAL_TIMEOUT_MS/1000} 秒总时限，请检查来源后手动重试。`:`上游连续 ${UPSTREAM_IDLE_TIMEOUT_MS/1000} 秒未返回数据，请稍后重试或缩短对话。`;
+    const abort=upstreamRequest();
     let clientDisconnected=false;
     reply.raw.once('close',()=>{if(!reply.raw.writableFinished){clientDisconnected=true;abort.abort();}});
     try {
       const cursorModel=typeof (req.body as {model?:unknown})?.model==='string'&&(req.body as {model:string}).model.startsWith('cursor/');
-      if(cursorModel&&proxy.snapshot().state!=='running'){record(503);await settle({inputTokens:null,outputTokens:null},false);abort.close();return reply.code(503).send({error:{message:'网关未启动',type:'provider_error'}});}
+      if(cursorModel&&proxy.snapshot().state!=='running'){record(503);await settle({inputTokens:null,outputTokens:null},false);return reply.code(503).send({error:{message:'网关未启动',type:'provider_error'}});}
       // Resolve capability from the configured receiver, never the source model or caller headers.
       const nativeCodexReceiver=fixed?fixed.target==='codex':client?.agents.length===1&&client.agents[0]==='codex';
       let initialCompaction=false;
@@ -1200,7 +1199,7 @@ export async function createDesktopService(options:ServiceOptions) {
         const protocol=apiSource?apiModelRoute(apiSource,(body as {model:string}).model).protocol:undefined;
         const native=apiSource&&(protocol==='responses'&&route.startsWith('responses')||protocol==='chat'&&route==='chat/completions'||protocol==='messages'&&route.startsWith('messages'));
         if(native){const headers:Record<string,string>={};for(const name of ['anthropic-version','anthropic-beta'])if(typeof req.headers[name]==='string')headers[name]=req.headers[name];return clock.watch(await apiSources.response(apiSource.id,route,body as {model:string},clock.signal,headers));}
-        return clock.watch(await fetch(`${upstreamURL.replace(/\/$/,'')}/${route}`,{method:req.method,headers:{'X-Token-Flow-Image-Generation':nativeCodexReceiver?'allow':'deny',...(selectedAuth?{'X-Token-Flow-Auth':selectedAuth}:{}),Authorization:`Bearer ${upstreamKey}`,'Content-Type':'application/json',...(typeof req.headers['anthropic-version']==='string'?{'anthropic-version':req.headers['anthropic-version']}:{}),...(typeof req.headers['anthropic-beta']==='string'?{'anthropic-beta':req.headers['anthropic-beta']}:{}),...(typeof req.headers['x-stainless-lang']==='string'?{'x-stainless-lang':req.headers['x-stainless-lang']}:{})},body:req.method==='POST'?JSON.stringify(body):undefined,redirect:'error',signal:clock.signal}));
+        return clock.watch(await inferenceFetch(`${upstreamURL.replace(/\/$/,'')}/${route}`,{method:req.method,headers:{'X-Token-Flow-Image-Generation':nativeCodexReceiver?'allow':'deny',...(selectedAuth?{'X-Token-Flow-Auth':selectedAuth}:{}),Authorization:`Bearer ${upstreamKey}`,'Content-Type':'application/json',...(typeof req.headers['anthropic-version']==='string'?{'anthropic-version':req.headers['anthropic-version']}:{}),...(typeof req.headers['anthropic-beta']==='string'?{'anthropic-beta':req.headers['anthropic-beta']}:{}),...(typeof req.headers['x-stainless-lang']==='string'?{'x-stainless-lang':req.headers['x-stainless-lang']}:{})},body:req.method==='POST'?JSON.stringify(body):undefined,redirect:'error',signal:clock.signal}));
       };
       const model=(req.body as {model?:string})?.model;
       const bridgeContext=(path==='responses'||path==='responses/compact')&&!!(client||config.kind==='cliproxy'||apiSource)&&typeof model==='string'&&(fixed?.target==='codex'||/^(qoder|workbuddy|cursor)\//.test(model)||!!apiSource);
@@ -1213,48 +1212,47 @@ export async function createDesktopService(options:ServiceOptions) {
       const dispatch=async(route:string,body:unknown)=>{
         const forward=nativeCodexReceiver&&route.startsWith('responses')?codexWebSearch(body as Record<string,any>):body;
         if(!initialCompaction)return transport(route,forward);
-        const clock=upstreamIdle();const cancel=()=>clock.abort();abort.signal.addEventListener('abort',cancel,{once:true});if(abort.signal.aborted)clock.abort();
+        const clock=upstreamRequest();const cancel=()=>clock.abort();abort.signal.addEventListener('abort',cancel,{once:true});if(abort.signal.aborted)clock.abort();
         const detach=()=>abort.signal.removeEventListener('abort',cancel);
-        try{return finishUpstream(await transport(route,forward,clock),clock,detach);}catch(error){clock.close();detach();throw error;}
+        try{return finishUpstream(await transport(route,forward,clock),detach);}catch(error){detach();throw error;}
       };
       const sessionId=req.headers['session_id']??req.headers['session-id'];
-      const response=bridgeContext?await gatewayContext.response(path,req.body as {model:string},client?.id??'workspace',client?.modelSources?.[model]??client?.sourceId??apiSource?.id??upstreamURL,dispatch,fixed?.target==='codex'?{bootstrapOnFirstRequest:true,contextWindowTokens:await compactionModelWindow(model,proxy.snapshot().models,connections.paths.codex),scope:codexContextScope,threadId:typeof sessionId==='string'?sessionId:undefined,connectionId:client?.id,normalize:portableCodexItem,recover:async item=>codexContext.recover(item,await codexContextScopes())}:undefined,{signal:abort.signal,onCancel:()=>abort.abort(),onInitialCompaction:active=>{initialCompaction=active;if(active)abort.pause();else abort.resume();},onCompaction:report=>{compaction=report;},onUsageIncomplete:()=>{contextUsageIncomplete=true;if(compaction)compaction={...compaction,unmetered:true};}}):await dispatch(path,req.body);
+      const response=bridgeContext?await gatewayContext.response(path,req.body as {model:string},client?.id??'workspace',client?.modelSources?.[model]??client?.sourceId??apiSource?.id??upstreamURL,dispatch,fixed?.target==='codex'?{bootstrapOnFirstRequest:true,contextWindowTokens:await compactionModelWindow(model,proxy.snapshot().models,connections.paths.codex),scope:codexContextScope,threadId:typeof sessionId==='string'?sessionId:undefined,connectionId:client?.id,normalize:portableCodexItem,recover:async item=>codexContext.recover(item,await codexContextScopes())}:undefined,{signal:abort.signal,onCancel:()=>abort.abort(),onInitialCompaction:active=>{initialCompaction=active;},onCompaction:report=>{compaction=report;},onUsageIncomplete:()=>{contextUsageIncomplete=true;if(compaction)compaction={...compaction,unmetered:true};}}):await dispatch(path,req.body);
       if(!response.ok){
         if(response.status===401){const failedSource=client?.modelSources?.[model!]??client?.sourceId;if(failedSource)refreshFailedSource(failedSource);}
         await settle({inputTokens:null,outputTokens:null},response.status>=500);
         const error=upstreamError(response.status,await readUpstreamError(response));
         callError={code:error.type==='source_policy_blocked'?'source_policy_blocked':error.code??error.type,message:error.message};record(response.status);
-        await response.body?.cancel().catch(()=>{});abort.close();
+        await response.body?.cancel().catch(()=>{});
         return reply.code(response.status).send({...(path==='messages'?{type:'error'}:{}),error});
       }
       if(response.headers.has('x-token-flow-transport'))reply.header('X-Token-Flow-Transport',response.headers.get('x-token-flow-transport')!);
       if(cursorModel&&response.headers.has('x-token-flow-output-limit'))reply.header('X-Token-Flow-Output-Limit',response.headers.get('x-token-flow-output-limit')!);
       if(bridgeContext&&response.headers.has('x-token-flow-compaction'))reply.header('X-Token-Flow-Compaction',response.headers.get('x-token-flow-compaction')!);
       reply.code(response.status).header('Content-Type',response.headers.get('content-type')??'application/json').header('Cache-Control','no-store');
-      if(!response.body){record(response.status);await settle({inputTokens:null,outputTokens:null},true);abort.close();return '';}
+      if(!response.body){record(response.status);await settle({inputTokens:null,outputTokens:null},true);return '';}
       const source=Readable.fromWeb(response.body as never);
       const stream=observeUsage((response.headers.get('content-type')??'').includes('text/event-stream'),async usage=>{
         if(usage.failed&&compaction)usage={...usage,inputTokens:usage.inputTokens??compaction.inputTokens,outputTokens:usage.outputTokens??compaction.outputTokens,cachedTokens:usage.cachedTokens??compaction.cachedTokens};
-        if(abort.timedOut)callError={code:abort.timeoutKind==='total'?'upstream_total_timeout':'upstream_idle_timeout',message:timeoutMessage()};
-        else if(!callError){
+        if(!callError){
           if(traceResponse.error)callError=traceResponse.error;
           else if(clientDisconnected)callError={code:'request_cancelled',message:'客户端已取消请求。'};
           else if(usage.failed)callError={code:'upstream_incomplete_response',message:'上游响应未完整结束。'};
         }
-        record(abort.timedOut?504:callError?.code==='request_cancelled'?499:callError?.code==='upstream_stream_error'||usage.failed?502:response.status,usage);
+        record(callError?.code==='request_cancelled'?499:callError?.code==='upstream_stream_error'||usage.failed?502:response.status,usage);
         await settle(usage,contextUsageIncomplete||!!compaction?.unmetered||abort.signal.aborted||usage.failed||usage.inputTokens===null||usage.outputTokens===null);
       },details=>{traceResponse=details;});
-      source.once('error',()=>{if(!abort.signal.aborted)callError={code:'upstream_stream_error',message:'上游连接中断。'};abort.abort();stream.destroy();});stream.once('close',()=>{abort.close();source.destroy();});
+      source.once('error',()=>{if(!abort.signal.aborted)callError={code:'upstream_stream_error',message:'上游连接中断。'};abort.abort();stream.destroy();});stream.once('close',()=>{source.destroy();});
       reply.raw.once('close',()=>stream.destroy());
       source.pipe(stream);return reply.send(stream);
     }catch(error){
-      const status=error instanceof GatewayContextError?error.statusCode:abort.timedOut?504:abort.signal.aborted?499:502;
-      callError={code:error instanceof GatewayContextError?error.code:abort.timedOut?(abort.timeoutKind==='total'?'upstream_total_timeout':'upstream_idle_timeout'):status===499?'request_cancelled':'upstream_connection_error',message:abort.timedOut?timeoutMessage():status===499?'客户端已取消请求。':error instanceof GatewayContextError?error.message:'无法连接上游服务，或连接已中断。'};
+      const status=error instanceof GatewayContextError?error.statusCode:abort.signal.aborted?499:502;
+      callError={code:error instanceof GatewayContextError?error.code:status===499?'request_cancelled':'upstream_connection_error',message:status===499?'客户端已取消请求。':error instanceof GatewayContextError?error.message:'无法连接上游服务，或连接已中断。'};
       const measured=providerUsage(error instanceof GatewayContextError?error.usage:undefined);
       const missingUsage=measured.inputTokens===null||measured.outputTokens===null;
       const usage=compaction?{...measured,inputTokens:measured.inputTokens??compaction.inputTokens,outputTokens:measured.outputTokens??compaction.outputTokens,cachedTokens:measured.cachedTokens??compaction.cachedTokens,cacheWriteTokens:measured.cacheWriteTokens??compaction.cacheWriteTokens,reasoningTokens:measured.reasoningTokens??compaction.reasoningTokens}:measured;
-      record(status,usage);await settle(usage,!!compaction?.unmetered||(error instanceof GatewayContextError&&error.unmetered)||(status>=500||(compaction?.calls??0)>0)&&missingUsage);abort.close();
-      return reply.code(status).send({error:{code:callError.code,message:callError.message,type:error instanceof GatewayContextError?'context_error':abort.timedOut?'timeout_error':'provider_error'}});
+      record(status,usage);await settle(usage,!!compaction?.unmetered||(error instanceof GatewayContextError&&error.unmetered)||(status>=500||(compaction?.calls??0)>0)&&missingUsage);
+      return reply.code(status).send({error:{code:callError.code,message:callError.message,type:error instanceof GatewayContextError?'context_error':'provider_error'}});
     }
    }};
    app.route({...route});access.app.route({...route});

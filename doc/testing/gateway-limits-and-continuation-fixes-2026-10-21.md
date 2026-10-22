@@ -1,5 +1,7 @@
 # 网关限制核查与续聊修复（2026-10-21）
 
+本文记录 10.15.26.49 的状态。后续 10.15.26.50 按用户要求删除通用 300/600 秒计时；其余条目的证据与必要性说明见[等待策略核查](gateway-waiting-policy-2026-10-21.md)。
+
 ## 5 分钟的来源
 
 上一轮 Qoder 测试的 `idle timeout waiting for SSE` 来自 Codex 客户端，默认 `stream_idle_timeout_ms = 300000`，接入配置没有写入此值。官方配置文档：[Configuration Reference](https://learn.chatgpt.com/docs/config-file/config-reference)。网关自身也有 300 秒无上游数据计时，两者数值相同但作用层级不同；不能因此宣称网关没有时间限制。
