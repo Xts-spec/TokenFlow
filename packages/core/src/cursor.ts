@@ -195,7 +195,7 @@ export class CursorProvider {
  private loading?:Promise<void>;private loaded=false;private loginAccount?:CursorAccount;
  private importing=false;private closed=false;private writes=Promise.resolve();
  private aliases:Record<string,string>={};private history:CredentialHistory;
- constructor(private root:string,private secrets:Secrets,private openExternal?:(url:string)=>Promise<void>){this.history=new CredentialHistory(root,secrets);}
+ constructor(private root:string,private secrets:Secrets,private openExternal?:(url:string)=>Promise<void>,private localPath?:string){this.history=new CredentialHistory(root,secrets);}
  private identity(c:Credential){return credentialEmail(c.email)??c.email?.trim().toLowerCase()??credentialFingerprint(c);}
  get id(){return this.accounts.find(a=>a.id)?.id;}
  owns(id:string){return this.accounts.some(a=>a.owns(this.aliases[id]??id));}
@@ -238,7 +238,7 @@ export class CursorProvider {
  assertSource(id:string,model:string){const account=this.account(id);return account.assertSource(account.id!,model);}
  async beginLogin(){await this.load();if(this.closed)throw failure('应用正在退出');if(this.importing||this.accounts.some(a=>a.busy))throw failure('Cursor 正在处理请求或授权，请稍后重试。',409);this.loginAccount=this.make();await this.loginAccount.beginLogin();}
  async importLocal(){await this.load();if(this.closed)throw failure('应用正在退出');if(this.importing||this.accounts.some(a=>a.busy))throw failure('Cursor 正在处理请求或授权，请稍后重试。',409);this.importing=true;
-  try{const session=await localCursorSession();const existing=this.accounts.find(a=>this.values.get(a)?.email?.toLowerCase()===session.email.toLowerCase());if(existing&&credentialPreference(this.values.get(existing)!)[0]>0){await existing.refresh();return;}
+  try{const session=await localCursorSession(this.localPath);const existing=this.accounts.find(a=>this.values.get(a)?.email?.toLowerCase()===session.email.toLowerCase());if(existing&&credentialPreference(this.values.get(existing)!)[0]>0){await existing.refresh();return;}
    if(existing){await this.history.remember('cursor',[this.values.get(existing)!]);}
    const credential=credentialSchema.parse({...await session.createCredential(),authorizedAt:Date.now()});await this.history.remember('cursor',[credential]);const entries=[...this.values.entries()].filter(([a])=>a!==existing).map(([,c])=>c).concat(credential);
    await this.secrets.set('cursor-account',JSON.stringify({version:1,accounts:entries,aliases:this.aliases}));if(existing){this.values.delete(existing);this.accounts=this.accounts.filter(a=>a!==existing);await existing.close();}

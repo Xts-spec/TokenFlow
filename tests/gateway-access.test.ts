@@ -4,7 +4,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { GatewayAccess, gatewayAccessInput, normalizeGatewayIP } from '../packages/core/src/gateway-access.js';
+import { GatewayAccess, gatewayAccessInput, normalizeGatewayIP, gatewayAddresses } from '../packages/core/src/gateway-access.js';
 import { GatewayKeys, gatewayKeyInput } from '../packages/core/src/gateway-keys.js';
 
 const cleanup: Array<() => Promise<unknown>> = [];
@@ -164,4 +164,11 @@ it('returns validation failures as 400 and hides unexpected server error details
   expect((await access.app.inject({ method: 'POST', url: '/v1/responses', headers, payload: {} })).statusCode).toBe(400);
   const failed = await access.app.inject({ url: '/v1/failure', headers });
   expect(failed.statusCode).toBe(500); expect(failed.body).not.toContain('upstream-secret');
+});
+
+it('excludes tunnels and discards disappeared addresses',()=>{
+ const entry=(address:string)=>({address,netmask:'255.255.255.0',family:'IPv4' as const,mac:'00:00:00:00:00:00',internal:false,cidr:`${address}/24`});
+ expect(gatewayAddresses({utun2:[entry('198.18.0.1')],en0:[entry('10.2.6.48')]},9555)).toEqual(['http://10.2.6.48:9555']);
+ expect(gatewayAddresses({en0:[entry('10.15.11.5')]},9555)).toEqual(['http://10.15.11.5:9555']);
+ expect(gatewayAddresses({en0:[entry('10.2.6.48')]},9555)).not.toContain('http://10.15.11.5:9555');
 });

@@ -1,3 +1,5 @@
+import {gatewayAddresses,readGatewayInterfaceKinds,type InterfaceKinds} from './gateway-network.js';
+export {gatewayAddresses} from './gateway-network.js';
 import { readFile, rename, writeFile } from 'node:fs/promises';
 import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
@@ -36,6 +38,20 @@ export class GatewayAccess {
   private lastError: string | null = null;
   private pending: Promise<unknown> = Promise.resolve();
   private closed = false;
+  private interfaceKinds:InterfaceKinds|null=null;
+  private interfaceScan:Promise<void>|undefined;
+  private interfaceScannedAt=0;
+  private interfaceNames='';
+
+  private refreshInterfaces(interfaces=networkInterfaces()){
+    if(this.interfaceScan)return this.interfaceScan;
+    this.interfaceScan=(async()=>{
+      this.interfaceKinds=await readGatewayInterfaceKinds(interfaces);
+      this.interfaceNames=Object.keys(interfaces).sort().join('\n');
+      this.interfaceScannedAt=Date.now();
+    })().finally(()=>{this.interfaceScan=undefined;});
+    return this.interfaceScan;
+  }
 
   private constructor(private path: string, private gatewayKeys: Pick<GatewayKeys, 'authenticate'>) {
     this.app.setErrorHandler((error, _request, reply) => {
@@ -73,14 +89,15 @@ export class GatewayAccess {
         access.lastError = '局域网访问配置读取失败，已暂停此入口。请检查 gateway-access.json，或重新保存访问设置；已有文件未被重置。';
       }
     }
+    if(access.config.enabled)await access.refreshInterfaces();
     return access;
   }
 
   snapshot(): GatewayAccessSnapshot {
     const running = this.app.server.listening;
-    const addresses = running ? [...new Set(Object.values(networkInterfaces()).flatMap(entries => (entries ?? [])
-      .filter(entry => entry.family === 'IPv4' && !entry.internal)
-      .map(entry => `http://${entry.address}:${this.config.port}`)))].sort() : [];
+    const interfaces=networkInterfaces();
+    if(running&&(Date.now()-this.interfaceScannedAt>15000||Object.keys(interfaces).sort().join('\n')!==this.interfaceNames))void this.refreshInterfaces(interfaces);
+    const addresses = running ? gatewayAddresses(interfaces,this.config.port,this.interfaceKinds) : [];
     return { ...structuredClone(this.config), running, lastError: this.lastError, addresses };
   }
 
@@ -91,6 +108,7 @@ export class GatewayAccess {
   }
 
   private async listen(port: number) {
+    await this.refreshInterfaces();
     await this.app.ready();
     // Node servers can listen again after close; Fastify.close() is reserved for final shutdown.
     await new Promise<void>((resolve, reject) => {

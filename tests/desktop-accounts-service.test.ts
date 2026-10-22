@@ -94,3 +94,46 @@ it('keeps authorization usable without native login and isolates domestic and in
   for(const a of sources)expect(()=>service.proxy.sourceAuth(a.id,`${a.provider}/fixture`)).not.toThrow();
  }finally{await service.app.close();await rm(root,{recursive:true,force:true});}
 });
+
+it('imports both detected Qoder editions into the pool and does not duplicate them on discovery',async()=>{
+ const root=await mkdtemp(join(await realpath(tmpdir()),'qoder-editions-api-')),allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
+ await mkdir(join(root,'cliproxy/auth'),{recursive:true});await mkdir(join(root,'native'));
+ const path=join(root,'native/ide.vscdb'),native=join(root,'native/auth.v1.dat'),db=new DatabaseSync(path);db.exec('CREATE TABLE ItemTable (key TEXT PRIMARY KEY,value TEXT)');db.prepare('INSERT INTO ItemTable VALUES (?,?)').run('secret://aicoding.auth.userInfo',JSON.stringify(Buffer.from(JSON.stringify({id:'ide-user',email:'ide@example.test',token:'private-ide-token'}))));db.close();
+ const original=JSON.stringify({schemaVersion:1,user:{id:'standalone-user',email:'standalone@example.test'},token:'private-standalone-token'});await writeFile(native,original);const originalDB=await readFile(path);
+ const crypto=async(op:'encrypt'|'decrypt',value:string)=>op==='decrypt'?Buffer.from(value,'base64').toString():Buffer.from(value).toString('base64'),change=vi.fn(async(_target:string,work:()=>Promise<unknown>)=>work()),vault=new Map<string,string>();let rejected=false;
+ const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async key=>vault.get(key)??'',set:async(key,value)=>{vault.set(key,value);}},agentPaths:{codex:join(root,'codex/config.toml'),claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/settings.json')},agentProcesses:async()=>[],desktopProcesses:async()=>[],nativeProcesses:async()=>[],claudeCredentialStore:null,antigravityPath:join(root,'antigravity.db'),desktopAccountChange:change,desktopAccounts:{paths:{qoder:native},crypto,fetch:async()=>new Response(JSON.stringify({id:'standalone-user',email:'standalone@example.test'}))},qoderIde:{path,crypto,fetch:async()=>rejected?new Response('',{status:401}):new Response(JSON.stringify({id:'ide-user',email:'ide@example.test',whitelistStatus:'PASS'}))}});
+ const headers={host:'127.0.0.1:9527',authorization:'Bearer admin'};
+ try{
+  const imports:string[]=[];vi.spyOn(service.proxy,'importLocal').mockImplementation(async p=>{imports.push(p);return service.proxy.snapshot();});
+  await service.discoverLocal();expect(imports).toEqual(['zcode','trae']);
+  expect(service.proxy.snapshot().accounts.filter(a=>a.provider==='qoder')).toHaveLength(2);
+  for(const target of ['qoder','qoder-ide']){
+   const before=(await service.app.inject({url:`/api/native-accounts/${target}`,headers})).json();expect(before.loginState).toBe('signed-in');
+   expect((await service.app.inject({url:`/api/local-agent/import-local/${target}`,method:'POST',headers:{host:headers.host},payload:{}})).statusCode).toBe(401);
+   const result=await service.app.inject({url:`/api/local-agent/import-local/${target}`,method:'POST',headers,payload:{}});
+   expect(result.statusCode,result.body).toBe(200);expect(result.body).not.toMatch(/private-ide-token|private-standalone-token/);
+  }
+  expect(service.proxy.snapshot().accounts.filter(a=>a.provider==='qoder')).toHaveLength(2);
+  expect(service.proxy.snapshot().models.length).toBeGreaterThan(0);
+  await service.discoverLocal();expect(service.proxy.snapshot().accounts.filter(a=>a.provider==='qoder')).toHaveLength(2);
+  expect(await readFile(native,'utf8')).toBe(original);expect(await readFile(path)).toEqual(originalDB);
+ }finally{await service.app.close();await rm(root,{recursive:true,force:true});}
+});
+it('imports WorkBuddy editions with millisecond expiry and reuses only an exact protected native identity',async()=>{
+ const root=await mkdtemp(join(await realpath(tmpdir()),'wb-native-import-')),allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
+ const paths={workbuddy:join(root,'cn.json'),'workbuddy-ai':join(root,'ai.json'),qoder:join(root,'qoder.dat')};
+ const session=(uid:string,domain:string,protectedToken=false)=>JSON.stringify({account:{uid,enterpriseId:'team'},auth:{accessToken:protectedToken?{$wbEncrypted:1,envelope:'opaque'}:`native-${uid}`,refreshToken:`refresh-${uid}`,expiresAt:Date.parse('2035-01-01T00:00:00Z'),domain}});
+ await writeFile(paths.workbuddy,session('cn-user','www.codebuddy.cn'));await writeFile(paths['workbuddy-ai'],session('ai-user','www.workbuddy.ai'));
+ const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},desktopAccounts:{paths},nativeProcesses:async()=>[],desktopProcesses:async()=>[],claudeCredentialStore:null,antigravityPath:join(root,'ag.db'),agentPaths:{codex:join(root,'codex.toml'),claude:join(root,'claude.json'),workbuddy:join(root,'wb.json'),qoder:join(root,'qoder.json')}});
+ const headers={host:'127.0.0.1:9527',authorization:'Bearer admin'},request=(target:string)=>service.app.inject({url:`/api/local-agent/import-local/${target}`,method:'POST',headers,payload:{}});
+ try{
+  for(const p of ['workbuddy','workbuddy-ai'] as const){const before=await readFile(paths[p]);for(let i=0;i<2;i++)expect((await request(p)).statusCode).toBe(200);expect(await readFile(paths[p])).toEqual(before);}
+  expect(service.proxy.snapshot().accounts.filter(a=>a.provider==='workbuddy')).toHaveLength(2);expect(service.proxy.snapshot().accounts.every(a=>a.models?.length)).toBe(true);
+  await writeFile(paths.workbuddy,session('cn-user','www.codebuddy.cn',true));expect((await request('workbuddy')).statusCode).toBe(200);
+  await writeFile(paths.workbuddy,session('ai-user','www.codebuddy.cn',true));const denied=await request('workbuddy');expect(denied.statusCode).toBe(400);expect(denied.body).toContain('加密');expect(denied.body).not.toContain('opaque');
+  expect(service.proxy.snapshot().accounts.filter(a=>a.provider==='workbuddy')).toHaveLength(2);
+  // Losing refresh/switch eligibility must not erase a proven pool identity.
+  const rows=await service.proxy.desktopNativeAccounts('workbuddy-ai');const id=rows[0]!.id;const raw:any=await service.proxy.desktopCredential('workbuddy-ai',id);await service.proxy.importCredential('workbuddy',{...raw,expired:'2036-01-01T00:00:00Z',refresh_token:''});
+  expect((await service.proxy.desktopNativeAccounts('workbuddy-ai')).some(a=>!a.switchable&&a.accountId==='ai-user')).toBe(true);
+ }finally{await service.app.close();await rm(root,{recursive:true,force:true});}
+});

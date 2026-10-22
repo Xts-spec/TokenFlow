@@ -399,3 +399,10 @@ it('refreshes only the selected Cursor account',async()=>{
  expect(sdk.models).toHaveBeenCalledTimes(1);expect(sdk.models.mock.calls[0][0]).toMatchObject({apiKey:'one-fixture'});
  expect(sdk.quota).toHaveBeenCalledTimes(1);
 });
+
+it('uses the configured native database for the import endpoint as well as detection',async()=>{
+ const {root,secrets}=await setup();const path=join(root,'portable-cursor','state.vscdb');
+ const service=await createDesktopService({root,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'local',secrets,cursorLocalPath:path,claudeCredentialStore:null});cleanup.push(()=>service.app.close());
+ const response=await service.app.inject({url:'/api/local-agent/import-local/cursor',method:'POST',headers:{host:'127.0.0.1:9527',authorization:'Bearer admin'},payload:{}});
+ expect(response.statusCode,response.body).toBe(200);expect(sdk.localSession).toHaveBeenCalledWith(path);expect(response.json().accounts.some((a:{models?:string[]})=>a.models?.includes('cursor/fixture-model'))).toBe(true);
+});

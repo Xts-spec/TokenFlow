@@ -1,3 +1,4 @@
+import {nativeQoderCredential,verifyNativeQoder} from './qoder-credentials.js';
 import {workbuddyLoginDomain,workbuddyLoginTarget} from './workbuddy-region.js';
 import {readFile,writeFile,rename,rm,mkdir,open,lstat,rmdir,utimes} from 'node:fs/promises';
 import {dirname,basename,join,win32,posix} from 'node:path';
@@ -60,6 +61,24 @@ export class DesktopAccounts {
    if(s.schemaVersion!==1||!s.user?.id)throw Error();
    return {accountId:String(s.user.id),email:typeof s.user.email==='string'?s.user.email:undefined,displayName:typeof s.user.name==='string'?s.user.name:undefined};
   }catch{if(decrypt)throw conflict('无法确认客户端现有登录，未覆盖原文件。请检查客户端版本或系统钥匙串。');return null;}
+ }
+ async importCredential(){
+  if(this.provider!=='qoder'){
+   const state=await this.snapshot(await this.path());if(!state.data||state.logout!==null)throw conflict('未找到 WorkBuddy 本机登录，请先在对应客户端登录。');
+   let raw:any;try{raw=json(state.data);}catch{throw conflict('WorkBuddy 本机登录文件无法读取。');}
+   const identity=await this.identity(state),auth=raw.auth;
+   if(!identity||!auth||workbuddyLoginTarget(auth.domain)!==this.provider)throw conflict('WorkBuddy 本机账号身份或区域不完整，请在客户端确认登录。');
+   if(typeof auth.accessToken!=='string'||auth.refreshToken&&typeof auth.refreshToken!=='string')throw Object.assign(conflict('此版本 WorkBuddy 使用客户端专属加密，无法直接读取令牌；若账号池没有同一账号的可用授权，请在 TokenFlow 添加账号授权。'),{code:'NATIVE_PROTECTED'});
+   if(!auth.accessToken.trim())throw conflict('WorkBuddy 本机令牌为空，请在客户端确认登录。');
+   const expires=typeof auth.expiresAt==='number'?new Date(auth.expiresAt>1e11?auth.expiresAt:auth.expiresAt*1000):new Date(auth.expiresAt??NaN);
+   return {access_token:auth.accessToken,refresh_token:auth.refreshToken??'',uid:identity.accountId,email:identity.email??'',enterprise_id:identity.enterpriseId??'',domain:identity.domain,token_type:'Bearer',...(Number.isFinite(expires.getTime())?{expired:expires.toISOString()}:{})};
+  }
+  if(!this.options.crypto)throw conflict('请使用 TokenFlow 桌面版读取 Qoder 本机授权。');
+  if(process.env.QODER_PERSONAL_ACCESS_TOKEN||process.env.QODER_PRODUCT_CATALOG_PATH)throw conflict('检测到 Qoder 环境覆盖，请移除后再导入本机登录。');
+  const state=await this.snapshot(await this.path());if(!state.data)throw conflict('未找到 Qoder 本机登录。');
+  let value:Record<string,unknown>;try{value=JSON.parse(await this.options.crypto('decrypt',state.data));}catch{throw conflict('无法读取 Qoder 本机登录，请检查系统安全存储后重试。');}
+  if(value.schemaVersion!==1)throw conflict('Qoder 本机登录格式不受支持，请在账号授权页连接账号。');
+  return verifyNativeQoder(nativeQoderCredential(value),this.options.fetch);
  }
  private support(){
   if(!['darwin','win32'].includes(this.options.platform??process.platform))return '此系统暂不支持自动切换官方登录，请在客户端内登录。';

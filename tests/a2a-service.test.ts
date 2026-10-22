@@ -14,7 +14,7 @@ import { QoderLifecycle } from '../packages/core/src/agent-lifecycle.js';
 import { createDesktopService } from '../packages/core/src/service.js';
 it('releases the configuration lock after a disconnected handler settles, but never during the write',async()=>{
  const root=await mkdtemp(join(await realpath(tmpdir()),'a2a-disconnect-'));
- const service=await createDesktopService({root,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:join(root,'codex/config.toml'),claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async()=>[]});
+ const service=await createDesktopService({root,antigravityPath:join(root,'isolated-antigravity.db'),binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:join(root,'codex/config.toml'),claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async()=>[]});
  let release!:()=>void;
  const restart=vi.spyOn(QoderLifecycle.prototype,'restart').mockResolvedValue({message:'opened'}).mockImplementationOnce(()=>new Promise(resolve=>{release=()=>resolve({message:'opened'});}));
  const headers={host:'127.0.0.1:9527',authorization:'Bearer admin'};
@@ -39,7 +39,7 @@ it.each(['codex','claude'] as const)('%s reapplies explicitly over third-party r
  await mkdir(join(root,'cliproxy'));await mkdir(join(root,target));
  await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'codex.json',provider:'codex',status:'active',models:['shared-model']}]));
  await writeFile(paths[target],target==='codex'?'model = "original"\n':'{}');
- const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin-token',localKey:'internal-key',secrets:{get:async()=>'',set:async()=>{}},agentPaths:paths,agentProcesses:async()=>[]});
+ const service=await createDesktopService({root,antigravityPath:join(root,'isolated-antigravity.db'),proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin-token',localKey:'internal-key',secrets:{get:async()=>'',set:async()=>{}},agentPaths:paths,agentProcesses:async()=>[]});
  const headers={host:'127.0.0.1:9527',authorization:'Bearer admin-token'};
  const state=async()=>(await service.app.inject({url:'/api/a2a',headers})).json().targets.find((item:{id:string})=>item.id===target);
  const connect=(payload:object)=>service.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload});
@@ -103,7 +103,7 @@ it('connects and restores a local Agent through admin APIs without exposing keys
  await mkdir(join(root,'cliproxy'));await mkdir(join(root,'claude'));
  await writeFile(join(root,'cliproxy','fixture-accounts.json'),JSON.stringify([{name:'codex.json',provider:'codex',status:'active',models:['shared-model']}]));
  const path=join(root,'claude','settings.json');const original='{"env":{"KEEP":"private-original","ANTHROPIC_SMALL_FAST_MODEL":"volcengine_kimi-k3"}}';await writeFile(path,original);
- const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin-token',localKey:'internal-key',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{qoder:join(root,'qoder/settings.json'),codex:join(root,'codex','config.toml'),claude:path,workbuddy:join(root,'workbuddy','models.json')},agentProcesses:async()=>[]});
+ const service=await createDesktopService({root,desktopAccounts:{paths:{workbuddy:join(root,'native-cn.json'),'workbuddy-ai':join(root,'native-ai.json'),qoder:join(root,'native-qoder.dat')}},antigravityPath:join(root,'isolated-antigravity.db'),proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin-token',localKey:'internal-key',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{qoder:join(root,'qoder/settings.json'),codex:join(root,'codex','config.toml'),claude:path,workbuddy:join(root,'workbuddy','models.json')},agentProcesses:async()=>[]});
  try{
   await service.proxy.start();const headers={host:'127.0.0.1:9527',authorization:'Bearer admin-token'};
   expect((await service.app.inject({url:'/api/a2a',headers:{host:headers.host}})).statusCode).toBe(401);
@@ -194,7 +194,7 @@ it('queues the selected replacement model for approval, preserves stale edits an
  const root=await mkdtemp(join(await realpath(tmpdir()),'repair-service-'));const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
  await mkdir(join(root,'cliproxy'));await mkdir(join(root,'workbuddy'));await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'qoder.json',provider:'qoder',status:'active',models:['old','new']}]));const path=join(root,'workbuddy/models.json');await writeFile(path,'[]');
  let running=false;
- const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin-token',localKey:'internal-key',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{qoder:join(root,'qoder/settings.json'),codex:join(root,'codex/config.toml'),claude:join(root,'claude/settings.json'),workbuddy:path},agentProcesses:async()=>running?[123]:[]});
+ const service=await createDesktopService({root,antigravityPath:join(root,'isolated-antigravity.db'),proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin-token',localKey:'internal-key',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{qoder:join(root,'qoder/settings.json'),codex:join(root,'codex/config.toml'),claude:join(root,'claude/settings.json'),workbuddy:path},agentProcesses:async()=>running?[123]:[]});
  const headers={host:'127.0.0.1:9527',authorization:'Bearer admin-token'};const post=(url:string,payload:Record<string,unknown>)=>service.app.inject({method:'POST',url,headers,payload});
  try{
   await service.proxy.start();const sourceId=service.proxy.snapshot().accounts[0].id;const state=(await service.app.inject({url:'/api/a2a',headers})).json();
@@ -222,7 +222,7 @@ it('blocks Codex migration while desktop runs, before creating a gateway key or 
  const path=join(root,'codex/config.toml');await writeFile(path,'model="native-model"');
  const db=new DatabaseSync(join(root,'codex/state_5.sqlite'));db.exec("CREATE TABLE threads(id TEXT,model_provider TEXT,model TEXT,rollout_path TEXT,source TEXT,archived INTEGER);INSERT INTO threads VALUES ('old','openai','native-model','/unused','vscode',0)");db.close();
  const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
- const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:path,claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async target=>target==='codex'?[123]:[]});
+ const service=await createDesktopService({root,antigravityPath:join(root,'isolated-antigravity.db'),proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:path,claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async target=>target==='codex'?[123]:[]});
  try{await service.proxy.start();const headers={host:'127.0.0.1:9527',authorization:'Bearer admin'};
   const state=(await service.app.inject({url:'/api/a2a',headers})).json();const target=state.targets.find((t:{id:string})=>t.id==='codex');const sourceId=service.proxy.snapshot().accounts[0].id;
   const response=await service.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload:{target:'codex',sourceId,model:'codex/shared-model',revision:target.revision,allowRunning:true}});
@@ -239,7 +239,7 @@ it('passes the new key authorization set to Codex migration when replacing gatew
  await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'codex.json',provider:'codex',status:'active',models:['old','retained','replacement']}]));
  const path=join(root,'codex/config.toml');await writeFile(path,'model="native-model"');
  const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
- const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:path,claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async()=>[]});
+ const service=await createDesktopService({root,antigravityPath:join(root,'isolated-antigravity.db'),proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:path,claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async()=>[]});
  const migrate=vi.spyOn(CodexThreadMigration.prototype,'migrate');
  try{await service.proxy.start();const headers={host:'127.0.0.1:9527',authorization:'Bearer admin'};const sourceId=service.proxy.snapshot().accounts[0].id;
   const state=async()=>(await service.app.inject({url:'/api/a2a',headers})).json().targets.find((t:{id:string})=>t.id==='codex');
@@ -276,7 +276,7 @@ it('performs the confirmed Codex stop, backup, change and relaunch in a single a
  const backup=vi.spyOn(CodexThreadMigration.prototype,'prepare').mockImplementation(async function(this:CodexThreadMigration,...args){expect(pids).toEqual([]);events.push('backup');return prepare.apply(this,args);});
  const migrate=CodexThreadMigration.prototype.migrate;
  const migration=vi.spyOn(CodexThreadMigration.prototype,'migrate').mockImplementation(async function(this:CodexThreadMigration,...args){expect(pids).toEqual([]);events.push('migrate');return migrate.apply(this,args);});
- const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:path,claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async target=>target==='codex'?pids:[]});
+ const service=await createDesktopService({root,antigravityPath:join(root,'isolated-antigravity.db'),proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:path,claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async target=>target==='codex'?pids:[]});
  try{
   await service.proxy.start();const headers={host:'127.0.0.1:9527',authorization:'Bearer admin'};const sourceId=service.proxy.snapshot().accounts[0].id;
   const state=async()=>(await service.app.inject({url:'/api/a2a',headers})).json().targets.find((t:{id:string})=>t.id==='codex');
@@ -302,7 +302,7 @@ it.each(['/api/a2a/restore','/api/a2a/codex-migration/restore'])('never removes 
  await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'codex.json',provider:'codex',status:'active',models:['shared-model']}]));
  const path=join(root,'codex/config.toml'),original='model="native-model"';await writeFile(path,original);
  const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
- const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:path,claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async()=>[]});
+ const service=await createDesktopService({root,antigravityPath:join(root,'isolated-antigravity.db'),proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:path,claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async()=>[]});
  const headers={host:'127.0.0.1:9527',authorization:'Bearer admin'};
  let history:MockInstance<CodexThreadMigration['restore']>|undefined,context:MockInstance<CodexContext['prepareOfficial']>|undefined;
  try{
@@ -332,7 +332,7 @@ it('records the real switch error when the client only sees an internal failure'
  const root=await mkdtemp(join(await realpath(tmpdir()),'switch-failure-'));
  const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
  const restore=vi.spyOn(CodexThreadMigration.prototype,'restore').mockRejectedValue(Object.assign(new Error('旧对话缺失 tfl_secretvalue Bearer raw-token\n    at hidden'),{code:'ENOENT'}));
- const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:join(root,'codex/config.toml'),claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async()=>[]});
+ const service=await createDesktopService({root,antigravityPath:join(root,'isolated-antigravity.db'),proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:join(root,'codex/config.toml'),claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async()=>[]});
  try{
   const headers={host:'127.0.0.1:9527',authorization:'Bearer admin'};
   const response=await service.app.inject({method:'POST',url:'/api/a2a/codex-migration/restore',headers,payload:{restoreHistory:true}});
@@ -347,7 +347,7 @@ it('repairs disconnected gateway conversations using the currently selected offi
  const root=await mkdtemp(join(await realpath(tmpdir()),'disconnected-repair-'));
  const configPath=join(root,'codex/config.toml');await mkdir(join(root,'codex'));await writeFile(configPath,'model_provider = "openai"\nmodel = "official-selected"\n');
  const restore=vi.spyOn(CodexThreadMigration.prototype,'restore').mockImplementation(async model=>{expect(typeof model).toBe('function');expect(await (model as ()=>Promise<string>)()).toBe('official-selected');return {migrated:2};});
- const service=await createDesktopService({root,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:configPath},agentProcesses:async()=>[]});
+ const service=await createDesktopService({root,antigravityPath:join(root,'isolated-antigravity.db'),binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:configPath},agentProcesses:async()=>[]});
  try{const response=await service.app.inject({method:'POST',url:'/api/a2a/codex-migration/restore',headers:{host:'127.0.0.1:9527',authorization:'Bearer admin'},payload:{restoreHistory:true}});expect(response.statusCode,response.body).toBe(200);expect(response.json()).toMatchObject({migrated:2});expect(await readFile(configPath,'utf8')).toContain('official-selected');}
  finally{restore.mockRestore();await service.app.close();await rm(root,{recursive:true,force:true});}
 });
@@ -359,7 +359,7 @@ it('applies retained models while their source is unavailable without moving the
  const accounts=[{name:'codex.json',provider:'codex',status:'active',models:['retained-model','new-model']}];
  await writeFile(join(root,'cliproxy','fixture-accounts.json'),JSON.stringify(accounts));
  await writeFile(join(root,'claude','settings.json'),'{}');
- const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin-token',localKey:'internal-key',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{qoder:join(root,'qoder/settings.json'),codex:join(root,'codex/config.toml'),claude:join(root,'claude/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async()=>[]});
+ const service=await createDesktopService({root,antigravityPath:join(root,'isolated-antigravity.db'),proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin-token',localKey:'internal-key',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{qoder:join(root,'qoder/settings.json'),codex:join(root,'codex/config.toml'),claude:join(root,'claude/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async()=>[]});
  const headers={host:'127.0.0.1:9527',authorization:'Bearer admin-token'};
  try{
   await service.proxy.start();const sourceId=service.proxy.snapshot().accounts[0].id;

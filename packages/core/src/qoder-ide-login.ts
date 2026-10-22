@@ -1,3 +1,4 @@
+import {nativeQoderCredential,verifyNativeQoder} from './qoder-credentials.js';
 import {DatabaseSync} from 'node:sqlite';
 import {access} from 'node:fs/promises';
 import {homedir} from 'node:os';
@@ -44,6 +45,16 @@ export class QoderIdeLogin {
   const accountId=text(value.id);if(!accountId)throw Error();
   return {accountId,email:text(value.email),displayName:text(value.name),orgId:text(value.orgId)};
   }catch{throw conflict('无法确认 Qoder IDE 现有登录，未覆盖原数据。请检查系统安全存储后刷新。');}
+ }
+ async importCredential(){
+  if(!this.options.crypto)throw conflict('请使用 TokenFlow 桌面版读取 Qoder IDE 本机授权。');
+  if(process.env.QODER_PERSONAL_TOKEN||process.env.QODER_PERSONAL_ACCESS_TOKEN||process.env.QODER_CONFIG_DIR||process.env.VSCODE_PORTABLE||process.env.VSCODE_APPDATA)throw conflict('检测到 Qoder IDE 环境覆盖，请移除后再导入本机登录。');
+  const state=await this.stored();if(!state[0])throw conflict('未找到 Qoder IDE 本机登录。');
+  let value:Record<string,unknown>;try{
+   const envelope=JSON.parse(state[0]);if(envelope?.type!=='Buffer'||!Array.isArray(envelope.data)||!envelope.data.length||!envelope.data.every((n:unknown)=>Number.isInteger(n)&&Number(n)>=0&&Number(n)<=255))throw Error();
+   value=JSON.parse(await this.options.crypto('decrypt',Buffer.from(envelope.data).toString('base64')));
+  }catch{throw conflict('无法读取 Qoder IDE 本机登录，请检查系统安全存储后重试。');}
+  return verifyNativeQoder(nativeQoderCredential(value,true),this.options.fetch);
  }
  private support(){
   if(!['darwin','win32'].includes(this.options.platform??process.platform))return '此系统暂不支持自动切换 Qoder IDE，请在 IDE 内登录。';

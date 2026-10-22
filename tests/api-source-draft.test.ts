@@ -42,3 +42,15 @@ describe('model-specific routes',()=>{
   expect(sourceProtocolLabel({...source,models:['claude']})).toBe('Anthropic Messages');
  });
 });
+
+import {providerSchema} from '../packages/core/src/providers';
+it.each(['10.15.11.5','10.2.6.48','172.16.0.1','172.31.255.254','192.168.1.2','[fd12::1]'])('accepts LAN HTTP consistently in UI and server: %s',host=>{
+ const baseURL=`http://${host}:9555/v1`;
+ expect(validateDraft({...draft,baseURL},false)).toEqual({});
+ expect(providerSchema.safeParse({kind:'custom',baseURL,model:'test'}).success).toBe(true);
+});
+it.each(['172.15.0.1','172.32.0.1','192.169.1.1','8.8.8.8','10.example.com'])('still requires HTTPS for non-LAN hosts: %s',host=>{
+ const baseURL=`http://${host}:9555/v1`;
+ expect(validateDraft({...draft,baseURL},false).baseURL).toBeTruthy();
+ expect(providerSchema.safeParse({kind:'custom',baseURL,model:'test'}).success).toBe(false);
+});

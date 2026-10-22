@@ -123,3 +123,8 @@ it('passes a Qoder display name into usage attribution without requiring email',
  const f=await setup('qoder');await writeFile(f.path,Buffer.from(await crypt('encrypt',JSON.stringify({schemaVersion:1,user:{id:'native-user',name:'Qoder User'}})),'base64'));
  expect(await f.manager.usageLogin()).toMatchObject({provider:'qoder',accountId:'native-user',email:null,displayName:'Qoder User'});
 });
+it.each(['workbuddy','workbuddy-ai'] as const)('imports %s native millisecond expiry from the configured path without writing',async provider=>{
+ const f=await setup(provider);const raw=JSON.stringify({account:{uid:'new',email:'native@example.test'},auth:{accessToken:'native-access',refreshToken:'native-refresh',expiresAt:Date.parse('2035-01-01T00:00:00Z'),domain:provider==='workbuddy-ai'?'www.workbuddy.ai':'www.codebuddy.cn'}});await writeFile(f.path,raw);
+ expect(await f.manager.importCredential()).toMatchObject({access_token:'native-access',refresh_token:'native-refresh',uid:'new',expired:'2035-01-01T00:00:00.000Z'});expect(await readFile(f.path,'utf8')).toBe(raw);
+});
+it('explains protected WorkBuddy credentials instead of importing ciphertext',async()=>{const f=await setup();await expect(f.manager.importCredential()).rejects.toThrow('加密');expect(await readFile(f.path)).toEqual(f.original);});

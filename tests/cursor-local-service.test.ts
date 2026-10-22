@@ -1,5 +1,5 @@
 import {DatabaseSync} from 'node:sqlite';
-import {mkdtemp,rm,realpath} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,rm,realpath} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {expect,it,vi} from 'vitest';
@@ -17,4 +17,19 @@ it('protects local Cursor detection, shows reusable accounts and never exposes o
   await service.app.inject({url,headers});expect(fetcher).toHaveBeenCalledOnce();await service.app.inject({url:url+'?refresh=1',headers});expect(fetcher).toHaveBeenCalledTimes(2);
   expect((await service.app.inject({url:url+'/switch',method:'POST',headers,payload:{}})).statusCode).toBe(400);
  }finally{await service.app.close();vi.restoreAllMocks();await rm(root,{recursive:true,force:true});}
+});
+
+it.each(['trae','zcode'] as const)('protects %s native detection and import while exposing only identity and models',async provider=>{
+ const root=await mkdtemp(join(await realpath(tmpdir()),'native-readonly-api-'));
+ const {createServer}=await import('node:net');const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
+ await mkdir(join(root,'cliproxy'));await writeFile(join(root,'cliproxy/fixture-options.json'),JSON.stringify({localCredentials:{[provider]:{type:provider,uid:'local-user',access_token:'private-native',refresh_token:'private-refresh'}}}));
+ const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},claudeCredentialStore:null});
+ const headers={host:'127.0.0.1:9527',authorization:'Bearer admin'},url='/api/native-accounts/'+provider;
+ try{
+  await service.proxy.start();expect((await service.app.inject({url,headers:{host:headers.host}})).statusCode).toBe(401);
+  const before=await service.app.inject({url,headers});expect(before.json()).toMatchObject({readOnly:true,loginState:'signed-in',accounts:[]});expect(before.body).not.toMatch(/private-native|private-refresh|access_token|refresh_token/);
+  const imported=await service.app.inject({url:'/api/local-agent/import-local/'+provider,method:'POST',headers,payload:{}});expect(imported.statusCode,imported.body).toBe(200);expect(imported.json().accounts[0].models).toEqual([provider+'/imported-model']);
+  const after=await service.app.inject({url,headers});expect(after.json().accounts[0].accountId).toBe(after.json().accountId);expect(after.json().revision).toBe(before.json().revision);
+  expect((await service.app.inject({url:url+'/switch',method:'POST',headers,payload:{}})).statusCode).toBe(400);
+ }finally{await service.app.close();await rm(root,{recursive:true,force:true});}
 });

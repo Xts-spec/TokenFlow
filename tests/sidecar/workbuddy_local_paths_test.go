@@ -84,3 +84,8 @@ func TestWorkBuddyLocalImportIgnoresLoggedOutSession(t *testing.T) {
 		t.Fatal("must not import a logged-out session")
 	}
 }
+func TestWorkBuddyNativeMillisecondExpiry(t *testing.T) {
+ home:=t.TempDir();t.Setenv("HOME",home);t.Setenv("USERPROFILE",home);t.Setenv("LOCALAPPDATA",filepath.Join(home,"local"));t.Setenv("XDG_DATA_HOME",filepath.Join(home,"data"))
+ for _,platform:=range []string{"darwin","windows","linux"}{for _,path:=range localWorkBuddyAuthPaths(platform,home,os.Getenv){os.MkdirAll(filepath.Dir(path),0700);os.WriteFile(path,[]byte(`{"auth":{"accessToken":"native-fixture","expiresAt":2051222400000},"account":{"uid":"fixture"}}`),0600)}}
+ got,err:=ImportLocalAuth();if err!=nil||got.ExpiresAt!=2051222400{t.Fatal("native milliseconds were interpreted as seconds")}
+}

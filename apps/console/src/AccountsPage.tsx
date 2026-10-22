@@ -20,7 +20,7 @@ import {DragHandle,dropOrder,orderModels,useModelOrder} from './display-order';
 import { ProviderIcon } from './ProviderIcon';
 import type { Notify } from './notify';
 
-const importable=new Set(['trae','workbuddy','zcode','cursor']);
+const importable=new Set(['codex','claude','qoder','antigravity','trae','workbuddy','zcode','cursor']);
 const pendingStates=['starting','waiting_for_browser','verifying'];
 const tabKey='token-flow.accounts.provider';
 
@@ -76,7 +76,7 @@ function LoginProgress({local,disabled,actions}:{local:LocalAgentSnapshot;disabl
 export function AccountsPage({local,usage,disabled,actions,notify,onContext}:{local:LocalAgentSnapshot;usage:UsageData;disabled:boolean;actions:AccountActions;notify:Notify;onContext?:(context:{provider?:string;sourceId?:string})=>void}){
  const [modelOrder,,modelRanks,moveModel]=useModelOrder();
  const [tab,setTab]=useState(()=>{try{return localStorage.getItem(tabKey)??'codex';}catch{return 'codex';}});
- const logins:Record<LoginProvider,ReturnType<typeof useNativeLogin>>={codex:useNativeLogin('codex',local),claude:useNativeLogin('claude',local),antigravity:useNativeLogin('antigravity',local),workbuddy:useNativeLogin('workbuddy',local),'workbuddy-ai':useNativeLogin('workbuddy-ai',local),qoder:useNativeLogin('qoder',local),'qoder-ide':useNativeLogin('qoder-ide',local),cursor:useNativeLogin('cursor',local,tab==='cursor')};
+ const logins:Record<LoginProvider,ReturnType<typeof useNativeLogin>>={codex:useNativeLogin('codex',local),claude:useNativeLogin('claude',local),antigravity:useNativeLogin('antigravity',local),workbuddy:useNativeLogin('workbuddy',local),'workbuddy-ai':useNativeLogin('workbuddy-ai',local),qoder:useNativeLogin('qoder',local),'qoder-ide':useNativeLogin('qoder-ide',local),cursor:useNativeLogin('cursor',local,tab==='cursor'),trae:useNativeLogin('trae',local,tab==='trae'),zcode:useNativeLogin('zcode',local,tab==='zcode')};
  const [clients,setClients]=useState<Record<string,LoginProvider>>({workbuddy:'workbuddy',qoder:'qoder'});
  const [selectedAccounts,setSelectedAccounts]=useState<Record<string,string>>({});
  const [refreshing,setRefreshing]=useState('');
@@ -124,7 +124,7 @@ export function AccountsPage({local,usage,disabled,actions,notify,onContext}:{lo
    <header className="tfProviderHead">
     <div className="tfProviderTitle"><h2>{provider.label}</h2><button className="textButton tfProviderRefresh" aria-label={`刷新 ${account?.label??provider.label} 账号、模型和额度`} title="点击刷新当前账号的模型和额度" disabled={locked||local.state!=='running'} onClick={()=>void (async()=>{if(lock.current)return;lock.current=true;setRefreshing(provider.id);try{await actions.refresh(provider.id,true,account?.id);await login?.refresh();}catch(error){notify({kind:'error',text:error instanceof Error?error.message:'刷新失败，请重试'});}finally{lock.current=false;setRefreshing('');}})()}><Icon name="refresh" size={14}/>刷新</button></div>
     <div className="tfRow">
-     {importable.has(provider.id)&&<button disabled={locked} onClick={()=>void actions.importLocal(client==='workbuddy-ai'?'workbuddy-ai':provider.id).then(()=>login?.refresh(true))}>{provider.id==='cursor'&&login?.nativeCurrent?'复用本机账号':'从本机导入'}</button>}
+     {importable.has(provider.id)&&<button disabled={locked} onClick={()=>void actions.importLocal(client==='workbuddy-ai'||client==='qoder-ide'?client:provider.id).then(()=>login?.refresh(true))}>{provider.id==='cursor'&&login?.nativeCurrent?'复用本机账号':'从本机导入'}</button>}
      <button className="iconButton tfCollectionAdd" title="添加账号" aria-label={`添加 ${client?loginNames[client]:provider.label} 账号`} disabled={locked} onClick={()=>void actions.connect(client==='workbuddy-ai'?'workbuddy-overseas':provider.id)}><Icon name="plus" size={18}/></button>
      {provider.id==='claude'&&<button title="不使用本机回调端口：在官方页面复制授权码后粘贴回来" disabled={locked} onClick={()=>void actions.connect('claude-manual')}>授权码登录</button>}
     </div>
@@ -155,11 +155,11 @@ export function AccountsPage({local,usage,disabled,actions,notify,onContext}:{lo
       {!account.authenticationRequired&&refreshing!==provider.id&&account.modelError&&<small className="tfWarn">{account.modelError}</small>}
       {!account.authenticationRequired&&account.retryable&&<small className="tfHint">上次请求暂时失败，可稍后重试。</small>}
       <div className="tfAccountColumns">
-       <section className="tfQuotaSide" aria-label="账号额度"><h3>额度</h3>{account.authenticationRequired?<p className="tfWarn">登录授权已失效，请重新授权。</p>:refreshing===provider.id||local.quotaBusy?<LoadingSkeleton label="正在加载账号额度"/>:quota&&!account.disabled?<QuotaDetails quota={quota} label={account.label} compact/>:<small className="tfHint">{account.disabled?'已停用，不参与调用':'额度暂未提供'}</small>}</section>
+       <section className="tfQuotaSide" aria-label="账号额度"><h3>额度</h3>{account.authenticationRequired?<p className="tfWarn">{account.modelError||'登录授权已失效，请重新授权。'}</p>:refreshing===provider.id||local.quotaBusy?<LoadingSkeleton label="正在加载账号额度"/>:quota&&!account.disabled?<QuotaDetails quota={quota} label={account.label} compact/>:<small className="tfHint">{account.disabled?'已停用，不参与调用':'额度暂未提供'}</small>}</section>
        <ColumnDivider storageKey="token-flow.layout.account-split" label="调整额度与模型宽度"/>
        <section className="tfModelsSide" aria-label="账号模型"><div className="tfAccountModels" id={`models-${account.id}`}>
        <header className="tfAccountModelsHead"><h3>模型</h3><small className="tfAccountModelCount">{account.models?.length??0} 个模型</small></header>
-       {refreshing===provider.id?<LoadingSkeleton label="正在加载账号模型"/>:account.models?.length?<ul aria-label={`${account.label} 支持的模型`}>{shownModels.map(id=><li key={id} className="tfDragRow" {...dropOrder('models',id,shownModels,moveModel)}><DragHandle kind="models" id={id} label={modelLabel(local,id)} items={shownModels} move={moveModel}/><ProviderIcon provider={modelManufacturer(id,local)} size={28}/><span className="tfCatalogModelName"><strong title={modelLabel(local,id)}>{modelLabel(local,id)}</strong></span><button className="textButton" aria-label={`复制模型 ${modelLabel(local,id)}`} title={id} onClick={()=>void copyText(id).then(()=>notify({kind:'ok',text:'模型 ID 已复制'})).catch(()=>notify({kind:'error',text:'复制失败'}))}>复制</button></li>)}</ul>:<p className="tfHint">{account.authenticationRequired?'重新授权后获取模型。':account.disabled?'启用账号后获取模型。':'暂未获取到模型，请刷新后重试。'}</p>}
+       {refreshing===provider.id?<LoadingSkeleton label="正在加载账号模型"/>:account.models?.length?<ul aria-label={`${account.label} 支持的模型`}>{shownModels.map(id=><li key={id} className="tfDragRow" {...dropOrder('models',id,shownModels,moveModel)}><DragHandle kind="models" id={id} label={modelLabel(local,id)} items={shownModels} move={moveModel}/><ProviderIcon provider={modelManufacturer(id,local)} size={28}/><span className="tfCatalogModelName"><strong title={modelLabel(local,id)}>{modelLabel(local,id)}</strong></span><button className="textButton" aria-label={`复制模型 ${modelLabel(local,id)}`} title={id} onClick={()=>void copyText(id).then(()=>notify({kind:'ok',text:'模型 ID 已复制'})).catch(()=>notify({kind:'error',text:'复制失败'}))}>复制</button></li>)}</ul>:<p className="tfHint">{account.authenticationRequired?'重新授权后获取模型。':account.disabled?'启用账号后获取模型。':account.modelError??'暂未获取到模型，请刷新后重试。'}</p>}
       </div></section></div>
      </div>;
     })()}

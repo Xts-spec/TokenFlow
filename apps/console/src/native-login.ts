@@ -8,8 +8,8 @@ import { requestJSON } from './request';
 import { readForSession,invalidateSessionReads } from './session-read';
 import { sourceOptions } from './source-options';
 
-export type LoginProvider='codex'|'claude'|'antigravity'|'workbuddy'|'workbuddy-ai'|'qoder'|'qoder-ide'|'cursor';
-export const loginNames:Record<LoginProvider,string>={codex:'Codex',claude:'Claude Code',antigravity:'Antigravity',workbuddy:'WorkBuddy','workbuddy-ai':'WorkBuddyAI',qoder:'Qoder','qoder-ide':'Qoder IDE',cursor:'Cursor'};
+export type LoginProvider='codex'|'claude'|'antigravity'|'workbuddy'|'workbuddy-ai'|'qoder'|'qoder-ide'|'cursor'|'trae'|'zcode';
+export const loginNames:Record<LoginProvider,string>={codex:'Codex',claude:'Claude Code',antigravity:'Antigravity',workbuddy:'WorkBuddy','workbuddy-ai':'WorkBuddyAI',qoder:'Qoder','qoder-ide':'Qoder IDE',cursor:'Cursor',trae:'Trae',zcode:'ZCode'};
 export const clientOptions={workbuddy:[['workbuddy','WorkBuddy'],['workbuddy-ai','WorkBuddyAI']],qoder:[['qoder','Qoder'],['qoder-ide','Qoder IDE']]} as const;
 type Status={installation?:AgentInstallation;readOnly?:boolean;displayName?:string;loginState?:'signed-in'|'signed-out'|'unreadable';readError?:string;unavailableReason?:string;message?:string;organizationId?:string|null;domain?:string;enterpriseId?:string;revision:string;email?:string|null;accountId?:string|null;model?:string|null;pids:number[];backup:{state:string}|null;gatewayConnected:boolean;
  accounts:{organizationId?:string|null;domain?:string;enterpriseId?:string;id:string;email?:string|null;accountId?:string|null;switchable:boolean;reason:string}[]};
@@ -34,7 +34,7 @@ export function useNativeLogin(provider:LoginProvider,local:LocalAgentSnapshot,e
  const pool=provider==='workbuddy-ai'?'workbuddy':provider==='qoder-ide'?'qoder':provider;
  const pooled=local.accounts.filter(a=>a.provider===pool&&!a.isDuplicate&&(!a.disabled||provider==='cursor')).map(a=>({...a,models:a.models??[],remaining:sourceAccounts.find(s=>s.id===a.id)?.remaining??null}));
  useEffect(()=>{setStatus(undefined);if(!enabled)return;void refresh(false,false);const reload=()=>void refresh();window.addEventListener('tokenflow:native-login-changed',reload);return()=>{requestVersion.current++;window.removeEventListener('tokenflow:native-login-changed',reload);};},[refresh,enabled]);
- const matches=(credential:Status['accounts'][number]|undefined)=>hasNativeLogin({status,error})&&!!status&&!!credential&&(desktop?desktopIdentityMatches(provider,status,credential):provider==='claude'?!!status.accountId&&status.accountId===credential.accountId&&status.organizationId===credential.organizationId:provider==='codex'?!!status.accountId&&credential.accountId===status.accountId&&(!credential.email||!status.email||credential.email===status.email):!!status.email&&(provider==='cursor'?credential.email?.toLowerCase()===status.email.toLowerCase():credential.email===status.email));
+ const matches=(credential:Status['accounts'][number]|undefined)=>hasNativeLogin({status,error})&&!!status&&!!credential&&(desktop?desktopIdentityMatches(provider,status,credential):provider==='trae'||provider==='zcode'?!!status.accountId&&status.accountId===credential.accountId:provider==='claude'?!!status.accountId&&status.accountId===credential.accountId&&status.organizationId===credential.organizationId:provider==='codex'?!!status.accountId&&credential.accountId===status.accountId&&(!credential.email||!status.email||credential.email===status.email):!!status.email&&(provider==='cursor'?credential.email?.toLowerCase()===status.email.toLowerCase():credential.email===status.email));
 
  const accounts:LoginAccount[]=pooled.filter(a=>!desktop||status?.accounts.some(c=>c.id===a.id)).map(a=>{
   const credential=status?.accounts.find(item=>item.id===a.id);

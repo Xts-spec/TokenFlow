@@ -2,7 +2,7 @@ import {mapNativeAccounts} from '../packages/core/src/usage-attribution.js';
 import {nativeIdentity,type LocalUsageRow} from '../packages/core/src/local-usage.js';
 import {createHash} from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, writeFile, readFile, rm,realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm,realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
@@ -549,6 +549,37 @@ it('retries an unavailable official catalog twice, forcing a fresh lookup after 
  expect(manager.snapshot().accounts[0].models).toEqual(['kimi/current']);expect(manager.snapshot().accounts[0].modelError).toBeUndefined();
 });
 
+it('repairs missing Qoder uid from verified userinfo before model discovery and persists the identity',async()=>{
+ const {manager,root}=await setup();await mkdir(join(root,'cliproxy/auth'),{recursive:true});
+ await writeFile(join(root,'cliproxy/auth/pat.json'),JSON.stringify({type:'qoder',access_token:'fixture-pat'}));
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'pat.json',provider:'qoder',status:'error',unavailable:true,auth_index:'pat',profile:{id:'verified-user',email:'verified@example.test'},models:['fixture']} ]));
+ await manager.start();
+ const credential=JSON.parse(await readFile(join(root,'cliproxy/auth/pat.json'),'utf8'));
+ expect(manager.snapshot().accounts[0].unavailable).toBe(false);expect(credential.uid).toBe('verified-user');expect(credential.email).toBe('verified@example.test');
+ expect(manager.snapshot().accounts[0].authenticationRequired).toBe(false);
+ expect(manager.snapshot().accounts[0].models?.length).toBeGreaterThan(0);
+ expect(JSON.stringify(manager.snapshot())).not.toContain('fixture-pat');
+});
+
+it.each([401,503,429,200])('keeps failed Qoder identity recovery visible, distinguishes retry from reauthorization (%s)',async status=>{
+ const {manager,root,fixture}=await setup();await mkdir(join(root,'cliproxy/auth'),{recursive:true});
+ const original=JSON.stringify({type:'qoder',access_token:'fixture-pat'});await writeFile(join(root,'cliproxy/auth/pat.json'),original);
+ const row={name:'pat.json',provider:'qoder',status:'active',auth_index:'pat',profileStatus:status,profile:{},models:['fixture']};
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([row]));await manager.start();
+ let account=manager.snapshot().accounts[0];expect(manager.snapshot().models.filter(m=>m.provider==='qoder')).toEqual([]);expect(account.models??[]).toEqual([]);expect(account.unavailable).toBe(true);
+ expect(account.authenticationRequired).toBe(false); // Missing identity alone must not trigger expired-grant removal.
+ expect(account.modelError).toContain(status===401||status===200?'重新授权':'刷新');expect(await readFile(join(root,'cliproxy/auth/pat.json'),'utf8')).toBe(original);
+ await fixture({accounts:[{...row,profileStatus:200,profile:{id:'recovered',email:'recovered@example.test'}}]});
+ await manager.refreshAccounts('qoder',true);account=manager.snapshot().accounts[0];expect(account.authenticationRequired).toBe(false);expect(account.unavailable).toBe(false);expect(account.models).toContain('qoder/fixture');
+});
+it('does not overwrite an access token refreshed during Qoder profile lookup and recovers on retry',async()=>{
+ const {manager,root}=await setup();await mkdir(join(root,'cliproxy/auth'),{recursive:true});
+ await writeFile(join(root,'cliproxy/auth/pat.json'),JSON.stringify({type:'qoder',access_token:'fixture-old'}));
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'pat.json',provider:'qoder',status:'active',auth_index:'pat',refreshOnProfile:true,profile:{id:'verified'},models:['fixture']}]));
+ await manager.start();expect(JSON.parse(await readFile(join(root,'cliproxy/auth/pat.json'),'utf8')).access_token).toBe('fixture-refreshed');
+ await manager.refreshAccounts('qoder',true);expect(JSON.parse(await readFile(join(root,'cliproxy/auth/pat.json'),'utf8'))).toMatchObject({uid:'verified',access_token:'fixture-refreshed'});
+});
+
 
 it('keeps explicit revocation evidence when sidecar status clears before removal',async()=>{
  const {manager,root}=await setup();
@@ -582,4 +613,53 @@ it('routes account refresh requests to the selected account',async()=>{
  const id='a'.repeat(24),refresh=vi.spyOn(service.proxy,'refreshAccount').mockResolvedValue(service.proxy.snapshot());
  const result=await service.app.inject({method:'POST',url:`/api/local-agent/accounts/${id}/refresh`,headers:{host:'127.0.0.1:9527',authorization:'Bearer refresh-admin'},payload:{}});
  expect(result.statusCode,result.body).toBe(200);expect(refresh).toHaveBeenCalledWith(id);
+});
+
+it.each(['workbuddy','workbuddy-ai','trae','zcode'] as const)('discovers a new native %s identity even with an existing pool and keeps repeated imports idempotent',async target=>{
+ const {manager,root}=await setup();const provider=target==='workbuddy-ai'?'workbuddy':target;
+ const domain=target==='workbuddy-ai'?'www.workbuddy.ai':'copilot.tencent.com';
+ const scope=provider==='workbuddy'?{domain}:provider==='trae'?{host:'https://api-sg-central.trae.ai'}:{provider:'zai'};
+ const native={type:provider,uid:'new-person',access_token:'native-secret',refresh_token:'native-refresh',expired:'2035-01-01T00:00:00Z',...scope};
+ await mkdir(join(root,'cliproxy/auth'),{recursive:true});
+ await writeFile(join(root,'cliproxy/auth/old.json'),JSON.stringify({...native,uid:'old-person',refresh_token:'old-refresh'}));
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'old.json',provider,status:'active',models:['old-model']}]));
+ await writeFile(join(root,'cliproxy/fixture-options.json'),JSON.stringify({localCredentials:{[target]:native}}));
+ await manager.start();await manager.importLocal(target,true);
+ let accounts=manager.snapshot().accounts.filter(a=>a.provider===provider);expect(accounts).toHaveLength(2);
+ expect(accounts.some(a=>a.models?.includes(provider+'/imported-model'))).toBe(true);
+ const filesBefore=await readdir(join(root,'cliproxy/auth'));
+ await manager.importLocal(target,true);await manager.importLocal(target);
+ expect(manager.snapshot().accounts.filter(a=>a.provider===provider)).toHaveLength(2);
+ expect(await readdir(join(root,'cliproxy/auth'))).toEqual(filesBefore);
+ expect(JSON.stringify(manager.snapshot())).not.toMatch(/native-secret|native-refresh/);
+});
+
+it.each(['workbuddy','workbuddy-ai','trae','zcode'] as const)('preserves a newer pooled %s grant when the native client still has its old token',async target=>{
+ const {manager,root}=await setup();const provider=target==='workbuddy-ai'?'workbuddy':target;
+ const native={type:provider,uid:'same-user',access_token:'old-native',refresh_token:'same-refresh',expired:'2030-01-01T00:00:00Z',domain:target==='workbuddy-ai'?'www.workbuddy.ai':'copilot.tencent.com'};
+ const saved=JSON.stringify({...native,access_token:'newer-pooled',expired:'2035-01-01T00:00:00Z',disabled:true});
+ await mkdir(join(root,'cliproxy/auth'),{recursive:true});await writeFile(join(root,'cliproxy/auth/saved.json'),saved);
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'saved.json',provider,status:'active',disabled:true}]));
+ await writeFile(join(root,'cliproxy/fixture-options.json'),JSON.stringify({localCredentials:{[target]:native}}));
+ await manager.start();await manager.importLocal(target,true);await manager.importLocal(target);
+ expect(await readFile(join(root,'cliproxy/auth/saved.json'),'utf8')).toBe(saved);
+ expect(await readdir(join(root,'cliproxy/auth'))).toEqual(['saved.json']);
+ expect(manager.snapshot().accounts[0].disabled).toBe(true);
+});
+it.each(['trae','zcode'] as const)('detects native %s without writing credentials and maps its imported identity',async provider=>{
+ const {manager,root}=await setup();await mkdir(join(root,'cliproxy'),{recursive:true});
+ await writeFile(join(root,'cliproxy/fixture-options.json'),JSON.stringify({localCredentials:{[provider]:{type:provider,uid:'native-user',access_token:'private-native',refresh_token:'private-refresh'}}}));
+ await manager.start();const before=await readdir(join(root,'cliproxy/auth'));
+ const status=await manager.localImportStatus(provider);expect(status).toMatchObject({readOnly:true,loginState:'signed-in',accounts:[]});expect(await readdir(join(root,'cliproxy/auth'))).toEqual(before);
+ await manager.importLocal(provider);const imported=await manager.localImportStatus(provider);
+ expect(imported.accounts).toHaveLength(1);expect(imported.accounts[0].accountId).toBe(imported.loginState==='signed-in'?imported.accountId:undefined);
+ expect(JSON.stringify(imported)).not.toMatch(/private-native|private-refresh|access_token|refresh_token/);
+});
+it('keeps the saved disabled flag when a native import updates the same grant',async()=>{
+ const {manager,root}=await setup();const native={type:'workbuddy',uid:'same-user',access_token:'newer-native',refresh_token:'same-refresh',expired:'2035-01-01T00:00:00Z',domain:'copilot.tencent.com'};
+ await mkdir(join(root,'cliproxy/auth'),{recursive:true});await writeFile(join(root,'cliproxy/auth/saved.json'),JSON.stringify({...native,access_token:'old-pooled',expired:'2030-01-01T00:00:00Z',disabled:true}));
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'saved.json',provider:'workbuddy',status:'active',disabled:true}]));
+ await writeFile(join(root,'cliproxy/fixture-options.json'),JSON.stringify({localCredentials:{workbuddy:native}}));
+ await manager.start();await manager.importLocal('workbuddy',true);
+ expect(JSON.parse(await readFile(join(root,'cliproxy/auth/saved.json'),'utf8'))).toMatchObject({access_token:'newer-native',disabled:true});
 });

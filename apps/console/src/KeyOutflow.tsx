@@ -32,8 +32,9 @@ function KeyIPField({value,onChange,disabled}:{value:string;onChange:(value:stri
 const connectionInfo=(entry:GatewayKey,key:string,origin:string)=>`名称: ${entry.name}\nOpenAI Base URL: ${origin}/v1\nAnthropic Base URL: ${origin}\nAPI Key: ${key}\nModels:\n${entry.models.join('\n')}`;
 function KeyCreated({entry,apiKey,temporary,gatewayAccess,onClose}:{entry:GatewayKey;apiKey:string;temporary:boolean;gatewayAccess:GatewayAccessSnapshot|null;onClose:()=>void}){
  const [copied,setCopied]=useState(false),[error,setError]=useState('');const origins=lanOrigins(gatewayAccess);const [selected,setSelected]=useState('');const origin=entry.access==='lan'?(origins.includes(selected)?selected:origins[0]??''):window.location.origin;
+ useEffect(()=>setCopied(false),[origin]);
  return <FlowDialog open title="Key 已创建" className="tfKeyCreatedDialog" onClose={onClose}>
-  <p className="tfDialogLead">{entry.name}</p>
+  <p className="tfDialogLead">{entry.name}</p>{entry.access==='lan'&&<p className="tfHint">这是运行 TokenFlow 的电脑地址，请选择调用设备能访问的网卡地址。切换网络后地址会更新。</p>}
   {origins.length>1&&entry.access==='lan'&&<label>接入地址<select aria-label="接入地址" value={origin} onChange={event=>{setSelected(event.target.value);setCopied(false);}}>{origins.map(value=><option key={value}>{value}</option>)}</select></label>}
   <dl className="tfCreatedInfo"><div><dt>OpenAI Base URL</dt><dd>{origin?`${origin}/v1`:'未找到局域网地址，请检查网络连接'}</dd></div><div><dt>Anthropic Base URL</dt><dd>{origin||'—'}</dd></div><div><dt>API Key</dt><dd><input aria-label="已生成 API Key" type="password" readOnly value={apiKey}/></dd></div><div><dt>模型 · {entry.models.length}</dt><dd className="tfCreatedModels">{entry.models.join('\n')}</dd></div></dl>
   {temporary&&<p className="tfWarn">请在关闭前复制保存，当前环境无法加密保存 Key。</p>}
@@ -98,6 +99,7 @@ function KeyDetails({entry,initialKey,initialTab,temporary,local,usage,notify,on
  const manage=async(action:'toggle'|'delete')=>{if(lock.current)return;lock.current=true;setBusy(true);setManagementError('');try{await requestJSON(`/api/gateway-keys/${entry.id}`,action==='delete'?json('DELETE',{}):json('PUT',{name:entry.name,purpose:entry.purpose,enabled:!entry.enabled,models:entry.models,agents:entry.agents,tokenLimit:entry.tokenLimit}));await onChanged();if(action==='delete')onClose();else notify({kind:'ok',text:entry.enabled?'Key 已停用':'Key 已启用'});}catch(error){setManagementError(error instanceof Error?error.message:'操作失败，请重试');}finally{lock.current=false;setBusy(false);}};
  const sortedModels=orderModels(entry.models,id=>modelLabel(local,id),modelOrder,modelRanks);
  const addresses=lanOrigins(gatewayAccess);const isLAN=entry.access==='lan';const origin=isLAN?(addresses.includes(selectedOrigin)?selectedOrigin:addresses[0]??''):window.location.origin;const endpointReady=!!origin;const keyRows=usage.rows.filter(row=>row.keyId===entry.id);
+ useEffect(()=>setCopied(''),[origin]);
  const secretAction=async(action:'show'|'copy'|'all')=>{
   if(lock.current||action==='all'&&!endpointReady)return;lock.current=true;setBusy(true);setError('');
   try{
@@ -160,8 +162,13 @@ export function KeyOutflow({local,keys,usage,reload,notify,onContext}:{onContext
   setCreated({id:result.key.id,value:result.apiKey,temporary:!result.keyStored});accessRead.current++;setGatewayAccess(result.gatewayAccess);setConfirmation(result.key);setCreating(false);
  });
 
- const refreshAccess=async()=>{const revision=++accessRead.current;try{const value=await requestJSON<GatewayAccessSnapshot>('/api/gateway/access');if(revision===accessRead.current)setGatewayAccess(value);}catch{}};
- useEffect(()=>{void refreshAccess();},[detail?.id]);
+ const refreshAccess=async()=>{const revision=++accessRead.current;try{const value=await requestJSON<GatewayAccessSnapshot>('/api/gateway/access');if(revision===accessRead.current)setGatewayAccess(value);}catch{if(revision===accessRead.current)setGatewayAccess(null);}};
+ useEffect(()=>{
+  void refreshAccess();const refresh=()=>{if(document.visibilityState==='visible')void refreshAccess();};
+  window.addEventListener('focus',refresh);window.addEventListener('online',refresh);document.addEventListener('visibilitychange',refresh);
+  const timer=detail||confirmation?setInterval(refresh,15000):undefined;
+  return()=>{accessRead.current++;window.removeEventListener('focus',refresh);window.removeEventListener('online',refresh);document.removeEventListener('visibilitychange',refresh);if(timer)clearInterval(timer);};
+ },[detail?.id,confirmation?.id]);
  const closeDetail=()=>{setDetail(null);setCreated({id:'',value:'',temporary:false});};
  return <section className="tfKeys" aria-label="API Key">
   <header className="tfKeysHead"><UsageFold loaded={usage.loaded} error={usage.error} onRetry={usage.reload} title="API 代理用量" subtitle="今日 API 代理用量与缓存命中" rows={proxyRows} range="today"/><select className="tfOrder" aria-label="Key 排序" value={keyOrder} onChange={event=>setKeyOrder(event.target.value as KeyOrder)}><option value="newest">最新创建</option><option value="name">名称 A–Z</option><option value="tokens">累计 Token</option><option value="manual">手动排序</option></select><button className="iconButton tfCollectionAdd" aria-label="创建 Key" title="创建 Key" disabled={busy||!scopes.length||creating} onClick={()=>{setCreating(true);setName('');setPurpose('');setChosen([]);setAccess('local');setAllowedIPs('');setError('');}}><Icon name="plus" size={18}/></button></header>

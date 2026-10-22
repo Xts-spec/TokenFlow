@@ -96,7 +96,7 @@ export async function createDesktopService(options:ServiceOptions) {
     }
   }
   const apiSources=await ApiSources.open(root,options.secrets,config);
-  const proxy=new CLIProxyManager(root,options.binary,options.localKey,proxyPort,{outboundProxyURL:options.outboundProxyURL,networkSnapshot:options.networkSnapshot,openExternal:options.openExternal,secrets:options.secrets,apiConfig:()=>apiSources.sidecarConfig(),apiModelIDs:()=>apiSources.sidecarModelIDs()});
+  const proxy=new CLIProxyManager(root,options.binary,options.localKey,proxyPort,{cursorLocalPath:options.cursorLocalPath,outboundProxyURL:options.outboundProxyURL,networkSnapshot:options.networkSnapshot,openExternal:options.openExternal,secrets:options.secrets,apiConfig:()=>apiSources.sidecarConfig(),apiModelIDs:()=>apiSources.sidecarModelIDs()});
   const localSnapshot=async():Promise<LocalAgentSnapshot>=>{
     const sources=await apiSources.list();const local=proxy.snapshot();
     return {...local,accountsLoading:discovery.state==='loading'||proxy.isLoadingAccounts(),apiSources:sources,models:[...local.models,...sources.filter(s=>s.enabled&&s.hasKey).flatMap(s=>s.models.filter(model=>proxy.apiModelAvailable(apiModelID(s.id,model))).map(model=>({id:apiModelID(s.id,model),displayName:modelLabel([],apiModelID(s.id,model),sources),provider:'api' as const})))]};
@@ -285,13 +285,29 @@ export async function createDesktopService(options:ServiceOptions) {
   const desktopLifecycle=new QoderLifecycle();
   let discoveryTask:Promise<void>|undefined;
   const discovery:{state:'idle'|'loading'|'ready';unavailable:string[]}={state:'idle',unavailable:[]};
+  const importNative=async(target:'codex'|'claude'|'qoder'|'qoder-ide'|'antigravity'|'workbuddy'|'workbuddy-ai',onlyNew=false)=>{
+    if(target==='workbuddy'||target==='workbuddy-ai'){
+      try{return await proxy.importCredential('workbuddy',await desktopAccounts[target].importCredential(),onlyNew);}
+      catch(error){
+        if((error as {code?:string}).code!=='NATIVE_PROTECTED')throw error;
+        // The native client's private crypto API is unavailable to other apps.
+        // Reuse an already authorized, verified grant for this exact identity.
+        const native=await desktopAccounts[target].status();
+        const candidates=(await proxy.desktopNativeAccounts(target)).filter(a=>a.accountId&&a.accountId===native.accountId&&(a.enterpriseId??'')===(native.enterpriseId??''));
+        for(const candidate of candidates){const snapshot=await proxy.refreshAccounts('workbuddy',false,candidate.id);if(snapshot.accounts.some(a=>a.id===candidate.id&&!a.disabled&&!a.unavailable&&a.models?.length))return snapshot;}
+        throw error;
+      }
+    }
+    const credential=target==='qoder'?await desktopAccounts.qoder.importCredential():target==='qoder-ide'?await qoderIdeLogin.importCredential():target==='antigravity'?await antigravityAccountStore.importCredential():await localCredential(target,connections.paths,options.claudeCredentialStore);
+    return proxy.importCredential(target==='qoder-ide'?'qoder':target,credential,onlyNew);
+  };
   const discoverLocal=()=>discoveryTask??=(async()=>{
     discovery.state='loading';
-    try{await proxy.start();for(const target of ['codex','claude'] as const){
-      try{await proxy.importCredential(target,await localCredential(target,connections.paths,options.claudeCredentialStore),true);}
+    try{await proxy.start();for(const target of ['codex','claude','qoder','qoder-ide','antigravity','workbuddy','workbuddy-ai'] as const){
+      try{await importNative(target,true);}
       catch{discovery.unavailable.push(target);}
     }
-    for(const provider of ['workbuddy','zcode','trae'] as const){
+    for(const provider of ['zcode','trae'] as const){
       try{await proxy.importLocal(provider,true);}catch{discovery.unavailable.push(provider);}
     }}finally{
       discovery.state='ready';
@@ -576,6 +592,7 @@ export async function createDesktopService(options:ServiceOptions) {
   const desktopStatus=async(provider:DesktopProvider|'qoder-ide',refresh=false)=>{const status=await (provider==='qoder-ide'?qoderIdeLogin:desktopAccounts[provider]).status(refresh);return {...status,...(provider==='workbuddy-ai'?{installation:await detectAgent('workbuddy-ai')}:{}),accounts:(await proxy.desktopNativeAccounts(provider==='qoder-ide'?'qoder':provider)).map(a=>status.unavailableReason?{...a,switchable:false,reason:status.unavailableReason}:a),gatewayConnected:!!(await connections.status()).find(t=>t.id===provider)?.connection};};
   const cursorLocalLogin=new CursorLocalLogin(options.cursorLocalPath);
   app.get('/api/native-accounts/cursor',async req=>({...await cursorLocalLogin.status((req.query as {refresh?:string}).refresh==='1'),readOnly:true,pids:[],backup:null,gatewayConnected:false,accounts:proxy.cursor.snapshot().accounts.map(a=>({id:a.id,email:a.label,switchable:false,reason:'请在 Cursor 客户端切换本机登录。'}))}));
+  for(const provider of ['trae','zcode'] as const)app.get(`/api/native-accounts/${provider}`,()=>proxy.localImportStatus(provider));
   app.get('/api/native-accounts/:provider',async req=>{const provider=officialProvider.parse((req.params as {provider:string}).provider);return provider==='workbuddy'||provider==='workbuddy-ai'||provider==='qoder'||provider==='qoder-ide'?desktopStatus(provider,(req.query as {refresh?:string}).refresh==='1'):nativeStatus(provider);});
   for(const action of ['switch','restore'] as const)app.post(`/api/native-accounts/:provider/${action}`,async req=>{
     const provider=officialProvider.parse((req.params as {provider:string}).provider);
@@ -1028,8 +1045,8 @@ export async function createDesktopService(options:ServiceOptions) {
   });
   app.post('/api/local-agent/import-local/:provider',async req=>{
 
-    const provider=z.enum(['trae','workbuddy','workbuddy-ai','zcode','cursor']).parse((req.params as {provider:string}).provider);
-    return localOperation(()=>proxy.importLocal(provider));
+    const provider=z.enum(['codex','claude','qoder','qoder-ide','antigravity','trae','workbuddy','workbuddy-ai','zcode','cursor']).parse((req.params as {provider:string}).provider);
+    return localOperation(()=>provider==='codex'||provider==='claude'||provider==='qoder'||provider==='qoder-ide'||provider==='antigravity'||provider==='workbuddy'||provider==='workbuddy-ai'?importNative(provider):proxy.importLocal(provider));
   });
   const access=await GatewayAccess.open(root,gatewayKeys);
   app.get('/api/gateway/access',async()=>access.snapshot());
