@@ -212,6 +212,8 @@ export async function createDesktopService(options:ServiceOptions) {
     catch(error){throw new RunnerCoreError(error instanceof Error?error.message:'Local Agent 操作失败',{code:'local_agent_error',statusCode:400});}
   };
   const connections=new AgentConnections(root,options.agentPaths,options.agentProcesses);
+  const catalogRefresh=await connections.refreshCodexCompactionLimits(model=>compactionModelWindow(model,proxy.snapshot().models,connections.paths.codex));
+  if(catalogRefresh.failed)app.log.warn({failed:catalogRefresh.failed},'Some generated Codex compaction metadata could not be refreshed; model routing remains available.');
   const claudeDesktop=new ClaudeDesktopConnections(options.secrets,options.claudeDesktop);
   const claudeTerminal=new ClaudeTerminalLifecycle(undefined,undefined,undefined,{},dirname(connections.paths.claude));
   const switchJournal=new SwitchJournal(join(root,'switch-failures.json'));await switchJournal.load();
@@ -441,7 +443,8 @@ export async function createDesktopService(options:ServiceOptions) {
     const created=await gatewayKeys.create(gatewayKeyInput.parse({name:`A2A · ${input.target}`,models:selections.map(item=>item.model),agents:[['workbuddy','workbuddy-ai','qoder','pi','deepseek'].includes(input.target)?'openai':input.target],...(input.selections?{modelSources:Object.fromEntries(selections.map(item=>[item.model,item.sourceId]))}:{sourceId:input.sourceId}),tokenLimit:input.tokenLimit}));
     try{
       const local=await localSnapshot(),catalog=local.models;
-      const record=await connections.apply({...input,modelLabels:Object.fromEntries(selections.map(item=>[item.model,modelLabel(catalog,item.model,local.apiSources)])),keyId:created.key.id,key:created.apiKey,origin});
+      const modelContextWindows=input.target==='codex'?Object.fromEntries((await Promise.all(selections.map(async item=>[item.model,await compactionModelWindow(item.model,catalog,connections.paths.codex)] as const))).filter((entry):entry is readonly [string,number]=>entry[1]!==undefined)):undefined;
+      const record=await connections.apply({...input,modelLabels:Object.fromEntries(selections.map(item=>[item.model,modelLabel(catalog,item.model,local.apiSources)])),modelContextWindows,keyId:created.key.id,key:created.apiKey,origin});
       fixedRoutes.set(record.keyId,{target:record.target,sourceId:record.sourceId,model:record.model,fastModel:record.fastModel,selections:record.selections,modelAliases:record.modelAliases});
       if(input.replaceId){const previous=(await connections.status()).flatMap(t=>t.backups).find(r=>r.id===input.replaceId);if(previous){fixedRoutes.delete(previous.keyId);if(gatewayKeys.list().some(k=>k.id===previous.keyId))await gatewayKeys.remove(previous.keyId);}}
       if(input.target==='codex')await codexThreads.migrate(input.model,selections.map(item=>item.model));

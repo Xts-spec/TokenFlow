@@ -11,11 +11,13 @@ import {AgentConnections} from '../packages/core/src/agent-connections.ts';
 const fixture=await mkdtemp(join(await realpath(tmpdir()),'codex-compact-loop-'));
 const cwd=resolve(import.meta.dirname,'..');
 const normalInputTokens=Number(process.env.REPRO_INPUT_TOKENS??140000);
+const cachedInputTokens=Number(process.env.REPRO_CACHED_TOKENS??0);
 const compactScope=process.env.REPRO_COMPACT_SCOPE;
 const growth=process.env.REPRO_GROWTH==='1';
 const codexBinary=process.env.CODEX_REPRO_BIN??'/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex';
 const cliVersion=execFileSync(codexBinary,['--version'],{encoding:'utf8'}).trim();
 const omitCatalogLimit=process.env.REPRO_OMIT_CATALOG_LIMIT==='1';
+const diagnosticTokenLimit=Number(process.env.REPRO_CATALOG_LIMIT??0);
 const requests=[],notifications=[],tokenCounts=[];let child,tools=0,serial=0,turnDone;
 const server=createServer(async(req,res)=>{
  try{
@@ -23,14 +25,15 @@ const server=createServer(async(req,res)=>{
  assert.equal(req.url,'/v1/responses');const body=JSON.parse(raw);
  // Local compaction appends a user summarization prompt; it is not a tool turn.
  const last=body.input?.at(-1);const lastText=JSON.stringify(last);
- const compact=/CONTEXT CHECKPOINT COMPACTION/.test(lastText);
+ const remote=body.input?.some(item=>item.type==='compaction_trigger');
+ const compact=remote||/CONTEXT CHECKPOINT COMPACTION/.test(lastText);
  const historyGrowthTokens=growth?(body.input??[]).filter(i=>i.type==='function_call_output').reduce((n,i)=>n+(String(i.output).match(/word /g)?.length??0),0):0;
  const reportedInput=compact?14000:normalInputTokens+historyGrowthTokens;
  requests.push({historyGrowthTokens,kind:compact?'local_compact':'normal',bytes:Buffer.byteLength(raw),inputItems:body.input?.length,lastType:last?.type,lastText:lastText.slice(0,280),toolsDone:tools,responseInputTokens:reportedInput});
  const n=++serial;const tool=!compact&&tools<6;if(tool)tools++;
- const item=tool?{id:`fc_${n}`,type:'function_call',call_id:`call_${n}`,name:'exec_command',arguments:JSON.stringify({cmd:growth?`python3 -c "print('word ' * 20000)"`:`printf fixture_read_only_${tools}`,max_output_tokens:growth?24000:32})}:{id:`msg_${n}`,type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:compact?'Checkpoint: Continue the fixture. Execute remaining read-only tool calls, then finish.':'Fixture complete.',annotations:[]}]};
+ const item=remote?{type:'compaction',encrypted_content:'synthetic_fixture_checkpoint'}:tool?{id:`fc_${n}`,type:'function_call',call_id:`call_${n}`,name:'exec_command',arguments:JSON.stringify({cmd:growth?`python3 -c "print('word ' * 20000)"`:`printf fixture_read_only_${tools}`,max_output_tokens:growth?24000:32})}:{id:`msg_${n}`,type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:compact?'Checkpoint: Continue the fixture. Execute remaining read-only tool calls, then finish.':'Fixture complete.',annotations:[]}]};
  const input=reportedInput;
- const response={id:`resp_${n}`,object:'response',created_at:Math.floor(Date.now()/1000),model:body.model,status:'completed',output:[item],usage:{input_tokens:input,output_tokens:20,total_tokens:input+20}};
+ const response={id:`resp_${n}`,object:'response',created_at:Math.floor(Date.now()/1000),model:body.model,status:'completed',output:[item],usage:{input_tokens:input,input_tokens_details:{cached_tokens:Math.min(input,cachedInputTokens)},output_tokens:20,total_tokens:input+20}};
  if(!body.stream){res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(response));return;}
  const events=[{type:'response.created',response:{...response,status:'in_progress',output:[]}},{type:'response.output_item.added',output_index:0,item},{type:'response.output_item.done',output_index:0,item},{type:'response.completed',response}];
  res.writeHead(200,{'content-type':'text/event-stream'});res.end(events.map((e,i)=>`event: ${e.type}\ndata: ${JSON.stringify({...e,sequence_number:i})}\n\n`).join(''));
@@ -45,10 +48,11 @@ try{
  if(compactScope){const doc=parse(await readFile(paths.codex,'utf8'));doc.model_auto_compact_token_limit_scope=compactScope;await writeFile(paths.codex,stringify(doc));}
  const config=await readFile(paths.codex,'utf8');const catalogPath=config.match(/model_catalog_json\s*=\s*"([^"]+)"/)[1];const catalog=JSON.parse(await readFile(catalogPath,'utf8'));
  if(omitCatalogLimit)for(const model of catalog.models)delete model.auto_compact_token_limit;
+ if(diagnosticTokenLimit)for(const model of catalog.models)model.auto_compact_token_limit=diagnosticTokenLimit;
  // An optional diagnostic variant controls output retention only in this fixture.
  // The production catalog itself no longer clips outputs or sets a token threshold.
  if(growth)for(const model of catalog.models)model.truncation_policy={mode:'bytes',limit:500000};
- if(omitCatalogLimit||growth)await writeFile(catalogPath,JSON.stringify(catalog));
+ if(omitCatalogLimit||growth||diagnosticTokenLimit)await writeFile(catalogPath,JSON.stringify(catalog));
  child=spawn(codexBinary,['app-server','--listen','stdio://'],{cwd,env:{PATH:process.env.PATH,HOME:fixture,CODEX_HOME:fixture},stdio:['pipe','pipe','pipe']});
  let buffer='',id=0;const pending=new Map();let stderr='';child.stderr.on('data',c=>stderr+=c);
  child.stdout.on('data',c=>{buffer+=c;let end;while((end=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,end);buffer=buffer.slice(end+1);let m;try{m=JSON.parse(line);}catch{continue;}if(pending.has(m.id)){const p=pending.get(m.id);pending.delete(m.id);m.error?p.reject(Error(JSON.stringify(m.error))):p.resolve(m.result);}if(m.method&&(/compact/i.test(m.method)||/compact/i.test(m.params?.item?.type??'')))notifications.push({method:m.method,itemType:m.params?.item?.type});if(m.method==='thread/tokenUsage/updated')tokenCounts.push(m.params.tokenUsage);if(m.method==='turn/completed')turnDone?.(m.params.turn);}});
@@ -59,7 +63,7 @@ try{
  await rpc('turn/start',{threadId:thread.id,input:[{type:'text',text:'Execute exactly six read-only fixture tool calls sequentially and finish.'}]});
  const turn=await done;clearTimeout(timeout);
  const compactRequests=requests.filter(r=>r.kind==='local_compact');
- const result={passed:growth?compactRequests.length===1:compactRequests.length<=1,cliVersion,growth,scope:'installed Codex, generated TokenFlow model catalog, isolated HOME/CODEX_HOME, synthetic loopback upstream',cwd,compactScope,omitCatalogLimit,stderr,autoCompactTokenLimit:catalog.models[0].auto_compact_token_limit,tools,turnStatus:turn.status,localCompactions:compactRequests.length,normalInputTokens,tokenCounts,notifications,requests};
+ const result={passed:turn.status==='completed'&&tools===6&&(growth?compactRequests.length===1:compactRequests.length<=1),cliVersion,growth,scope:'installed Codex, generated TokenFlow model catalog, isolated HOME/CODEX_HOME, synthetic loopback upstream',cwd,compactScope,omitCatalogLimit,stderr,autoCompactTokenLimit:catalog.models[0].auto_compact_token_limit,tools,turnStatus:turn.status,localCompactions:compactRequests.length,normalInputTokens,cachedInputTokens,tokenCounts,notifications,requests};
  console.log(JSON.stringify(result,null,2));
- assert.equal(turn.status,'completed');assert.equal(tools,6);if(growth){assert.equal(compactRequests.length,1,'Expected exactly one compaction after real history growth');assert.ok(compactRequests[0].historyGrowthTokens>65536,'Compaction happened before the history growth threshold');assert.ok(requests.some(r=>r.kind==='normal'&&r.toolsDone===4&&r.historyGrowthTokens===0),'Compaction did not reset retained history');}assert.ok(compactRequests.length<=1,`Repeated local compaction: ${compactRequests.length} compactions during 6 tiny tool outputs (normal usage=140000; compact usage=14000)`);
+ assert.equal(turn.status,'completed');assert.equal(tools,6);if(growth){assert.equal(compactRequests.length,1,'Expected exactly one compaction after real history growth');assert.ok(compactRequests[0].historyGrowthTokens>0,'Compaction happened without conversation growth');const index=requests.indexOf(compactRequests[0]);assert.ok(requests.slice(index+1).some(r=>r.kind==='normal'&&r.historyGrowthTokens<compactRequests[0].historyGrowthTokens),'Compaction did not reset retained history');}assert.ok(compactRequests.length<=1,`Repeated local compaction: ${compactRequests.length} compactions during 6 tiny tool outputs (normal usage=${normalInputTokens}; compact usage=14000)`);
 }finally{if(child&&child.exitCode===null&&child.signalCode===null)await new Promise(r=>{child.once('exit',r);child.kill();});server.closeAllConnections();await new Promise(r=>server.close(r));await rm(fixture,{recursive:true,force:true,maxRetries:3,retryDelay:50});}

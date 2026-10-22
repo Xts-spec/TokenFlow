@@ -18,6 +18,8 @@ const old='gpt-6-astra',selected='codex/gpt-6-luna';const progress=[];
 // compaction threshold. This is synthetic usage metadata, not real token use.
 const reportedInputTokens=300000;
 const advertisedWindow=Number(process.argv.find(arg=>arg.startsWith('--advertised-context='))?.split('=')[1]??0);
+const noTrigger=process.argv.includes('--no-trigger');
+const receiverWindow=Number(process.argv.find(arg=>arg.startsWith('--receiver-window='))?.split('=')[1]??0);
 const server=createServer(async(req,res)=>{
  let text='';for await(const c of req)text+=c;
  const body=JSON.parse(text||'{}');
@@ -49,10 +51,11 @@ try{
  let client=await start();const first=await client.rpc('thread/start',{cwd:root,approvalPolicy:'never',sandbox:'read-only'});
  assert.equal((await client.turn(first.thread.id,old,'FIRST_MARKER')).status,'completed');await client.stop();
  const connections=new AgentConnections(root,{codex:join(root,'config.toml')},async()=>[]);
- const record=await connections.apply({target:'codex',revision:(await connections.status()).find(t=>t.id==='codex').revision,origin,model:selected,sourceId:'a'.repeat(24),keyId:randomUUID(),key:'synthetic-key'});
+ const record=await connections.apply({target:'codex',revision:(await connections.status()).find(t=>t.id==='codex').revision,origin,model:selected,sourceId:'a'.repeat(24),keyId:randomUUID(),key:'synthetic-key',...(receiverWindow?{modelContextWindows:{[selected]:receiverWindow}}:{})});
  const applied=parse(await readFile(join(root,'config.toml'),'utf8'));
  const activeCatalog=JSON.parse(await readFile(applied.model_catalog_json,'utf8'));
- assert.ok(activeCatalog.models.every(model=>model.auto_compact_token_limit===undefined),'Gateway still overrides automatic compaction');
+ if(noTrigger){for(const model of activeCatalog.models)delete model.auto_compact_token_limit;await writeFile(applied.model_catalog_json,JSON.stringify(activeCatalog));}
+ else assert.ok(activeCatalog.models.every(model=>model.auto_compact_token_limit>65536),'Gateway still uses the legacy trigger');
  if(advertisedWindow){for(const model of activeCatalog.models)model.context_window=advertisedWindow;await writeFile(applied.model_catalog_json,JSON.stringify(activeCatalog));}
  if(process.argv.includes('--regression-window')){
   const config=parse(await readFile(join(root,'config.toml'),'utf8')),catalog=JSON.parse(await readFile(config.model_catalog_json,'utf8'));
@@ -67,13 +70,13 @@ try{
  const oldThreadCalls=calls.filter(c=>c.phase===1);
  assert.ok(oldThreadCalls.every(c=>c.model===selected&&c.hasFirst),'model selection or checkpoint continuity lost');
  const compacted=oldThreadCalls.filter(c=>c.compact).length;
- if(advertisedWindow)assert.ok(compacted>=1,'model switch must compact the inherited usage when Codex knows the model window');
+ if(advertisedWindow||!noTrigger)assert.ok(compacted>=1,'model switch must compact the inherited usage when Codex knows the model window');
  // The fixture reports high usage on each answer, so Codex can compact again.
  // Repeated tool growth is covered by codex-context-migration-smoke instead.
  assert.equal(progress.filter(p=>p.phase===1&&p.method==='item/started').length,compacted);
  assert.equal(progress.filter(p=>p.phase===1&&p.method==='item/completed').length,compacted);
  let manualCompactions=0;
- if(!advertisedWindow){
+ if(noTrigger&&!advertisedWindow){
   const completed=progress.filter(p=>p.method==='item/completed').length;
   await client.rpc('thread/compact/start',{threadId:first.thread.id});
   const until=Date.now()+10000;
@@ -91,5 +94,5 @@ try{
  await client.rpc('thread/resume',{threadId:first.thread.id,model:old,modelProvider:'original'});
  assert.equal((await client.turn(first.thread.id,old,'RETURN_MARKER')).status,'completed');await client.stop();
  assert.ok(calls.filter(c=>c.phase===3).every(c=>c.model===old&&c.hasFirst));
- console.log(JSON.stringify({passed:true,scope:'installed Codex runtime with synthetic loopback providers',advertisedWindow:advertisedWindow||null,firstCompaction:compacted>0,followupTurns:2,clientCompactions:compacted,manualCompactions,newThread:true,restoredOriginal:true,modelAuthorizationPreserved:true}));
+ console.log(JSON.stringify({passed:true,scope:'installed Codex runtime with synthetic loopback providers',advertisedWindow:advertisedWindow||null,receiverWindow:receiverWindow||null,noTrigger,autoCompactTokenLimit:activeCatalog.models[0].auto_compact_token_limit??null,firstCompaction:compacted>0,followupTurns:2,clientCompactions:compacted,manualCompactions,newThread:true,restoredOriginal:true,modelAuthorizationPreserved:true}));
 }finally{if(child&&child.exitCode===null&&child.signalCode===null)await new Promise(resolve=>{child.once('exit',resolve);child.kill();});server.closeAllConnections();await new Promise(r=>server.close(r));if(process.env.KEEP_FIXTURE)console.log(root);else await rm(root,{recursive:true,force:true,maxRetries:5,retryDelay:100});}

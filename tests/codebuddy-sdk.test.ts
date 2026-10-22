@@ -182,24 +182,19 @@ it('honors Claude sequential-tool requests without requiring an OpenAI extension
  expect(parsed.parallel_tool_calls).toBe(false);
 });
 
-it('reports the SDK deadline as timeout rather than user cancellation',async()=>{
- const root=await mkdtemp(join(tmpdir(),'sdk-deadline-'));let started!:()=>void;const ready=new Promise<void>(resolve=>{started=resolve;});
+it('waits beyond the former SDK deadline and preserves a late source answer',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'sdk-no-deadline-'));let started!:()=>void,finish!:()=>void;let observed:AbortSignal|undefined;
+ const ready=new Promise<void>(resolve=>{started=resolve;}),release=new Promise<void>(resolve=>{finish=resolve;});
  const sdk=new WorkBuddySDKProvider(root,async()=>({type:'workbuddy',access_token:'private'}),async input=>{
-  started();await new Promise<void>((_,reject)=>input.signal.addEventListener('abort',()=>reject(new Error('aborted')),{once:true}));
-  return {model:input.model,text:'',calls:[],failed:false};
+  observed=input.signal;started();await release;
+  return {model:input.model,text:'late complete answer',calls:[],failed:false};
  });
  vi.useFakeTimers();
- try{const pending=sdk.response('chosen','messages',{model:'workbuddy/test',messages:[{role:'user',content:'hello'}]},new AbortController().signal);await ready;await vi.advanceTimersByTimeAsync(240001);vi.useRealTimers();const response=await pending;expect(response.status).toBe(504);expect((await response.json()).error.code).toBe('workbuddy_timeout');}
- finally{vi.useRealTimers();await sdk.close();await rm(root,{recursive:true,force:true});}
-});
-it('returns a timeout when the SDK exhausts safe idle recovery without leaking the exception',async()=>{
- const root=await mkdtemp(join(tmpdir(),'sdk-idle-'));
- const sdk=new WorkBuddySDKProvider(root,async()=>({type:'workbuddy',access_token:'private'}),async()=>{throw Object.assign(new Error('private details'),{name:'SDKIdleError'});});
- try{const response=await sdk.response('chosen','messages',{model:'workbuddy/test',messages:[{role:'user',content:'hello'}]},new AbortController().signal);expect(response.status).toBe(504);const body=await response.json();expect(body.error.code).toBe('workbuddy_timeout');expect(JSON.stringify(body)).not.toContain('private');}
- finally{await sdk.close();await rm(root,{recursive:true,force:true});}
+ try{const pending=sdk.response('chosen','messages',{model:'workbuddy/test',messages:[{role:'user',content:'hello'}]},new AbortController().signal);await ready;await vi.advanceTimersByTimeAsync(24*60*60*1000);expect(observed!.aborted).toBe(false);finish();vi.useRealTimers();const response=await pending;expect(response.status).toBe(200);expect(await response.text()).toContain('late complete answer');}
+ finally{finish();vi.useRealTimers();await sdk.close();await rm(root,{recursive:true,force:true});}
 });
 
-it.each(['text_mismatch','missing_result','context_limit','tool_schema','sdk_execution'] as const)('keeps the safe SDK %s reason through buffered and streaming failures',async reason=>{
+it.each(['text_mismatch','missing_result','context_limit','tool_schema','sdk_execution','timeout'] as const)('keeps the safe SDK %s reason through buffered and streaming failures',async reason=>{
  const root=await mkdtemp(join(tmpdir(),'sdk-diagnostic-'));
  const sdk=new WorkBuddySDKProvider(root,async()=>({type:'workbuddy',access_token:'private-token'}),async input=>{
   input.onDiagnostic?.({event:'failure',elapsedMs:1,reason,origin:'exception',fingerprint:'a'.repeat(64)});
@@ -211,7 +206,7 @@ it.each(['text_mismatch','missing_result','context_limit','tool_schema','sdk_exe
    const wire=await response.text();
    expect(wire).toContain(`workbuddy_${reason}`);
    expect(wire).not.toMatch(/PRIVATE_PROMPT|private-token|fingerprint/);
-   if(!stream)expect(response.status).toBe(502);
+   if(!stream)expect(response.status).toBe(reason==='timeout'?504:502);
   }
  }finally{await sdk.close();await rm(root,{recursive:true,force:true});}
 });

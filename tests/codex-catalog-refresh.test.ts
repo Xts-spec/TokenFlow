@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import { AgentConnections } from '../packages/core/src/agent-connections.js';
-import { codexModelCatalog } from '../packages/core/src/codex-model-catalog.js';
+import { codexModelCatalog, codexCompactionLimit } from '../packages/core/src/codex-model-catalog.js';
 import * as catalogModule from '../packages/core/src/codex-model-catalog.js';
 import { modelLabel } from '../packages/core/src/model-label.js';
 const roots:string[]=[];
@@ -24,8 +24,29 @@ it('reapplies unchanged selections to replace the legacy downshift window and ke
  const second=await apply(first.id),after=parse(await readFile(configPath,'utf8'));
  expect(after.model_catalog_json).not.toBe(before.model_catalog_json);
  const entry=JSON.parse(await readFile(String(after.model_catalog_json),'utf8')).models[0];
- expect(entry.slug).toBe(model);expect(entry.context_window).toBeUndefined();expect(entry.auto_compact_token_limit).toBeUndefined();
+ expect(entry.slug).toBe(model);expect(entry.context_window).toBeUndefined();expect(entry.auto_compact_token_limit).toBe(128000);
  await connections.restore(second.id);expect(await readFile(configPath,'utf8')).toBe(original);
+});
+it('uses receiver capacity for the compaction trigger without declaring a downshift window',()=>{
+ const catalog=codexModelCatalog(['codex/gpt-6-luna','api-example/custom','unknown/model'],{}, {'codex/gpt-6-luna':272000,'api-example/custom':64000});
+ expect(catalog.models.map(model=>model.auto_compact_token_limit)).toEqual([217600,51200,128000]);
+ expect(catalog.models.every(model=>!('context_window'in model))).toBe(true);
+ for(const invalid of [undefined,NaN,Infinity,-1,0])expect(codexCompactionLimit(invalid)).toBe(128000);
+});
+it('updates existing generated catalogs while preserving routing, original backups and history',async()=>{
+ const root=await mkdtemp(join(await realpath(tmpdir()),'codex-compaction-metadata-'));roots.push(root);
+ const configPath=join(root,'config.toml'),original='model = "original"\n';await writeFile(configPath,original);
+ const connections=new AgentConnections(root,{codex:configPath},async()=>[]);
+ const record=await connections.apply({target:'codex',revision:(await connections.status()).find(t=>t.id==='codex')!.revision,origin:'http://127.0.0.1:9527',model,sourceId,keyId:randomUUID(),key:'fixture-key'});
+ const before=await readFile(configPath,'utf8'),catalogPath=String(parse(before).model_catalog_json),catalog=JSON.parse(await readFile(catalogPath,'utf8'));
+ catalog.models[0].auto_compact_token_limit=65536;await writeFile(catalogPath,JSON.stringify(catalog));
+ expect(await connections.refreshCodexCompactionLimits(async()=>272000)).toEqual({updated:1,failed:0});
+ const refreshed=JSON.parse(await readFile(catalogPath,'utf8'));
+ expect(refreshed.models[0].auto_compact_token_limit).toBe(217600);
+ expect(refreshed.models[0].truncation_policy.limit).toBe(Number.MAX_SAFE_INTEGER);
+ expect(await readFile(configPath,'utf8')).toBe(before);
+ expect((await connections.review(record.id)).checks.every(check=>check.ok)).toBe(true);
+ await connections.restore(record.id);expect(await readFile(configPath,'utf8')).toBe(original);
 });
 it('replaces the Codex catalog when managing unchanged models with updated names, preserving history and original settings',async()=>{
  const root=await mkdtemp(join(await realpath(tmpdir()),'codex-catalog-refresh-'));roots.push(root);

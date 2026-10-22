@@ -10,7 +10,7 @@ import { parse, stringify } from 'smol-toml';
 import { z } from 'zod';
 import { parseDocument as parseYAMLDocument, stringify as stringifyYAML } from 'yaml';
 import { detectAgent } from './agent-installation.js';
-import { codexModelCatalog } from './codex-model-catalog.js';
+import { codexModelCatalog, codexCompactionLimit } from './codex-model-catalog.js';
 import { apiModelDisplayName } from '../../../apps/shared/api-endpoint.js';
 import { deepseekConfigPath,deepseekHome } from './deepseek-config.js';
 import {WindowsAgentLifecycle} from './windows-agent-lifecycle.js';
@@ -400,6 +400,28 @@ export class AgentConnections {
   }
   private dir(){return join(this.root,'agent-backups');}
   private catalogPath(model:string){return join(this.dir(),`codex-models-${hash(model)}.json`);}
+  /** Update only app-generated model metadata. Routing, credentials, history and
+   * the user's config bytes stay intact; Codex reads the catalog on startup. */
+  async refreshCodexCompactionLimits(window:(model:string)=>Promise<number|undefined>){
+    const {readdir}=await import('node:fs/promises');
+    const files=await readdir(this.dir()).catch(error=>{if(error.code==='ENOENT')return [];throw error;});
+    const limits=new Map<string,number>();let updated=0,failed=0;
+    for(const name of files.filter(name=>/^codex-models-[a-f0-9]+\.json$/.test(name))){
+      const path=join(this.dir(),name),temp=`${path}.${randomUUID()}.tmp`;
+      try{
+        await safePath(path);const catalog=JSON.parse(await readFile(path,'utf8'));
+        if(!Array.isArray(catalog.models)||!catalog.models.every((model:any)=>model&&typeof model.slug==='string')){failed++;continue;}
+        let changed=false;
+        for(const model of catalog.models){
+          if(!limits.has(model.slug))limits.set(model.slug,codexCompactionLimit(await window(model.slug)));
+          const limit=limits.get(model.slug)!;
+          if(model.auto_compact_token_limit!==limit){model.auto_compact_token_limit=limit;changed=true;}
+        }
+        if(changed){await writeFile(temp,JSON.stringify(catalog),{mode:0o600,flag:'wx'});await rename(temp,path);updated++;}
+      }catch{failed++;}finally{await rm(temp,{force:true}).catch(()=>{});}
+    }
+    return {updated,failed};
+  }
   private async records():Promise<Record[]> {
     const {readdir}=await import('node:fs/promises');await mkdir(this.dir(),{recursive:true,mode:0o700});
     const files=await readdir(this.dir());const records:Record[]=[];
@@ -489,7 +511,7 @@ export class AgentConnections {
     }catch{checks.push({name:'配置格式可解析',ok:false});}
     return {id,target:record.target,model:record.model,checks,liveCallVerified:false,...(record.target==='claude'?{compatibility:{autoMode:'unverified' as const,note:'主模型、辅助模型配置一致不代表 Auto Mode 审批可用。审批分类器与 App 的维修审批模型相互独立；Messages 文本和工具检测也不能验证分类器。'}}:{}),note:record.target==='pi'?'在官方 Pi 的 /model 菜单选择 token-flow 模型。':record.target==='deepseek'?'重新打开 DeepSeek Harness 官方桌面应用，在模型菜单选择 token-flow 模型；已有对话从历史继续。':record.target==='qoder'?`重启 Qoder 独立应用，在模型菜单选择 ${record.model}。原登录与内置模型保留；不适用于 Qoder IDE。`:record.target==='workbuddy'?`在 WorkBuddy 新建任务的输入框下方打开模型菜单，选择 ${record.model}。若没有显示，重启 WorkBuddy 后再查看。配置检查不代表已在客户端选用。`:record.target==='workbuddy-ai'?`在 WorkBuddyAI 新建任务的输入框下方打开模型菜单，选择 ${record.model}。若没有显示，重启 WorkBuddyAI 后再查看。配置检查不代表已在客户端选用。官方登录保持不变。`:'重启 Agent 后加载配置；项目级设置或已有终端环境变量仍可能覆盖用户配置。'};
   }
-  async apply(input:{target:Target;revision:string;origin:string;model:string;sourceId:string;keyId:string;key:string;allowRunning?:boolean;replaceId?:string;rewrite?:boolean;selections?:ModelSelection[];fastModel?:string;modelLabels?:{[id:string]:string}}){
+  async apply(input:{target:Target;revision:string;origin:string;model:string;sourceId:string;keyId:string;key:string;allowRunning?:boolean;replaceId?:string;rewrite?:boolean;selections?:ModelSelection[];fastModel?:string;modelLabels?:{[id:string]:string};modelContextWindows?:{[id:string]:number}}){
     return this.run(input.target,async()=>{
       await this.requireEditableProfile(input.target);
       if(!input.allowRunning)await this.idle(input.target);
@@ -502,7 +524,7 @@ export class AgentConnections {
       if(input.selections){modelSelectionsSchema.parse(input.selections);if(!input.selections.some(item=>item.model===input.model&&item.sourceId===input.sourceId))throw conflict('默认模型必须在已选模型中');}
       if(input.fastModel&&!(input.selections??[{model:input.model,sourceId:input.sourceId}]).some(item=>item.model===input.fastModel))throw conflict('快速模型必须在已选模型中');
       // Include display metadata so a renamed menu does not reuse the legacy cached path.
-      const catalog=input.target==='codex'?codexModelCatalog(selectedModels??input.model,input.modelLabels):undefined;
+      const catalog=input.target==='codex'?codexModelCatalog(selectedModels??input.model,input.modelLabels,input.modelContextWindows):undefined;
       const catalogPath=catalog?this.catalogPath(JSON.stringify(catalog)):undefined;
       let after:string;try{after=connectedConfig(input.target,original,input.origin,input.model,input.key,catalogPath,selectedModels,input.modelLabels,input.fastModel);}catch{throw conflict('配置格式无法安全解析，未修改原文件。');}
       if(catalogPath){

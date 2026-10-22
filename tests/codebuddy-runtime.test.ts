@@ -183,55 +183,23 @@ const thinkingStart=[
  {type:'stream_event',event:{type:'content_block_start',index:0,content_block:{type:'thinking',thinking:''}}},
  {type:'stream_event',event:{type:'content_block_delta',index:0,delta:{type:'thinking_delta',thinking:'fixture'}}},
 ];
-it('recovers a silent first thinking turn once with the same request and no duplicated tools',async()=>{
- vi.useFakeTimers();const controller=new AbortController();let pending:Promise<any>|undefined;
- sdk.query.mockImplementationOnce(()=>silentQuery(thinkingStart)).mockImplementationOnce(()=>(async function*(){for(const event of completeToolTurn())yield event;})());
- try{
-  pending=runOfficialSDK(idleInput(controller));await vi.advanceTimersByTimeAsync(60001);
-  expect(sdk.query).toHaveBeenCalledTimes(2);
-  expect(sdk.query.mock.calls[1]![0].prompt).toBe(sdk.query.mock.calls[0]![0].prompt);
-  expect(sdk.query.mock.calls[1]![0].options.env.CODEBUDDY_AUTH_TOKEN).toBe('fixture');
-  expect(sdk.query.mock.calls[1]![0].options.model).toBe('test');
-  expect(await pending).toMatchObject({failed:false,calls:[{name:'read_fixture',arguments:'{"step":7}'}]});
- }finally{controller.abort();await pending?.catch(()=>{});vi.useRealTimers();}
-});
-it.each(['text','tool'] as const)('does not replay a stalled turn after %s begins',async kind=>{
- vi.useFakeTimers();const controller=new AbortController();
- const started=kind==='text'?[
-  {type:'stream_event',event:{type:'content_block_start',index:1,content_block:{type:'text',text:''}}},
-  {type:'stream_event',event:{type:'content_block_delta',index:1,delta:{type:'text_delta',text:'already visible'}}},
- ]:[{type:'stream_event',event:{type:'content_block_start',index:1,content_block:{type:'tool_use',name:'mcp__token_flow__client_0',input:{}}}}];
- sdk.query.mockImplementation(()=>silentQuery([...thinkingStart,...started]));
- const outcome=runOfficialSDK(idleInput(controller)).then(()=>null,error=>error);
- try{await vi.advanceTimersByTimeAsync(60001);expect(await outcome).toMatchObject({name:'SDKIdleError'});expect(sdk.query).toHaveBeenCalledTimes(1);}
- finally{controller.abort();await outcome;vi.useRealTimers();}
-});
-it('bounds thinking-only silence recovery to one retry',async()=>{
- vi.useFakeTimers();const controller=new AbortController();sdk.query.mockImplementation(()=>silentQuery(thinkingStart));
- const outcome=runOfficialSDK(idleInput(controller)).then(()=>null,error=>error);
- try{await vi.advanceTimersByTimeAsync(120001);expect(await outcome).toMatchObject({name:'SDKIdleError'});expect(sdk.query).toHaveBeenCalledTimes(2);}
- finally{controller.abort();await outcome;vi.useRealTimers();}
+it.each(['thinking','text','tool'] as const)('waits through a long silent %s turn without cancelling or replaying it',async phase=>{
+ vi.useFakeTimers();const controller=new AbortController();let release!:()=>void;const wait=new Promise<void>(resolve=>{release=resolve;});let settled=false;
+ const extra=phase==='text'?[{type:'stream_event',event:{type:'content_block_start',index:1,content_block:{type:'text'}}},{type:'stream_event',event:{type:'content_block_delta',index:1,delta:{type:'text_delta',text:'FIRST'}}}]:phase==='tool'?[{type:'stream_event',event:{type:'content_block_start',index:1,content_block:{type:'tool_use',name:'mcp__token_flow__client_0',input:{}}}}]:[];
+ sdk.query.mockImplementation(()=>Object.assign((async function*(){for(const event of [...thinkingStart,...extra])yield event;await wait;
+  if(controller.signal.aborted)return;
+  if(phase==='tool'){for(const event of completeToolTurn())yield event;}
+  else {yield {type:'assistant',message:{model:'test',content:[{type:'text',text:phase==='text'?'FIRST':'late complete answer'}]}};yield {type:'result',subtype:'success',is_error:false};}
+ })(),{transport:{close:release}}));
+ const outcome=runOfficialSDK(idleInput(controller)).then(value=>{settled=true;return value;},error=>{settled=true;throw error;});
+ try{await vi.advanceTimersByTimeAsync(24*60*60*1000);expect(settled).toBe(false);expect(sdk.query).toHaveBeenCalledTimes(1);release();expect((await outcome).failed).toBe(false);expect(sdk.query).toHaveBeenCalledTimes(1);}
+ finally{controller.abort();release();await outcome.catch(()=>{});vi.useRealTimers();}
 });
 it('does not retry when the caller cancels the thinking turn',async()=>{
  vi.useFakeTimers();const controller=new AbortController();sdk.query.mockImplementation(()=>silentQuery(thinkingStart));
  const outcome=runOfficialSDK(idleInput(controller)).then(()=>null,error=>error);
  try{await vi.advanceTimersByTimeAsync(30000);controller.abort();await outcome;await vi.advanceTimersByTimeAsync(60001);expect(sdk.query).toHaveBeenCalledTimes(1);}
  finally{controller.abort();await outcome;vi.useRealTimers();}
-});
-it.each([true,false])('uses nonempty model progress, not keepalives, for the idle clock (progress=%s)',async realProgress=>{
- vi.useFakeTimers();const controller=new AbortController();let stopped=false,close!:()=>void;const cancelled=new Promise<void>(resolve=>{close=()=>{stopped=true;resolve();};});
- sdk.query.mockImplementationOnce(()=>Object.assign((async function*(){
-  for(const event of thinkingStart)yield event;
-  for(let i=0;i<2;i++){
-   await Promise.race([new Promise(r=>setTimeout(r,40000)),cancelled]);if(stopped)return;
-   if(realProgress)yield {type:'stream_event',event:{type:'content_block_delta',index:0,delta:{type:'thinking_delta',thinking:'progress'}}};
-   else {yield {type:'system',subtype:'keepalive'};yield {type:'stream_event',event:{type:'content_block_delta',index:0,delta:{type:'thinking_delta',thinking:''}}};}
-  }
-  for(const event of completeToolTurn())yield event;
- })(),{transport:{close}})).mockImplementationOnce(()=>(async function*(){for(const event of completeToolTurn())yield event;})());
- const outcome=runOfficialSDK(idleInput(controller));
- try{await vi.advanceTimersByTimeAsync(80001);expect((await outcome).failed).toBe(false);expect(sdk.query).toHaveBeenCalledTimes(realProgress?1:2);}
- finally{controller.abort();await outcome.catch(()=>{});vi.useRealTimers();}
 });
 
 it('passes the account endpoint to CLI initialization instead of relying on the international default',async()=>{
