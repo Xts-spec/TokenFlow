@@ -102,7 +102,7 @@ it('summarizes a recovered long window in bounded calls while keeping constraint
  for(let i=0;i<15;i++)input.push({type:'function_call',call_id:`c${i}`,name:'read',arguments:'{}'},{type:'function_call_output',call_id:`c${i}`,output:i<10?'中'.repeat(10000):'recent result'});
  const requests:any[]=[];const send=async(_p:string,b:any)=>{requests.push(b);return Response.json({status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'Earlier reads completed; preserve API; continue current task.'}]}],usage:{input_tokens:10,output_tokens:2,total_tokens:12}});};
  const result=await(await f.context.response('responses',{context_management:[{type:'compaction',compact_threshold:65536}],model:'workbuddy/m',input,store:false},'new-key','new-source',send,{scope:codexContextScope,threadId:'fixture-thread',recover:i=>f.migration.recover(i,[])})).json();
- const summaries=requests.filter(r=>r.instructions?.startsWith('Summarize the supplied'));expect(summaries.length).toBe(1);expect(summaries[0].input[0].content).toContain("middle omitted");
+ const summaries=requests.filter(r=>r.instructions?.startsWith('Summarize the supplied'));expect(summaries.length).toBeGreaterThan(1);expect(summaries.map(r=>r.input[0].content).join('')).not.toContain('middle omitted');expect(summaries.map(r=>r.input[0].content).join('')).toContain('中'.repeat(10000));
  for(const r of summaries)expect(Buffer.byteLength(r.input[0].content)).toBeLessThan(50*1024);
  const forwarded=requests.at(-1).input;expect(forwarded[0]).toEqual(input[0]);expect(forwarded.slice(-8)).toEqual(input.slice(-8));expect(JSON.stringify(forwarded).length).toBeLessThan(10000);expect(result.output[0].type).toBe('compaction');
 });
@@ -140,9 +140,9 @@ it('continues across two gateway compactions and materializes the latest checkpo
  };
  const first=await(await f.context.response('responses',{model:'qoder/m',input:original,context_management:[{type:'compaction',compact_threshold:100}]},'key','source',send,migration)).json();
  const between=[{role:'user',content:'NEW_CONSTRAINT: never change billing.ts.'},...work('second-'),{role:'user',content:'Continue second round.'}];
- round=2;const restarted=await GatewayContext.open(f.root);
+ const firstSummaryCount=summaries.length;round=2;const restarted=await GatewayContext.open(f.root);
  const second=await(await restarted.response('responses',{model:'qoder/m',input:[...original,...first.output,...between],context_management:[{type:'compaction',compact_threshold:100}]},'key','source',send,migration)).json();
- expect(summaries).toHaveLength(2);expect(summaries[1]).not.toContain('ROUND_1_SUMMARY');expect(summaries[1]).toContain('NEW_CONSTRAINT');
+ expect(firstSummaryCount).toBeGreaterThan(0);const secondSummaries=summaries.slice(firstSummaryCount).join('');expect(secondSummaries).not.toContain('ROUND_1_SUMMARY');expect(secondSummaries).toContain('NEW_CONSTRAINT');
  const after={type:'message',role:'user',content:[{type:'input_text',text:'AFTER_SECOND_COMPACTION'}]};
  const saved=[{type:'session_meta',payload:{model_provider:'token_flow'}},...[...original,...first.output,...between,...second.output,after].map(payload=>({type:'response_item',payload:payload.type?payload:{type:'message',...payload}}))].map(row=>JSON.stringify(row)).join('\n')+'\n';
  await writeFile(f.file,saved);const restored=new CodexContext(f.root,join(f.root,'codex/config.toml'),restarted);

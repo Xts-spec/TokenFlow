@@ -44,11 +44,15 @@ it('shares each source with every local target, preserving accounts, settings an
    expect(await readFile(workbuddySettings,'utf8')).toBe(localSettings);
    const key=target==='pi'?config.providers['token-flow'].apiKey:target==='deepseek'?config.find((e:{id:string})=>e.id==='llm-pi-ai').config.providers['token-flow'].headers.Authorization.replace(/^Bearer /,''):target==='qoder'?config.providers['token-flow'].apiKey:target==='codex'?config.model_providers.token_flow.experimental_bearer_token:target==='claude'?config.env.ANTHROPIC_AUTH_TOKEN:config.at(-1).apiKey;
    const protocol=['codex','qoder'].includes(target)?'responses':target==='claude'?'messages':'chat/completions';
-   const payload=['codex','qoder'].includes(target)?{input:'reply provider name'}:{messages:[{role:'user',content:'reply provider name'}],max_tokens:16};
+   const payload=['codex','qoder'].includes(target)?{input:'reply provider name',...(target==='codex'?{tools:[{type:'web_search'}]}:{})}:{messages:[{role:'user',content:'reply provider name'}],max_tokens:16};
    const call=()=>service.app.inject({method:'POST',url:`/v1/${protocol}`,headers:{host:headers.host,authorization:`Bearer ${key}`,'x-token-flow-image-generation':target==='codex'?'deny':'allow'},payload:{...payload,model:`${provider}/shared-model`,stream:true}});
    const fetchSpy=vi.spyOn(globalThis,'fetch');
    try{
     const response=await call();expect(response.statusCode,response.body).toBe(200);expect(response.body).toContain(provider);
+    if(target==='codex'&&['qoder','codex'].includes(provider)){
+     const request=fetchSpy.mock.calls.find(([url])=>String(url).endsWith('/v1/responses'));
+     const body=JSON.parse(String(request![1]?.body));expect(body.tools.some((tool:{type:string})=>tool.type==='web_search')).toBe(provider==='codex');
+    }
     if(provider==='codex'){
      const upstream=fetchSpy.mock.calls.find(([url])=>String(url).endsWith(`/v1/${protocol}`));
      expect(upstream).toBeDefined();

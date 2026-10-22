@@ -1,6 +1,5 @@
 import {macAppIdentity} from './agent-lifecycle.js';
 import {codexDefaultModel} from './codex-runtime.js';
-import { a2aCapabilities } from '@cua-sample/contracts/a2a';
 import { readFile, writeFile, mkdir, rename, lstat, unlink, open, rm, mkdtemp, copyFile, chmod, realpath } from 'node:fs/promises';
 import { basename, dirname, join, resolve, parse as parsePath } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
@@ -371,7 +370,7 @@ export function connectedConfig(target:Target,original:string|null,origin:string
   const providers=doc.model_providers===undefined?{}:object(doc.model_providers);
   // Codex gates remote compaction on the OpenAI wire-provider identity. Keep
   // the TokenFlow provider key and endpoint, and let Codex count the full context.
-  const routing={model,model_provider:'token_flow',model_auto_compact_token_limit_scope:'total',...(catalogPath?{model_catalog_json:catalogPath}:{}),...(chosen.some(model=>a2aCapabilities(model)?.serverTools===false)?{web_search:'disabled'}:{})};
+  const routing={model,model_provider:'token_flow',model_auto_compact_token_limit_scope:'total',...(catalogPath?{model_catalog_json:catalogPath}:{})};
   delete doc.openai_base_url;delete doc.review_model;delete doc.model_auto_compact_token_limit;delete doc.model_context_window;
   const next:{[key:string]:any}={...doc,...routing,model_providers:{...providers,token_flow:{name:'OpenAI',base_url:`${url.origin}/v1`,wire_api:'responses',experimental_bearer_token:key,requires_openai_auth:false,supports_websockets:false}}};
   // Legacy clients overlay the selected profile. Keep its policy and selection;
@@ -483,7 +482,6 @@ export class AgentConnections {
         const effective={...actual,...codexProfile(actual)};
         checks.push({name:'模型与配置层级正确',ok:(record.selections??[record]).some(item=>item.model===effective.model)&&effective.model_provider==='token_flow'&&actual.profile===expected.profile},{name:'接口与协议正确',ok:provider?.base_url===original.base_url&&provider?.wire_api==='responses'},{name:'客户端 Key 未被覆盖',ok:provider?.experimental_bearer_token===original.experimental_bearer_token});
         checks.push({name:'本地配置档案选择保留',ok:actual.profile===parse(record.before??'').profile});
-        if((record.selections??[record]).some(item=>a2aCapabilities(item.model)?.serverTools===false))checks.push({name:'来源不支持的内置网页搜索已关闭',ok:effective.web_search==='disabled'});
       }
       if(record.selections){
         const ids=record.selections.map(item=>item.model);

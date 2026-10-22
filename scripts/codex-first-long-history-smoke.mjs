@@ -25,6 +25,7 @@ const largeHistory=process.argv.includes('--large-history');
 const normalizeContextError=process.argv.includes('--normalize-context-error');
 const abort=new AbortController();
 const model='codex/gpt-6-luna';const marker='LONG_HISTORY_ANCHOR_'+randomUUID().replaceAll('-','');
+const runStarted=performance.now();
 const calls=[],upstream=[],progress=[],reports=[];let phase=0,child,responseID=0,turnResult,reply='',seedTools=0;
 const context=await GatewayContext.open(root),migration=new CodexContext(root,join(root,'config.toml'),context);
 let endpoint,key;
@@ -47,7 +48,7 @@ const server=createServer(async(req,res)=>{
  if(phase>0||calls.length===1)console.log(JSON.stringify({clientRequest:request}));
  const send=async(_path,forward)=>{
   const summary=forward.instructions?.startsWith('Summarize the supplied'),bytes=Buffer.byteLength(JSON.stringify(forward)),hasAnchor=JSON.stringify(forward.input).includes(marker);
-  const entry={phase,summary:!!summary,bytes,hasAnchor,model:forward.model};upstream.push(entry);
+  const upstreamStarted=performance.now();const entry={phase,summary:!!summary,bytes,hasAnchor,model:forward.model};upstream.push(entry);
   if(phase===0)return largeHistory?synthetic(forward,seedAnswer):synthetic(forward,'Archived directory checks completed.',seedTools++<48);
   if(live){
    assert.equal(forward.model,model,'live requests must use only the authorized selected model');
@@ -58,6 +59,7 @@ const server=createServer(async(req,res)=>{
    const inspect=line=>{
     if(!line.startsWith('data:'))return line;
     let event;try{event=JSON.parse(line.slice(5));}catch{return line;}
+    if(['response.completed','response.failed','response.incomplete'].includes(event.type))entry.durationMs=Math.round(performance.now()-upstreamStarted);
     const type=event.type??'untyped';entry.events[type]=(entry.events[type]??0)+1;
     const error=event.error??event.response?.error??(event.type==='error'?event:undefined);
     if(error){
@@ -74,6 +76,7 @@ const server=createServer(async(req,res)=>{
      entry.normalizedContextError=true;
      return 'data: '+JSON.stringify({type:'response.failed',response:{id:'resp_context_fixture',object:'response',status:'failed',error:{code:'context_length_exceeded',message:error.message}}});
     }
+    if(entry.durationMs!==undefined&&['response.completed','response.failed','response.incomplete'].includes(event.type))console.log(JSON.stringify({upstreamTerminal:entry}));
     return line;
    };
    const stream=result.body.pipeThrough(new TransformStream({transform(chunk,controller){pending+=decoder.decode(chunk,{stream:true});let end;while((end=pending.indexOf('\n'))>=0){const line=inspect(pending.slice(0,end));pending=pending.slice(end+1);controller.enqueue(new TextEncoder().encode(line+'\n'));}},flush(controller){if(pending)controller.enqueue(new TextEncoder().encode(inspect(pending)));console.log(JSON.stringify({upstreamEnd:entry}));}}));
@@ -127,12 +130,23 @@ try{
  phase=1;const bootstrapCompactions=0;
  client=await start();await client.rpc('thread/resume',{threadId,model,modelProvider:'token_flow',approvalPolicy:'never',sandbox:'read-only'});
  const continuation='Continue the archived task. Reply only with the exact audit marker from the earliest task requirement. Do not call tools or read files.';
- turnResult=await client.turn(threadId,continuation);const firstTurnStatus=turnResult.status;const firstError=turnResult.error;
+ const firstStarted=performance.now();turnResult=await client.turn(threadId,continuation);const firstTurnMs=Math.round(performance.now()-firstStarted);const firstTurnStatus=turnResult.status;const firstError=turnResult.error;
  if(process.argv.includes('--retry-turn')){console.log(JSON.stringify({firstTurnStatus,firstError}));turnResult=await client.turn(threadId,continuation);}
- const resumed=[];if(process.argv.includes('--resume-after')&&turnResult.status==='completed'){await client.stop();client=await start();await client.rpc('thread/resume',{threadId,model,modelProvider:'token_flow',approvalPolicy:'never',sandbox:'read-only'});turnResult=await client.turn(threadId,continuation);resumed.push({status:turnResult.status,earliestRequirementPreserved:reply.includes(marker)});}
+ const resumed=[];if(process.argv.includes('--resume-after')&&turnResult.status==='completed'){await client.stop();client=await start();await client.rpc('thread/resume',{threadId,model,modelProvider:'token_flow',approvalPolicy:'never',sandbox:'read-only'});const reuseStarted=performance.now();turnResult=await client.turn(threadId,continuation);resumed.push({durationMs:Math.round(performance.now()-reuseStarted),status:turnResult.status,earliestRequirementPreserved:reply.includes(marker)});}
+ let followupTiming;
+ if(process.argv.includes('--measure-followup')){
+ const followup=[...history,{role:'user',content:'Continue the same synthetic audit; preserve the earliest marker.'},...Array.from({length:32},(_,index)=>({role:'assistant',content:('Synthetic followup batch '+index+': verified package build and retained routing rules. ').repeat(120)})),{role:'user',content:'Continue with the latest synthetic audit results.'},{type:'compaction_trigger'}];
+ const summariesBefore=upstream.filter(item=>item.summary).length;const followupStarted=performance.now();
+ const followupResponse=await fetch(origin+'/v1/responses',{method:'POST',headers:{'content-type':'application/json',session_id:threadId},body:JSON.stringify({model,input:followup,store:false,stream:false})});
+ const followupResult=await followupResponse.json();assert.equal(followupResponse.status,200,JSON.stringify(followupResult));
+ followupTiming={durationMs:Math.round(performance.now()-followupStarted),rawHistoryBytes:Buffer.byteLength(JSON.stringify(followup)),newSummaryCalls:upstream.filter(item=>item.summary).length-summariesBefore,report:reports.at(-1)};
+ }
  const latestSaved=await readFile(rollouts[0],'utf8');const persistedCompactions=latestSaved.split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(event=>['compacted','compaction'].includes(event.type)).length;
  const preserved=reply.includes(marker),clientCompactions=progress.filter(item=>item.phase===1&&item.method==='item/started').length;
- const result={passed:turnResult.status==='completed'&&preserved,clientOnly,live,largeHistory,bootstrapCompactions,normalizeContextError,remoteCompaction:process.argv.includes('--remote-compaction'),seedThresholdCleared:true,seedReportedInputTokens:process.argv.includes('--known-usage')?150000:100,totalScope:process.argv.includes('--total-scope'),persistedCompactions,resumed,firstTurnStatus,firstError,retryTurn:process.argv.includes('--retry-turn'),singleAttempt:process.argv.includes('--single-attempt'),knownUsage:process.argv.includes('--known-usage'),model,turnStatus:turnResult.status,errorCode:turnResult.error?.codexErrorInfo??null,historyBytes:Buffer.byteLength(JSON.stringify(history)),clientCompactions,gatewayCompactions:reports.length,summaryCalls:upstream.filter(item=>item.summary).length,sourceContextErrors:upstream.filter(item=>item.errorCode==='context_length_exceeded'||item.streamError?.code==='context_too_large'||item.streamError?.code==='context_length_exceeded').length,earliestRequirementPreserved:preserved,requests:calls.filter(item=>item.phase===1),upstream:upstream.filter(item=>item.phase===1)};
+ const result={timing:{firstTurnMs,firstCompaction:reports[0],reuse:resumed,followup:followupTiming},passed:turnResult.status==='completed'&&preserved,clientOnly,live,largeHistory,bootstrapCompactions,normalizeContextError,remoteCompaction:process.argv.includes('--remote-compaction'),seedThresholdCleared:true,seedReportedInputTokens:process.argv.includes('--known-usage')?150000:100,totalScope:process.argv.includes('--total-scope'),persistedCompactions,resumed,firstTurnStatus,firstError,retryTurn:process.argv.includes('--retry-turn'),singleAttempt:process.argv.includes('--single-attempt'),knownUsage:process.argv.includes('--known-usage'),model,turnStatus:turnResult.status,errorCode:turnResult.error?.codexErrorInfo??null,historyBytes:Buffer.byteLength(JSON.stringify(history)),clientCompactions,gatewayCompactions:reports.length,summaryCalls:upstream.filter(item=>item.summary).length,sourceContextErrors:upstream.filter(item=>item.errorCode==='context_length_exceeded'||item.streamError?.code==='context_too_large'||item.streamError?.code==='context_length_exceeded').length,earliestRequirementPreserved:preserved,requests:calls.filter(item=>item.phase===1),upstream:upstream.filter(item=>item.phase===1)};
  console.log(JSON.stringify(result));if(process.env.RESULT_PATH)await writeFile(process.env.RESULT_PATH,JSON.stringify(result,null,2)+'\n');await client.stop();
  assert.ok(result.passed,'long uncompacted history did not continue with the earliest requirement');
-}finally{abort.abort();child?.kill();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));if(process.env.KEEP_FIXTURE)console.log(JSON.stringify({fixture:root}));else await rm(root,{recursive:true,force:true});}
+}catch(error){
+ if(process.env.RESULT_PATH)await writeFile(process.env.RESULT_PATH,JSON.stringify({passed:false,error:String(error),elapsedMs:Math.round(performance.now()-runStarted),model,live,largeHistory,requests:calls.filter(item=>item.phase>0),upstream:upstream.filter(item=>item.phase>0),reports},null,2)+'\n');
+ throw error;
+}finally{abort.abort();if(child&&child.exitCode===null)await new Promise(resolve=>{child.once('exit',resolve);child.kill();});server.closeAllConnections();await new Promise(resolve=>server.close(resolve));if(process.env.KEEP_FIXTURE)console.log(JSON.stringify({fixture:root}));else await rm(root,{recursive:true,force:true});}

@@ -74,10 +74,10 @@ trust_level = "untrusted"
  const before=parse(original);
  for(const model of ['qoder/test','workbuddy/test','codex/test']){
   const preview=await connections.preview('codex','http://127.0.0.1:9527',model);
-  expect(preview.routing).toMatchObject({profile:'work',model,model_provider:'token_flow',web_search:model==='codex/test'?'live':'disabled'});
+  expect(preview.routing).toMatchObject({profile:'work',model,model_provider:'token_flow',web_search:'live'});
   const record=await connections.apply({target:'codex',revision:preview.revision,replaceId:preview.replaceId,origin:'http://127.0.0.1:9527',model,sourceId:'s',keyId:randomUUID(),key:'fixture-key'});
   const after=parse(await readFile(paths.codex,'utf8'));
-  expect(after).toMatchObject({profile:'work',model_auto_compact_token_limit_scope:'total',approval_policy:'untrusted',sandbox_mode:'read-only',profiles:{work:{model,model_provider:'token_flow',model_auto_compact_token_limit_scope:'total',approval_policy:'on-request',sandbox_mode:'workspace-write',web_search:model==='codex/test'?'live':'disabled'},other:{model:'untouched',approval_policy:'never'}}});
+  expect(after).toMatchObject({profile:'work',model_auto_compact_token_limit_scope:'total',approval_policy:'untrusted',sandbox_mode:'read-only',profiles:{work:{model,model_provider:'token_flow',model_auto_compact_token_limit_scope:'total',approval_policy:'on-request',sandbox_mode:'workspace-write',web_search:'live'},other:{model:'untouched',approval_policy:'never'}}});
   expect(after.model_auto_compact_token_limit).toBeUndefined();expect(after.model_context_window).toBeUndefined();
   expect((after.profiles as any).work.model_auto_compact_token_limit).toBeUndefined();expect((after.profiles as any).work.model_context_window).toBeUndefined();
   expect((after.model_providers as any).token_flow.name).toBe('OpenAI');
@@ -110,15 +110,15 @@ it('keeps local Claude and Qoder tool, hook and approval settings when adding a 
  }
 });
 
-it('configures supported Codex tools by source and restores search when switching back',async()=>{
+it('preserves Codex search preferences across source changes',async()=>{
  const {paths,connections}=await setup();const original='web_search = "live"\napproval_policy = "on-request"\n';await writeFile(paths.codex,original);
  for(const model of ['qoder/kmodel_latest','workbuddy/glm-5.1','codex/model']){
   const preview=await connections.preview('codex','http://127.0.0.1:9527',model);
-  const expected=model.startsWith('codex/')?'live':'disabled';expect(preview.routing.web_search).toBe(expected);
+  const expected='live';expect(preview.routing.web_search).toBe(expected);
   await connections.apply({target:'codex',revision:preview.revision,replaceId:preview.replaceId,origin:'http://127.0.0.1:9527',model,sourceId:'source',keyId:randomUUID(),key:'fixture-key'});
   expect(parse(await readFile(paths.codex,'utf8'))).toMatchObject({web_search:expected,approval_policy:'on-request'});
   const manual=agentConfig('codex','http://127.0.0.1:9527',model);
-  expect(manual.includes('web_search="disabled"')).toBe(expected==='disabled');
+  expect(manual.includes('web_search="disabled"')).toBe(false);
   expect(manual).toContain('model_auto_compact_token_limit_scope="total"');
  }
  const record=(await connections.status())[0].connection!;await connections.restore(record.id);expect(await readFile(paths.codex,'utf8')).toBe(original);

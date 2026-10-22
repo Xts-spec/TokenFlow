@@ -37,16 +37,16 @@ it('retries a failed summary immediately without a cached failure blocking recon
  const response=await context.response('responses/compact',{model:'qoder/m',input:history},'a','s',send);
  expect(response.ok).toBe(true);expect(calls).toBe(2);
 });
-it('bounds an 11 MiB recovered tool transcript before sending summaries or inference',async()=>{
+it('sends all 11 MiB of recovered tool text through summary chunks before inference',async()=>{
  const {context}=await setup();const old=[{role:'user',content:'Preserve API and report TASK_MARKER.'},...Array.from({length:100},(_,i)=>[
  {type:'function_call',call_id:'c'+i,name:'read',arguments:'{}'},
  {type:'function_call_output',call_id:'c'+i,output:i%2?'x'.repeat(115000):[{type:'input_text',text:'x'.repeat(115000)}]},
- ]).flat(),...history.slice(-8)];let calls=0;
+ ]).flat(),...history.slice(-8)];let calls=0;const summaryParts:string[]=[];
  const result=await context.response('responses',{context_management:[{type:'compaction',compact_threshold:65536}],model:'qoder/m',input:[{type:'compaction',encrypted_content:'official-opaque'},{role:'user',content:'Continue TASK_MARKER.'}],store:false},'a','s',async(_p,b)=>{
-  calls++;expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThan(128*1024);expect(calls).toBeLessThanOrEqual(12);
+  calls++;expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThan(128*1024);if(typeof b.instructions==='string'&&b.instructions.startsWith('Summarize the supplied')&&Array.isArray(b.input))summaryParts.push(b.input[0].content.replace(/^Historical transcript part \d+\/\d+:\n/,''));
   return stream('TASK_MARKER: API kept compatible. Verify tests next.');
  },{threadId:'fixture-thread',scope:{owner:'portable',source:'portable',model:'portable'},recover:async()=>old});
- await result.text();expect(calls).toBeGreaterThan(1);
+ await result.text();expect(calls).toBeGreaterThan(200);expect(summaryParts.join('').match(/x/g)?.length).toBeGreaterThanOrEqual(11500000);
 });
 it('retains the current user constraint even after a large older user attachment and a long tool loop',async()=>{
  const {context}=await setup();const input:Record<string,unknown>[]=[{role:'user',content:'old attachment '.repeat(2000)},{role:'assistant',content:'Earlier task done.'},{role:'user',content:'Never change billing.ts.'}];

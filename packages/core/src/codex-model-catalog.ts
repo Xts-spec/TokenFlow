@@ -12,7 +12,9 @@ export function codexModelCatalog(selection:string|string[],labels:Record<string
   // Do not declare a smaller window: Codex can otherwise compact with the old,
   // unauthorized model during a downshift. The client owns this soft trigger.
   auto_compact_token_limit:CODEX_AUTO_COMPACT_TOKEN_LIMIT,
-  apply_patch_tool_type:'freeform',truncation_policy:{mode:'bytes',limit:10000},
+  // Codex requires this field; its schema has no unlimited variant. Use the
+  // largest exactly representable JSON integer so this catalog does not clip tools.
+  apply_patch_tool_type:'freeform',truncation_policy:{mode:'bytes',limit:Number.MAX_SAFE_INTEGER},
   // Allow attachments through image-capable transports without maintaining a
   // per-model vision allowlist. The selected upstream decides model support.
   // Cursor's current text-prompt adapter cannot carry image blocks.

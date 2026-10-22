@@ -14,31 +14,18 @@ export function splitTranscript(text:string,limit=SUMMARY_CHUNK_BYTES){
  for(const c of text){const n=Buffer.byteLength(c);if(bytes+n>limit){parts.push(chunk);chunk='';bytes=0;}chunk+=c;bytes+=n;}
  if(chunk)parts.push(chunk);return parts;
 }
-function excerpt(text:string,limit:number){
- if(Buffer.byteLength(text)<=limit)return text;
- // Iterating codepoints keeps UTF-8 intact, including Chinese and emoji.
- const head=splitTranscript(text,Math.floor(limit/2))[0];
- const tail=splitTranscript([...text].reverse().join(''),Math.floor(limit/2))[0];
- return head+`\n[historical output excerpt; ${Buffer.byteLength(text)} original bytes; middle omitted, re-read the source if needed]\n`+[...tail].reverse().join('');
-}
-/** Old tool payloads and assistant work are excerpted. User text/instructions stay intact
- * for the summarizer. Binary attachments cannot be interpreted by a text summary. */
+/** Preserve all historical text for the summarizer. Binary attachments cannot
+ * be interpreted by a text summary. */
 export function summaryTranscript(input:Item[]){
  return JSON.stringify(input.map(item=>{
   const value={...item};delete value.id;delete value.encrypted_content;
   if(item.type==='reasoning')return {type:'reasoning',summary:item.summary};
   if(['function_call_output','custom_tool_call_output'].includes(item.type)){
-   // Codex persists tool output as either text or content blocks. Both forms
-   // need the same bound; large array outputs used to bypass excerpting.
+   // Preserve both text and structured tool output without local excerpts.
    const output=Array.isArray(item.output)?item.output.map((p:Item)=>['input_image','image_url','image','input_file','file'].includes(p.type)?{type:'text',text:'[historical attachment omitted]'}:p):item.output;
-   value.output=excerpt(typeof output==='string'?output:JSON.stringify(output??''),1024);
+   value.output=output;
   }
-  if(['function_call','custom_tool_call'].includes(item.type))for(const key of ['arguments','input'])if(typeof item[key]==='string')value[key]=excerpt(item[key],1024);
   if(Array.isArray(item.content))value.content=item.content.map((p:Item)=>['input_image','image_url','image','input_file','file'].includes(p.type)?{type:'input_text',text:'[Historical attachment omitted from text checkpoint; consult the original conversation if needed.]'}:p);
-  if(item.role==='assistant'){
-   if(typeof value.content==='string')value.content=excerpt(value.content,1024);
-   else if(Array.isArray(value.content))value.content=value.content.map((p:Item)=>typeof p.text==='string'?{...p,text:excerpt(p.text,1024)}:p);
-  }
   return value;
  }));
 }

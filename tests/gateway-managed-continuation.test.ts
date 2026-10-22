@@ -48,8 +48,8 @@ it('reuses durable per-thread summary prefixes across models and summarizes only
  const added=[{role:'user',content:'OFFICIAL_NEW_WORK'},...work('official'),{role:'user',content:'Resume from official.'}];
  const result=await(await again.response('responses',{model:'workbuddy/m',input:[...original,...added],store:false},'new-key','new-source',f.send,{...f.migration,connectionId:'gateway-c'})).json();
  expect(f.summaries()).toBeGreaterThan(count);
- const recentSummary=f.requests.filter(body=>body.instructions?.startsWith('Summarize the supplied')).at(-1);
- expect(JSON.stringify(recentSummary.input)).toContain('OFFICIAL_NEW_WORK');expect(JSON.stringify(recentSummary.input)).not.toContain('initial0');expect(JSON.stringify(recentSummary.input)).not.toContain('SAVED_SUMMARY_1');
+ const recentSummary=f.requests.filter(body=>body.instructions?.startsWith('Summarize the supplied')).slice(count).map(body=>body.input);
+ expect(JSON.stringify(recentSummary)).toContain('OFFICIAL_NEW_WORK');expect(JSON.stringify(recentSummary)).not.toContain('initial0');expect(JSON.stringify(recentSummary)).not.toContain('SAVED_SUMMARY_1');
  const restored=again.decodeCheckpoint(result.output[0].encrypted_content,[codexContextScope]);
  expect(JSON.stringify(restored)).toContain('SAVED_SUMMARY_1');expect(JSON.stringify(restored)).toContain('SAVED_SUMMARY_2');
  const after=f.summaries();

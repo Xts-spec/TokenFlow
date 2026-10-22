@@ -1,3 +1,4 @@
+import {codexWebSearch} from './codex-web-search.js';
 import {sourceFailure} from './source-failure.js';
 import {providerUsage} from './gateway-observation.js';
 import {CursorLocalLogin} from './cursor-local.js';
@@ -1201,10 +1202,11 @@ export async function createDesktopService(options:ServiceOptions) {
       const bridgeContext=(path==='responses'||path==='responses/compact')&&!!(client||config.kind==='cliproxy'||apiSource)&&typeof model==='string'&&(fixed?.target==='codex'||/^(qoder|workbuddy|cursor)\//.test(model)||!!apiSource);
       const workbuddyModel=!!model?.startsWith('workbuddy/')&&!apiSource;
       const sdkSourceId=client?.modelSources?.[model!]??client?.sourceId??proxy.snapshot().accounts.find(a=>a.provider==='workbuddy'&&!a.disabled&&a.models?.includes(model!))?.id;
-      const dispatch=cursorModel?async(route:string,body:unknown)=>abort.watch(await proxy.cursor.response(route,body,abort.signal,client?.modelSources?.[model!]??client?.sourceId)):workbuddyModel&&path!=='messages/count_tokens'?async(route:string,body:unknown)=>{
+      const transport=cursorModel?async(route:string,body:unknown)=>abort.watch(await proxy.cursor.response(route,body,abort.signal,client?.modelSources?.[model!]??client?.sourceId)):workbuddyModel&&path!=='messages/count_tokens'?async(route:string,body:unknown)=>{
         if(!sdkSourceId)throw new Error('WorkBuddy source unavailable');
         return abort.watch(await workbuddySDK.response(sdkSourceId,route,body,abort.signal));
       }:send;
+      const dispatch=(route:string,body:unknown)=>transport(route,nativeCodexReceiver&&route.startsWith('responses')?codexWebSearch(body as Record<string,any>):body);
       const sessionId=req.headers['session_id']??req.headers['session-id'];
       const response=bridgeContext?await gatewayContext.response(path,req.body as {model:string},client?.id??'workspace',client?.modelSources?.[model]??client?.sourceId??apiSource?.id??upstreamURL,dispatch,fixed?.target==='codex'?{bootstrapOnFirstRequest:true,scope:codexContextScope,threadId:typeof sessionId==='string'?sessionId:undefined,connectionId:client?.id,normalize:portableCodexItem,recover:async item=>codexContext.recover(item,await codexContextScopes())}:undefined,{onCompaction:report=>{compaction=report;},onUsageIncomplete:()=>{contextUsageIncomplete=true;if(compaction)compaction={...compaction,unmetered:true};}}):await dispatch(path,req.body);
       if(!response.ok){
