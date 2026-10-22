@@ -1,0 +1,36 @@
+{
+  "passed": false,
+  "model": "codex/gpt-6-luna",
+  "live": true,
+  "history": {
+    "items": 26,
+    "bytes": 12666528,
+    "rolloutBytes": 38059508,
+    "hasSummary": false
+  },
+  "textExcerptEnabled": false,
+  "gatewaySummaryOutputCap": null,
+  "result": "diagnostic_turn_timeout",
+  "diagnosticTurnTimeoutMs": 900000,
+  "productionTotalTimeoutMs": 600000,
+  "productionServiceUsed": false,
+  "summaryRequestsWithHTTP200Headers": 80,
+  "completedFullCompaction": false,
+  "firstReplyCompleted": false,
+  "gatewayErrorAfterTestCancellation": {
+    "code": "compaction_transport_failed",
+    "status": 422
+  },
+  "requests": [
+    {
+      "phase": 1,
+      "path": "/v1/responses",
+      "bytes": 12707830,
+      "items": 29,
+      "trigger": false,
+      "localCompact": false,
+      "model": "codex/gpt-6-luna"
+    }
+  ],
+  "scope": "installed Codex app-server with GatewayContext and real authorized Luna source; synthetic history; sequential summary calls; fixture aborted unfinished work at its existing 15 minute timeout"
+}
