@@ -1,0 +1,1360 @@
+{
+  "passed": false,
+  "error": "Error: Turn timed out",
+  "elapsedMs": 902142,
+  "model": "qoder/gfmodel",
+  "live": true,
+  "largeHistory": true,
+  "requests": [
+    {
+      "phase": 1,
+      "path": "/v1/responses",
+      "bytes": 12707827,
+      "items": 29,
+      "trigger": false,
+      "localCompact": false,
+      "model": "qoder/gfmodel"
+    },
+    {
+      "phase": 1,
+      "path": "/v1/responses",
+      "bytes": 12707827,
+      "items": 29,
+      "trigger": false,
+      "localCompact": false,
+      "model": "qoder/gfmodel"
+    },
+    {
+      "phase": 1,
+      "path": "/v1/responses",
+      "bytes": 12707827,
+      "items": 29,
+      "trigger": false,
+      "localCompact": false,
+      "model": "qoder/gfmodel"
+    }
+  ],
+  "upstream": [
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 528108,
+      "hasAnchor": true,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 1124,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 505,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 108800,
+      "usage": {
+        "input_tokens": 213846,
+        "output_tokens": 1634,
+        "total_tokens": 215480,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 1124
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 528010,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 525,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 224,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 143408,
+      "usage": {
+        "input_tokens": 216265,
+        "output_tokens": 751,
+        "total_tokens": 217016,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 525
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 528078,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 1336,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 461,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 91229,
+      "usage": {
+        "input_tokens": 213895,
+        "output_tokens": 1800,
+        "total_tokens": 215695,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 1336
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 528010,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 517,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 289,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 66201,
+      "usage": {
+        "input_tokens": 216283,
+        "output_tokens": 808,
+        "total_tokens": 217091,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 517
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 528078,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 1730,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 496,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 92130,
+      "usage": {
+        "input_tokens": 213901,
+        "output_tokens": 2232,
+        "total_tokens": 216133,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 1730
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 528010,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 1,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 739
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 528078,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 2321,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 520,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 98577,
+      "usage": {
+        "input_tokens": 213922,
+        "output_tokens": 2843,
+        "total_tokens": 216765,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 2321
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 528010,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 785,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 412,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 65377,
+      "usage": {
+        "input_tokens": 216273,
+        "output_tokens": 1199,
+        "total_tokens": 217472,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 785
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 528077,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 1,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 513,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 43016,
+      "usage": {
+        "input_tokens": 213949,
+        "output_tokens": 519,
+        "total_tokens": 214468,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 528011,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 1,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 496,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 55006,
+      "usage": {
+        "input_tokens": 216204,
+        "output_tokens": 501,
+        "total_tokens": 216705,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 528077,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 1069,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 507,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 89889,
+      "usage": {
+        "input_tokens": 213972,
+        "output_tokens": 1578,
+        "total_tokens": 215550,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 1069
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 528011,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 613,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 382,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 62303,
+      "usage": {
+        "input_tokens": 216227,
+        "output_tokens": 998,
+        "total_tokens": 217225,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 613
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 41048,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 1,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 545,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 18412,
+      "usage": {
+        "input_tokens": 16645,
+        "output_tokens": 550,
+        "total_tokens": 17195,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 396250,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 1,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 148
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 396183,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel"
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 396248,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel"
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 528010,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 495,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 404,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 120657,
+      "usage": {
+        "input_tokens": 216266,
+        "output_tokens": 901,
+        "total_tokens": 217167,
+        "input_tokens_details": {
+          "cached_tokens": 216256
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 495
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 396250,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 3906,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 795,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 106989,
+      "usage": {
+        "input_tokens": 160082,
+        "output_tokens": 4704,
+        "total_tokens": 164786,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 3906
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 396183,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 1,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 359,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 25600,
+      "usage": {
+        "input_tokens": 162005,
+        "output_tokens": 361,
+        "total_tokens": 162366,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 396248,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 1045,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 411,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 38582,
+      "usage": {
+        "input_tokens": 161481,
+        "output_tokens": 1458,
+        "total_tokens": 162939,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 1045
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 396185,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 906,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 462,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 124193,
+      "usage": {
+        "input_tokens": 160634,
+        "output_tokens": 1374,
+        "total_tokens": 162008,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 906
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 396183,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 1117,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 511,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 65477,
+      "usage": {
+        "input_tokens": 162184,
+        "output_tokens": 1631,
+        "total_tokens": 163815,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 1117
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 396250,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 1,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 622,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 158340,
+      "usage": {
+        "input_tokens": 160893,
+        "output_tokens": 627,
+        "total_tokens": 161520,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 396184,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 1,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 528,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 36358,
+      "usage": {
+        "input_tokens": 161219,
+        "output_tokens": 531,
+        "total_tokens": 161750,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 396183,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 696,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 364,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 48942,
+      "usage": {
+        "input_tokens": 162236,
+        "output_tokens": 1062,
+        "total_tokens": 163298,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 696
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 396250,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 1716,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 538,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 69609,
+      "usage": {
+        "input_tokens": 160260,
+        "output_tokens": 2256,
+        "total_tokens": 162516,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 1716
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 262175,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 1492,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 413,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 107728,
+      "usage": {
+        "input_tokens": 106915,
+        "output_tokens": 1909,
+        "total_tokens": 108824,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 1492
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 264395,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 1,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 488,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 27984,
+      "usage": {
+        "input_tokens": 108107,
+        "output_tokens": 491,
+        "total_tokens": 108598,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 264459,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 3674,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 537,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 66366,
+      "usage": {
+        "input_tokens": 107652,
+        "output_tokens": 4216,
+        "total_tokens": 111868,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 3674
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 264397,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 1,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 676
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 264395,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 1,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 604,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 31652,
+      "usage": {
+        "input_tokens": 107780,
+        "output_tokens": 606,
+        "total_tokens": 108386,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 264395,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 1,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 871
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 264459,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel"
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 264397,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel"
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 264397,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 437,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 536,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 38899,
+      "usage": {
+        "input_tokens": 106895,
+        "output_tokens": 978,
+        "total_tokens": 107873,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 437
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 264395,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 1231,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 618,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 100115,
+      "usage": {
+        "input_tokens": 108112,
+        "output_tokens": 1851,
+        "total_tokens": 109963,
+        "input_tokens_details": {
+          "cached_tokens": 108096
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 1231
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 264459,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 2004,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 622,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 95700,
+      "usage": {
+        "input_tokens": 107662,
+        "output_tokens": 2629,
+        "total_tokens": 110291,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 2004
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 264397,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 2443,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 686,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 78857,
+      "usage": {
+        "input_tokens": 106895,
+        "output_tokens": 3131,
+        "total_tokens": 110026,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 2443
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 264395,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 1328,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 377,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 56053,
+      "usage": {
+        "input_tokens": 107771,
+        "output_tokens": 1710,
+        "total_tokens": 109481,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 1328
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 264395,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 1083,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 388,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 46484,
+      "usage": {
+        "input_tokens": 108109,
+        "output_tokens": 1477,
+        "total_tokens": 109586,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 1083
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 175068,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 1867,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 577,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 57966,
+      "usage": {
+        "input_tokens": 71661,
+        "output_tokens": 2450,
+        "total_tokens": 74111,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 1867
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 39407,
+      "hasAnchor": true,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 4308,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 1129,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "durationMs": 102794,
+      "usage": {
+        "input_tokens": 8286,
+        "output_tokens": 5439,
+        "total_tokens": 13725,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 4308
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 23939,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 1,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 6031
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 16194,
+      "hasAnchor": false,
+      "model": "qoder/gfmodel",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 1,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 5741
+      }
+    }
+  ],
+  "reports": [
+    {
+      "inputBytes": 12687953,
+      "outputBytes": 0,
+      "calls": 16,
+      "reused": 0,
+      "durationMs": 301326,
+      "inputTokens": 2381382,
+      "outputTokens": 15413,
+      "cachedTokens": 0,
+      "cacheWriteTokens": null,
+      "reasoningTokens": null,
+      "failed": true,
+      "unmetered": true
+    },
+    {
+      "inputBytes": 12687953,
+      "outputBytes": 0,
+      "calls": 18,
+      "reused": 12,
+      "durationMs": 301236,
+      "inputTokens": 2097714,
+      "outputTokens": 22127,
+      "cachedTokens": 216256,
+      "cacheWriteTokens": null,
+      "reasoningTokens": null,
+      "failed": true,
+      "unmetered": true
+    }
+  ],
+  "clientErrors": [
+    {
+      "error": {
+        "message": "Reconnecting... 1/5",
+        "codexErrorInfo": {
+          "responseStreamDisconnected": {
+            "httpStatusCode": null
+          }
+        },
+        "additionalDetails": "stream disconnected before completion: idle timeout waiting for SSE",
+        "misalignment": null
+      },
+      "willRetry": true,
+      "threadId": "01a1618f-323b-75a0-8bad-e2073a7e27be",
+      "turnId": "01a1618f-3a36-7c02-9e34-0a565d50eae5"
+    },
+    {
+      "error": {
+        "message": "Reconnecting... 2/5",
+        "codexErrorInfo": {
+          "responseStreamDisconnected": {
+            "httpStatusCode": null
+          }
+        },
+        "additionalDetails": "stream disconnected before completion: idle timeout waiting for SSE",
+        "misalignment": null
+      },
+      "willRetry": true,
+      "threadId": "01a1618f-323b-75a0-8bad-e2073a7e27be",
+      "turnId": "01a1618f-3a36-7c02-9e34-0a565d50eae5"
+    }
+  ],
+  "seedHistory": {
+    "items": 26,
+    "bytes": 12666534,
+    "rolloutBytes": 38059521,
+    "hasSummary": false
+  },
+  "scope": "Installed Codex isolated 12.67 MB synthetic history; real authorized Qoder GLM 5.3 Flash (qoder/gfmodel); original 900-second diagnostic deadline; no production changes"
+}

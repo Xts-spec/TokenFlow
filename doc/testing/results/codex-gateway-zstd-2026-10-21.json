@@ -1,0 +1,14 @@
+{
+  "sourceCommit": "d1fdb8d",
+  "scope": "Isolated createDesktopService from installed release source; same JSON body with fixture local admin authorization; no production config changed",
+  "plainRequest": {
+    "status": 401,
+    "stage": "upstream authorization reached"
+  },
+  "zstdRequest": {
+    "status": 400,
+    "error": "Request body size did not match Content-Length"
+  },
+  "observedAfterNativeOfficialResume": true,
+  "productionZstdSupportPassed": false
+}

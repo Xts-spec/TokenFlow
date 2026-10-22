@@ -1,6 +1,6 @@
 // Installed Codex runtime with an isolated, genuinely large uncompacted history.
 // --client-only disables only gateway takeover in this test, not client compaction.
-// --live sends synthetic history to the existing local source using codex/gpt-6-luna.
+// --live sends synthetic history to the selected local source; --model defaults to codex/gpt-6-luna.
 // --large-history seeds twelve 1 MiB assistant batches, not merely a large rollout file.
 // --known-usage seeds prior usage metadata (150k), NOT a measurement of those batches.
 // --total-scope / --remote-compaction / --normalize-context-error are test-only variants.
@@ -16,6 +16,7 @@ import {randomUUID} from 'node:crypto';
 import YAML from 'yaml';
 import {compactionModelWindow} from '../packages/core/src/initial-compaction.ts';
 import {upstreamIdle,finishUpstream} from '../packages/core/src/upstream-idle.ts';
+import {codexWebSearch} from '../packages/core/src/codex-web-search.ts';
 import {GatewayContext} from '../packages/core/src/gateway-context.ts';
 import {CodexContext,codexContextScope,portableCodexItem} from '../packages/core/src/codex-context.ts';
 import {AgentConnections} from '../packages/core/src/agent-connections.ts';
@@ -26,7 +27,7 @@ const clientOnly=process.argv.includes('--client-only'),live=process.argv.includ
 const largeHistory=process.argv.includes('--large-history');
 const normalizeContextError=process.argv.includes('--normalize-context-error');
 const abort=new AbortController();
-const model='codex/gpt-6-luna';const marker='LONG_HISTORY_ANCHOR_'+randomUUID().replaceAll('-','');
+const model=process.argv.find(value=>value.startsWith('--model='))?.slice(8)??'codex/gpt-6-luna';const marker='LONG_HISTORY_ANCHOR_'+randomUUID().replaceAll('-','');
 const runStarted=performance.now();
 const calls=[],upstream=[],progress=[],reports=[];let phase=0,child,responseID=0,turnResult,reply='',seedTools=0;
 const context=await GatewayContext.open(root),migration=new CodexContext(root,join(root,'config.toml'),context);
@@ -51,6 +52,7 @@ const server=createServer(async(req,res)=>{
  if(phase>0||calls.length===1)console.log(JSON.stringify({clientRequest:request}));
  const lifetime=upstreamIdle();let initial=false;const cancel=()=>lifetime.abort();abort.signal.addEventListener('abort',cancel,{once:true});res.on('close',()=>{if(!res.writableFinished)cancel();});
  const rawSend=async(_path,forward,clock)=>{
+  forward=codexWebSearch(forward);
   const summary=forward.instructions?.startsWith('Summarize the supplied'),bytes=Buffer.byteLength(JSON.stringify(forward)),hasAnchor=JSON.stringify(forward.input).includes(marker);
   const upstreamStarted=performance.now();const entry={phase,summary:!!summary,bytes,hasAnchor,model:forward.model};upstream.push(entry);
   if(phase===0)return largeHistory?synthetic(forward,seedAnswer):synthetic(forward,'Archived directory checks completed.',seedTools++<48);
@@ -97,7 +99,7 @@ const server=createServer(async(req,res)=>{
   try{const result=await rawSend(path,forward,clock);return initial?finishUpstream(result,clock,detach):result;}catch(error){if(initial){clock.close();detach();}throw error;}
  };
  try{
-  const response=phase===0?await send('responses',body):await context.response(req.url.endsWith('/compact')?'responses/compact':'responses',body,'fixture-key','fixture-source',send,{bootstrapOnFirstRequest:true,contextWindowTokens,scope:codexContextScope,connectionId:'test-gateway',...(clientOnly?{}:{threadId:req.headers.session_id??req.headers['session-id']}),recover:item=>migration.recover(item,[]),normalize:portableCodexItem},{signal:lifetime.signal,onCancel:cancel,onInitialCompaction:active=>{initial=active;if(active)lifetime.pause();else lifetime.resume();},onCompaction:report=>reports.push(report)});
+  const response=phase===0?await send('responses',body):await context.response(req.url.endsWith('/compact')?'responses/compact':'responses',body,'fixture-key','fixture-source',send,{bootstrapOnFirstRequest:true,contextWindowTokens,scope:codexContextScope,connectionId:'test-gateway',...(clientOnly?{}:{threadId:req.headers.session_id??req.headers['session-id']}),recover:item=>migration.recover(item,[]),normalize:portableCodexItem},{signal:lifetime.signal,onCancel:cancel,onInitialCompaction:active=>{initial=active;if(active)lifetime.pause();else lifetime.resume();},onCompaction:report=>{reports.push(report);console.log(JSON.stringify({compactionReport:report}));}});
   res.writeHead(response.status,Object.fromEntries(response.headers));if(response.body)for await(const chunk of response.body)res.write(chunk);res.end();
  }catch(error){console.log(JSON.stringify({gatewayError:{code:error.code,status:error.statusCode}}));res.writeHead(error.statusCode??500,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:error.message,code:error.code}}));}finally{lifetime.close();abort.signal.removeEventListener('abort',cancel);}
 });
@@ -152,7 +154,7 @@ try{
  }
  const latestSaved=await readFile(rollouts[0],'utf8');const persistedCompactions=latestSaved.split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(event=>['compacted','compaction'].includes(event.type)).length;
  const preserved=reply.includes(marker),clientCompactions=progress.filter(item=>item.phase===1&&item.method==='item/started').length;
- const result={timing:{firstTurnMs,firstCompaction:reports[0],reuse:resumed,followup:followupTiming},passed:turnResult.status==='completed'&&preserved,clientOnly,live,largeHistory,bootstrapCompactions,normalizeContextError,remoteCompaction:process.argv.includes('--remote-compaction'),seedThresholdCleared:true,seedReportedInputTokens:process.argv.includes('--known-usage')?150000:100,totalScope:process.argv.includes('--total-scope'),persistedCompactions,resumed,firstTurnStatus,firstError,retryTurn:process.argv.includes('--retry-turn'),singleAttempt:process.argv.includes('--single-attempt'),knownUsage:process.argv.includes('--known-usage'),model,turnStatus:turnResult.status,errorCode:turnResult.error?.codexErrorInfo??null,historyBytes:Buffer.byteLength(JSON.stringify(history)),clientCompactions,gatewayCompactions:reports.length,summaryCalls:upstream.filter(item=>item.summary).length,sourceContextErrors:upstream.filter(item=>item.errorCode==='context_length_exceeded'||item.streamError?.code==='context_too_large'||item.streamError?.code==='context_length_exceeded').length,earliestRequirementPreserved:preserved,requests:calls.filter(item=>item.phase===1),upstream:upstream.filter(item=>item.phase===1)};
+ const result={reports,progress,timing:{firstTurnMs,firstCompaction:reports[0],reuse:resumed,followup:followupTiming},passed:turnResult.status==='completed'&&preserved,clientOnly,live,largeHistory,bootstrapCompactions,normalizeContextError,remoteCompaction:process.argv.includes('--remote-compaction'),seedThresholdCleared:true,seedReportedInputTokens:process.argv.includes('--known-usage')?150000:100,totalScope:process.argv.includes('--total-scope'),persistedCompactions,resumed,firstTurnStatus,firstError,retryTurn:process.argv.includes('--retry-turn'),singleAttempt:process.argv.includes('--single-attempt'),knownUsage:process.argv.includes('--known-usage'),model,turnStatus:turnResult.status,errorCode:turnResult.error?.codexErrorInfo??null,historyBytes:Buffer.byteLength(JSON.stringify(history)),clientCompactions,gatewayCompactions:reports.length,summaryCalls:upstream.filter(item=>item.summary).length,sourceContextErrors:upstream.filter(item=>item.errorCode==='context_length_exceeded'||item.streamError?.code==='context_too_large'||item.streamError?.code==='context_length_exceeded').length,earliestRequirementPreserved:preserved,requests:calls.filter(item=>item.phase===1),upstream:upstream.filter(item=>item.phase===1)};
  console.log(JSON.stringify(result));if(process.env.RESULT_PATH)await writeFile(process.env.RESULT_PATH,JSON.stringify(result,null,2)+'\n');await client.stop();
  assert.ok(result.passed,'long uncompacted history did not continue with the earliest requirement');
 }catch(error){

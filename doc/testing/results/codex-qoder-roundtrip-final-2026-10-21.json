@@ -1,0 +1,305 @@
+{
+  "passed": true,
+  "scope": "Installed Codex isolated session; original full-history real Qoder checkpoints; native OpenAI provider with existing ChatGPT authorization; user config unchanged",
+  "nativeOfficial": true,
+  "decodeZstd": true,
+  "clientIdleMs": null,
+  "gatewayModel": "qoder/gfmodel",
+  "officialModel": "codex/gpt-6-luna",
+  "recovery": [
+    {
+      "phase": "gateway-1",
+      "inputBytes": 205831,
+      "outputBytes": 198700,
+      "calls": 1,
+      "reused": 0,
+      "durationMs": 123289,
+      "inputTokens": 3177,
+      "outputTokens": 3901,
+      "cachedTokens": 0,
+      "cacheWriteTokens": null,
+      "reasoningTokens": 3126,
+      "failed": false,
+      "unmetered": false
+    },
+    {
+      "phase": "gateway-1",
+      "inputBytes": 208515,
+      "outputBytes": 209256,
+      "calls": 1,
+      "reused": 0,
+      "durationMs": 20256,
+      "inputTokens": 439,
+      "outputTokens": 2137,
+      "cachedTokens": 0,
+      "cacheWriteTokens": null,
+      "reasoningTokens": 1670,
+      "failed": false,
+      "unmetered": false
+    },
+    {
+      "phase": "gateway-2",
+      "inputBytes": 264750,
+      "outputBytes": 259388,
+      "calls": 6,
+      "reused": 0,
+      "durationMs": 136301,
+      "inputTokens": 5685,
+      "outputTokens": 10018,
+      "cachedTokens": 0,
+      "cacheWriteTokens": null,
+      "reasoningTokens": 6887,
+      "failed": false,
+      "unmetered": false
+    },
+    {
+      "phase": "gateway-2",
+      "inputBytes": 260622,
+      "outputBytes": 261931,
+      "calls": 1,
+      "reused": 0,
+      "durationMs": 17193,
+      "inputTokens": 268,
+      "outputTokens": 775,
+      "cachedTokens": 0,
+      "cacheWriteTokens": null,
+      "reasoningTokens": 369,
+      "failed": false,
+      "unmetered": false
+    },
+    {
+      "phase": "gateway-2",
+      "inputBytes": 263462,
+      "outputBytes": 264303,
+      "calls": 1,
+      "reused": 0,
+      "durationMs": 18730,
+      "inputTokens": 478,
+      "outputTokens": 1056,
+      "cachedTokens": 0,
+      "cacheWriteTokens": null,
+      "reasoningTokens": 571,
+      "failed": false,
+      "unmetered": false
+    }
+  ],
+  "rounds": [
+    {
+      "phase": "official-1",
+      "durationMs": 10455,
+      "restoredCheckpoint": "59eb7628fdcd9c061a007e094f6396ac17a9b65dd6b27f54339db82116426c40",
+      "exactCheckpointTexts": 13,
+      "markersPreserved": 2,
+      "newSummaryCalls": 0
+    },
+    {
+      "phase": "gateway-1",
+      "durationMs": 30103,
+      "markersPreserved": 2,
+      "newSummaryCalls": 0
+    },
+    {
+      "phase": "official-2",
+      "durationMs": 9647,
+      "restoredCheckpoint": "4ea14c8bc3eb710a8105cd42a46c13c341b5bda4efbbc84ea0a53c856a5a872b",
+      "exactCheckpointTexts": 17,
+      "markersPreserved": 3,
+      "newSummaryCalls": 0
+    },
+    {
+      "phase": "gateway-2",
+      "durationMs": 164001,
+      "markersPreserved": 3,
+      "newSummaryCalls": 6
+    },
+    {
+      "phase": "official-final",
+      "markersPreserved": 4,
+      "restoredCheckpoint": "198a7ed582615d80fbbb79a4f2baad04474d809b301b893ab76e2c0b160f2d43",
+      "exactCheckpointTexts": 22
+    }
+  ],
+  "checkpoints": [
+    {
+      "phase": "initial-full-history",
+      "hash": "59eb7628fdcd9c061a007e094f6396ac17a9b65dd6b27f54339db82116426c40"
+    },
+    {
+      "phase": "gateway-1",
+      "hash": "4ea14c8bc3eb710a8105cd42a46c13c341b5bda4efbbc84ea0a53c856a5a872b",
+      "durationMs": 20410,
+      "newSummaryCalls": 1,
+      "markersPreserved": 3
+    },
+    {
+      "phase": "gateway-2",
+      "hash": "198a7ed582615d80fbbb79a4f2baad04474d809b301b893ab76e2c0b160f2d43",
+      "durationMs": 18910,
+      "newSummaryCalls": 1,
+      "markersPreserved": 4
+    }
+  ],
+  "summaryCalls": 10,
+  "requests": [
+    {
+      "phase": "gateway-1",
+      "official": false,
+      "summary": false,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 499103,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200,
+      "durationMs": 28058
+    },
+    {
+      "phase": "gateway-1",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 12205,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "gateway-1",
+      "official": false,
+      "summary": false,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 509989,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200,
+      "durationMs": 37428
+    },
+    {
+      "phase": "gateway-1",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 1965,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "gateway-2",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 6793,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "gateway-2",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 4344,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "gateway-2",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 3147,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "gateway-2",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 3557,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "gateway-2",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 2425,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "gateway-2",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 1891,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "gateway-2",
+      "official": false,
+      "summary": false,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 553169,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200,
+      "durationMs": 25562
+    },
+    {
+      "phase": "gateway-2",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 1444,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "gateway-2",
+      "official": false,
+      "summary": false,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 564788,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200,
+      "durationMs": 104344
+    },
+    {
+      "phase": "gateway-2",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 2091,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200
+    }
+  ],
+  "productionEndToEndPassed": false,
+  "productionLimitation": "Diagnostic zstd decoding was enabled to isolate checkpoint correctness; installed gateway zstd parsing fails separately."
+}
