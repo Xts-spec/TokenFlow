@@ -262,6 +262,27 @@ it('passes the new key authorization set to Codex migration when replacing gatew
  }finally{migrate.mockRestore();await service.app.close();await rm(root,{recursive:true,force:true});}
 });
 
+it('accepts only the pinned model native id on a single-model connection key',async()=>{
+ const root=await mkdtemp(join(await realpath(tmpdir()),'codex-pinned-key-'));
+ await mkdir(join(root,'codex'));await mkdir(join(root,'cliproxy'));
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'codex.json',provider:'codex',status:'active',models:['pinned-model','other-model']}]));
+ const path=join(root,'codex/config.toml');await writeFile(path,'model="native-model"');
+ const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
+ const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:path,claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async()=>[]});
+ try{await service.proxy.start();const headers={host:'127.0.0.1:9527',authorization:'Bearer admin'};const sourceId=service.proxy.snapshot().accounts[0].id;
+  const target=(await service.app.inject({url:'/api/a2a',headers})).json().targets.find((t:{id:string})=>t.id==='codex');
+  // A single selection pins the connection key to "codex/pinned-model".
+  const connected=await service.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload:{target:'codex',sourceId,model:'codex/pinned-model',revision:target.revision}});
+  expect(connected.statusCode,connected.body).toBe(200);
+  const clientKey=(parse(await readFile(path,'utf8')).model_providers as any).token_flow.experimental_bearer_token as string;
+  const keyHeaders={host:headers.host,authorization:`Bearer ${clientKey}`};
+  // The native id resolves to the pinned model and reports the canonical id.
+  const native=await service.app.inject({method:'POST',url:'/v1/responses',headers:keyHeaders,payload:{model:'pinned-model',input:'hello'}});
+  expect(native.statusCode,native.body).toBe(200);expect(native.headers['x-token-flow-model']).toBe('codex/pinned-model');
+  // A different model stays unauthorized instead of being silently rewritten to the pinned one.
+  for(const model of ['other-model','codex/other-model','unrelated'])expect((await service.app.inject({method:'POST',url:'/v1/responses',headers:keyHeaders,payload:{model,input:'hello'}})).statusCode).toBe(403);
+ }finally{await service.app.close();await rm(root,{recursive:true,force:true});}
+});
 
 it('performs the confirmed Codex stop, backup, change and relaunch in a single admin request',async()=>{
  const root=await mkdtemp(join(await realpath(tmpdir()),'codex-auto-switch-api-'));

@@ -1,0 +1,259 @@
+diff --git a/packages/core/src/agent-installation.ts b/packages/core/src/agent-installation.ts
+index 7c9d281..6557740 100644
+--- a/packages/core/src/agent-installation.ts
++++ b/packages/core/src/agent-installation.ts
+@@ -44,10 +44,11 @@ export function desktopCandidates(target:Target|'claude-desktop'|'workbuddy-ai'|
+  if(platform==='darwin')return [...envRoots(env,platform).flatMap(root=>names.map(name=>join(root,`${name}.app`))),...names.flatMap(name=>['/Applications',join(home,'Applications')].map(base=>join(base,`${name}.app`)))];
+  if(platform==='win32'&&target==='claude-desktop'&&env.LOCALAPPDATA)return [win32.join(env.LOCALAPPDATA,'AnthropicClaude','Claude.exe'),win32.join(env.LOCALAPPDATA,'Programs','Claude','Claude.exe'),win32.join(env.LOCALAPPDATA,'Claude','Claude.exe')];
+  if(platform==='win32')return names.flatMap(name=>{
+-  const exe=target==='workbuddy-ai'?'WorkBuddyAI':target==='qoder-ide'?'Qoder':name;
++  // Qoder IDE renamed its executable from "Qoder.exe" to "Qoder IDE.exe" in 1.106.
++  const executables=target==='workbuddy-ai'?['WorkBuddyAI']:target==='qoder-ide'?['Qoder IDE','Qoder']:[name];
+   const standard=[env.LOCALAPPDATA&&win32.join(env.LOCALAPPDATA,'Programs'),env.LOCALAPPDATA,env.ProgramFiles,env['ProgramFiles(x86)']].filter((base):base is string=>!!base&&win32.isAbsolute(base));
+   // User-configured roots are searched first and accept either a per-app folder or the executable directly.
+-  return [...envRoots(env,platform).flatMap(root=>[win32.join(root,name,`${exe}.exe`),win32.join(root,`${exe}.exe`)]),...standard.map(base=>win32.join(base,name,`${exe}.exe`))];
++  return [...envRoots(env,platform).flatMap(root=>executables.flatMap(exe=>[win32.join(root,name,`${exe}.exe`),win32.join(root,`${exe}.exe`)])),...standard.flatMap(base=>executables.map(exe=>win32.join(base,name,`${exe}.exe`)))];
+  });
+  return [];
+ }
+diff --git a/packages/core/src/qoder-ide-login.ts b/packages/core/src/qoder-ide-login.ts
+index 70f69b8..83087e3 100644
+--- a/packages/core/src/qoder-ide-login.ts
++++ b/packages/core/src/qoder-ide-login.ts
+@@ -9,9 +9,15 @@ import type {Secrets} from './service.js';
+ import {z} from 'zod';
+ 
+ export type QoderIdeOptions={path?:string;crypto?:QoderCrypto;platform?:NodeJS.Platform;fetch?:typeof fetch};
+-export function qoderIdeLoginPath(platform:NodeJS.Platform=process.platform,home=homedir(),env:NodeJS.ProcessEnv=process.env){
++/** Electron's user-data root for Qoder IDE. Every Electron child process carries it on the
++ * command line, so its presence says nothing about a custom profile; only a different path does. */
++export function qoderIdeUserDataPath(platform:NodeJS.Platform=process.platform,home=homedir(),env:NodeJS.ProcessEnv=process.env){
+  const p=platform==='win32'?win32:posix,base=platform==='win32'?(env.APPDATA||p.join(home,'AppData','Roaming')):platform==='darwin'?p.join(home,'Library','Application Support'):(env.XDG_CONFIG_HOME||p.join(home,'.config'));
+- return p.join(base,'Qoder','User','globalStorage','state.vscdb');
++ return p.join(base,'Qoder');
++}
++export function qoderIdeLoginPath(platform:NodeJS.Platform=process.platform,home=homedir(),env:NodeJS.ProcessEnv=process.env){
++ const p=platform==='win32'?win32:posix;
++ return p.join(qoderIdeUserDataPath(platform,home,env),'User','globalStorage','state.vscdb');
+ }
+ const keys=['secret://aicoding.auth.userInfo','secret://aicoding.auth.userPlan','secret://aicoding.auth.creditUsage','secret://aicoding.auth.enterpriseUsage'] as const;
+ const stateSchema=z.tuple([z.string().max(2*1024*1024).nullable(),z.string().max(2*1024*1024).nullable(),z.string().max(2*1024*1024).nullable(),z.string().max(2*1024*1024).nullable()]);
+diff --git a/packages/core/src/service.ts b/packages/core/src/service.ts
+index 9fb2cdb..fe6ed8c 100644
+--- a/packages/core/src/service.ts
++++ b/packages/core/src/service.ts
+@@ -1028,9 +1028,13 @@ export async function createDesktopService(options:ServiceOptions) {
+       if(Object.hasOwn(fixed.modelAliases,desktopAlias))req.body={...(req.body as Record<string,unknown>),model:fixed.modelAliases[desktopAlias]};
+     }
+     if(path!=='models'&&fixed&&!fixed.selections&&client.sourceId===fixed.sourceId&&client.models.length===1&&client.models[0]===fixed.model){
+-      z.object({model:z.string().min(1).max(300)}).parse(req.body);
+-      req.body={...(req.body as Record<string,unknown>),model:fixed.model};
+-      reply.header('X-Token-Flow-Model',fixed.model);
++      const {model:requested}=z.object({model:z.string().min(1).max(300)}).parse(req.body);
++      // A pinned single-model key accepts the native id the client sends (for example "dfmodel"
++      // for "qoder/dfmodel"). Anything else is not an alias of the pinned model: leave it alone
++      // so the authorization check below rejects it instead of silently switching models.
++      if(requested===fixed.model||fixed.model.endsWith(`/${requested}`)){
++        if(requested!==fixed.model){req.body={...(req.body as Record<string,unknown>),model:fixed.model};reply.header('X-Token-Flow-Model',fixed.model);}
++      }
+     }
+     const started=Date.now();const traceRequest=requestTrace(req.body);let traceResponse:ResponseObservation={tools:[]};let compaction:CompactionReport|undefined;let contextUsageIncomplete=false;let recorded=false;let callError:{code:string;message:string}|undefined;
+     const record=(status:number,usage:{inputTokens:number|null;outputTokens:number|null;cachedTokens?:number|null;cacheWriteTokens?:number|null;reasoningTokens?:number|null}={inputTokens:null,outputTokens:null})=>{
+diff --git a/packages/core/src/windows-agent-lifecycle.ts b/packages/core/src/windows-agent-lifecycle.ts
+index 1b01a9a..ac7cd7d 100644
+--- a/packages/core/src/windows-agent-lifecycle.ts
++++ b/packages/core/src/windows-agent-lifecycle.ts
+@@ -4,10 +4,11 @@ import {open,readFile,lstat,access} from 'node:fs/promises';
+ import {win32,join} from 'node:path';
+ import {setTimeout as delay} from 'node:timers/promises';
+ import {desktopCandidates,desktopNames,windowsRegistryApp,storePackageFor} from './agent-installation.js';
++import {qoderIdeUserDataPath} from './qoder-ide-login.js';
+ 
+ export type WindowsTarget='claude-desktop'|'qoder'|'qoder-ide'|'codex'|'workbuddy'|'workbuddy-ai'|'deepseek';
+ export type WindowsRun=(file:string,args:string[])=>Promise<{stdout:string}>;
+-export type WindowsProcess={pid:number;parent:number;path:string;started:string;customProfile?:boolean};
++export type WindowsProcess={pid:number;parent:number;path:string;started:string;profile?:string;crashReporter?:boolean};
+ const exec=promisify(execFile);
+ const runDefault:WindowsRun=(file,args)=>exec(file,args,{timeout:15000,maxBuffer:2*1024*1024,windowsHide:true});
+ const failure=(message:string)=>Object.assign(new Error(message),{statusCode:409});
+@@ -16,7 +17,8 @@ const canonical=(path:string)=>win32.normalize(path).toLowerCase();
+ const apps={
+  'claude-desktop':{name:'Claude',images:['Claude.exe'],package:'@ant/desktop'},
+  qoder:{name:'Qoder',images:['Qoder.exe'],package:'qoder'},
+- 'qoder-ide':{name:'Qoder IDE',images:['Qoder.exe'],package:'qoder-ide'},
++ // Qoder IDE 1.106+ names its executable "Qoder IDE.exe"; earlier builds used "Qoder.exe".
++ 'qoder-ide':{name:'Qoder IDE',images:['Qoder IDE.exe','Qoder.exe'],package:'qoder-ide'},
+  codex:{name:'Codex',images:['Codex.exe','ChatGPT.exe','CodexCLI.exe'],package:'openai-codex-electron'},
+  workbuddy:{name:'WorkBuddy',images:['WorkBuddy.exe'],package:'@genie/workbuddy-desktop'},
+  'workbuddy-ai':{name:'WorkBuddyAI 国际版',images:['WorkBuddyAI.exe','WorkBuddy AI.exe'],package:'@genie/workbuddy-desktop:international'},
+@@ -58,7 +60,8 @@ export async function electronDesktopIdentity(archive:string){
+ export async function qoderIdeWindowsIdentity(directory:string){
+  const read=async(name:string)=>{const path=join(directory,name),info=await lstat(path);if(!info.isFile()||info.size>1024*1024)throw Error();return JSON.parse(await readFile(path,'utf8'));};
+  const [pkg,product]=await Promise.all([read('package.json'),read('product.json')]);
+- if(pkg.name!=='Qoder'||product.win32AppUserModelId!=='AlibabaCloud.Qoder'||product.applicationName!=='qoder'||product.dataFolderName!=='.qoder')return;
++ // product.json carries the identity; the package name varies between builds ("Qoder", "Qoder IDE", "qoder-ide").
++ if(!/^qoder(?:[ -]ide)?$/i.test(String(pkg.name??''))||product.win32AppUserModelId!=='AlibabaCloud.Qoder'||product.applicationName!=='qoder'||product.dataFolderName!=='.qoder')return;
+  return 'qoder-ide';
+ }
+ export function codexCliWindowsIdentity(path:string):string|undefined{
+@@ -72,7 +75,13 @@ export async function windowsAppIdentity(path:string):Promise<string|undefined>{
+  const claudeHelper=process.env.LOCALAPPDATA?win32.join(process.env.LOCALAPPDATA,'Claude-3p','claude-code'):undefined;
+  if(base==='claude.exe'&&claudeHelper&&win32.normalize(path).toLowerCase().startsWith(canonical(claudeHelper)+win32.sep))return 'claude-desktop-helper';
+  try{const identity=await electronDesktopIdentity(win32.join(win32.dirname(path),'resources','app.asar'));if(identity)return identity;}catch{}
+- if(base==='qoder.exe')try{return await qoderIdeWindowsIdentity(win32.join(win32.dirname(path),'resources','app'));}catch{}
++ if(base==='qoder.exe'||base==='qoder ide.exe'){
++  try{return await qoderIdeWindowsIdentity(win32.join(win32.dirname(path),'resources','app'));}catch{}
++  // Qoder IDE bundles its own Qoder.exe helper (resources/app/resources/bin). It shares the
++  // standalone app's file name but belongs to a different, known application: report it as
++  // such so it can be ignored instead of blocking the standalone app as an unknown process.
++  if(/[\\/]qoder ide[\\/]resources[\\/]/i.test(win32.normalize(path)))return 'qoder-ide-helper';
++ }
+  if(base==='codex.exe'||base==='codexcli.exe')try{return codexCliWindowsIdentity(path);}catch{}
+ }
+ 
+@@ -85,7 +94,7 @@ export class WindowsAgentLifecycle {
+   let rows:unknown;
+   try{rows=JSON.parse(await powershell(this.run,`# tokenflow:inspect\n$rows=@(Get-CimInstance Win32_Process -Filter ${quote(filter)} | ForEach-Object {
+ $p=Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
+-if($p){try{[pscustomobject]@{pid=$p.Id;parent=$_.ParentProcessId;path=$p.Path;started=$p.StartTime.ToUniversalTime().Ticks.ToString();customProfile=[bool]($_.CommandLine -match '(?i)(?:^|\\s)--(?:user-data-dir|profile)(?:=|\\s|$)')}}catch{[pscustomobject]@{pid=$p.Id}}}
++if($p){try{$profile='';if($_.CommandLine -match '(?i)--(?:user-data-dir|profile)=("?)([^"\\s]+)\\1'){$profile=$matches[2]};[pscustomobject]@{pid=$p.Id;parent=$_.ParentProcessId;path=$p.Path;started=$p.StartTime.ToUniversalTime().Ticks.ToString();profile=$profile;crashReporter=[bool]($_.CommandLine -match '(?i)--type=crashpad-handler')}}catch{[pscustomobject]@{pid=$p.Id}}}
+ })\nConvertTo-Json -Compress -InputObject @($rows)`));}catch{throw failure('无法可靠检查 Windows Agent 进程，请手动退出并重新打开。');}
+   if(!Array.isArray(rows))throw failure('Windows 进程信息不完整，已停止自动重启。');
+   const found:WindowsProcess[]=[];
+@@ -94,7 +103,13 @@ if($p){try{[pscustomobject]@{pid=$p.Id;parent=$_.ParentProcessId;path=$p.Path;st
+    if(!p||!Number.isSafeInteger(p.pid)||p.pid<=1||p.pid===process.pid||!Number.isSafeInteger(p.parent)||typeof p.path!=='string'||!win32.isAbsolute(p.path)||typeof p.started!=='string'||!/^\d+$/.test(p.started))throw failure('无法确认同名进程的路径或启动时间，请手动退出目标 Agent。');
+    const name=await this.identity(p.path);
+    if(!name)throw failure(`无法确认 ${apps[target].name} 同名进程的应用身份，请手动退出目标 Agent（包括 CLI）。`);
+-   if(name===apps[target].package){if(target==='qoder-ide'&&p.customProfile)throw failure('Qoder IDE 正在使用自定义配置目录或个人资料，请在 IDE 内切换账号。');found.push(p);}
++   // A crash reporter outlives the app it belongs to and never re-reads configuration.
++   if(name===apps[target].package&&!p.crashReporter){
++    // Every Electron child process carries --user-data-dir, so only a value that differs from
++    // the default profile roots the login outside the store this feature can safely rewrite.
++    if(target==='qoder-ide'&&p.profile&&canonical(win32.resolve(p.profile))!==canonical(win32.resolve(qoderIdeUserDataPath())))throw failure('Qoder IDE 正在使用自定义配置目录或个人资料，请在 IDE 内切换账号。');
++    found.push(p);
++   }
+   }
+   return found;
+  }
+diff --git a/tests/a2a-service.test.ts b/tests/a2a-service.test.ts
+index 1cdd915..4fa06de 100644
+--- a/tests/a2a-service.test.ts
++++ b/tests/a2a-service.test.ts
+@@ -262,6 +262,27 @@ it('passes the new key authorization set to Codex migration when replacing gatew
+  }finally{migrate.mockRestore();await service.app.close();await rm(root,{recursive:true,force:true});}
+ });
+ 
++it('accepts only the pinned model native id on a single-model connection key',async()=>{
++ const root=await mkdtemp(join(await realpath(tmpdir()),'codex-pinned-key-'));
++ await mkdir(join(root,'codex'));await mkdir(join(root,'cliproxy'));
++ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'codex.json',provider:'codex',status:'active',models:['pinned-model','other-model']}]));
++ const path=join(root,'codex/config.toml');await writeFile(path,'model="native-model"');
++ const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
++ const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{codex:path,claude:join(root,'claude/settings.json'),qoder:join(root,'qoder/settings.json'),workbuddy:join(root,'workbuddy/models.json')},agentProcesses:async()=>[]});
++ try{await service.proxy.start();const headers={host:'127.0.0.1:9527',authorization:'Bearer admin'};const sourceId=service.proxy.snapshot().accounts[0].id;
++  const target=(await service.app.inject({url:'/api/a2a',headers})).json().targets.find((t:{id:string})=>t.id==='codex');
++  // A single selection pins the connection key to "codex/pinned-model".
++  const connected=await service.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload:{target:'codex',sourceId,model:'codex/pinned-model',revision:target.revision}});
++  expect(connected.statusCode,connected.body).toBe(200);
++  const clientKey=(parse(await readFile(path,'utf8')).model_providers as any).token_flow.experimental_bearer_token as string;
++  const keyHeaders={host:headers.host,authorization:`Bearer ${clientKey}`};
++  // The native id resolves to the pinned model and reports the canonical id.
++  const native=await service.app.inject({method:'POST',url:'/v1/responses',headers:keyHeaders,payload:{model:'pinned-model',input:'hello'}});
++  expect(native.statusCode,native.body).toBe(200);expect(native.headers['x-token-flow-model']).toBe('codex/pinned-model');
++  // A different model stays unauthorized instead of being silently rewritten to the pinned one.
++  for(const model of ['other-model','codex/other-model','unrelated'])expect((await service.app.inject({method:'POST',url:'/v1/responses',headers:keyHeaders,payload:{model,input:'hello'}})).statusCode).toBe(403);
++ }finally{await service.app.close();await rm(root,{recursive:true,force:true});}
++});
+ 
+ it('performs the confirmed Codex stop, backup, change and relaunch in a single admin request',async()=>{
+  const root=await mkdtemp(join(await realpath(tmpdir()),'codex-auto-switch-api-'));
+diff --git a/tests/agent-installation.test.ts b/tests/agent-installation.test.ts
+index 01a0cb7..96bc1e0 100644
+--- a/tests/agent-installation.test.ts
++++ b/tests/agent-installation.test.ts
+@@ -60,6 +60,12 @@ it('searches user-configured install roots before the fixed application roots',(
+  // Fixed roots keep the folder-based layout only; no extra flat variant is probed there.
+  expect(candidates).not.toContain('C:\\Users\\test\\AppData\\Local\\Programs\\Qoder.exe');
+ });
++it('probes both Qoder IDE executable names because 1.106 renamed the binary',()=>{
++ const candidates=desktopCandidates('qoder-ide','win32','C:\\Users\\test',{LOCALAPPDATA:'C:\\Users\\test\\AppData\\Local',ProgramFiles:'C:\\Program Files'});
++ expect(candidates).toContain('C:\\Users\\test\\AppData\\Local\\Programs\\Qoder IDE\\Qoder IDE.exe');
++ expect(candidates).toContain('C:\\Users\\test\\AppData\\Local\\Programs\\Qoder IDE\\Qoder.exe');
++ expect(candidates.indexOf('C:\\Users\\test\\AppData\\Local\\Programs\\Qoder IDE\\Qoder IDE.exe')).toBeLessThan(candidates.indexOf('C:\\Users\\test\\AppData\\Local\\Programs\\Qoder IDE\\Qoder.exe'));
++});
+ it.skipIf(process.platform!=='darwin')('searches user-configured install roots for mac bundles too',()=>{
+  expect(desktopCandidates('deepseek','darwin','/home/test',{AGENT_INSTALL_DIRS:'/portable'})).toContain('/portable/DeepSeek Harness.app');
+ });
+diff --git a/tests/windows-agent-lifecycle.test.ts b/tests/windows-agent-lifecycle.test.ts
+index 64d94e8..969033f 100644
+--- a/tests/windows-agent-lifecycle.test.ts
++++ b/tests/windows-agent-lifecycle.test.ts
+@@ -4,6 +4,7 @@ import {tmpdir} from 'node:os';
+ import {join,win32} from 'node:path';
+ import {createPackage} from '@electron/asar';
+ import {electronPackageName,electronDesktopIdentity,qoderIdeWindowsIdentity,codexCliWindowsIdentity,windowsAppIdentity,WindowsAgentLifecycle,type WindowsProcess,type WindowsTarget} from '../packages/core/src/windows-agent-lifecycle.js';
++import {qoderIdeUserDataPath} from '../packages/core/src/qoder-ide-login.js';
+ 
+ const identities={'claude-desktop':'@ant/desktop',qoder:'qoder','qoder-ide':'qoder-ide',codex:'openai-codex-electron',workbuddy:'@genie/workbuddy-desktop','workbuddy-ai':'@genie/workbuddy-desktop:international',deepseek:'@deepseek-ai/dsh-desktop'};
+ const paths={'qoder-ide':'D:\\Apps\\Qoder IDE\\Qoder.exe','claude-desktop':'D:\\Apps\\Claude\\Claude.exe',qoder:'D:\\中文 程序\\Qoder\\Qoder.exe',codex:'D:\\Apps\\Codex\\Codex.exe',workbuddy:'D:\\Apps\\WorkBuddy\\WorkBuddy.exe','workbuddy-ai':'D:\\Apps\\WorkBuddy AI\\WorkBuddyAI.exe',deepseek:'D:\\Apps\\DeepSeek\\DeepSeek Harness.exe'};
+@@ -171,9 +172,58 @@ it('validates the unpacked Windows Qoder IDE product instead of accepting the ex
+  const product={win32AppUserModelId:'AlibabaCloud.Qoder',applicationName:'qoder',dataFolderName:'.qoder'};await writeFile(join(dir,'product.json'),JSON.stringify(product));expect(await qoderIdeWindowsIdentity(dir)).toBe('qoder-ide');
+  await writeFile(join(dir,'product.json'),JSON.stringify({...product,win32AppUserModelId:'Unrelated.Editor'}));expect(await qoderIdeWindowsIdentity(dir)).toBeUndefined();
+ });
++it('accepts the package names Qoder IDE builds ship with next to the unchanged product identity',async()=>{
++ const dir=await mkdtemp(join(tmpdir(),'qoder-ide-names-'));dirs.push(dir);await writeFile(join(dir,'product.json'),JSON.stringify({win32AppUserModelId:'AlibabaCloud.Qoder',applicationName:'qoder',dataFolderName:'.qoder'}));
++ // 1.106.3 ships "Qoder IDE"; keep accepting the older "Qoder" and Linux "qoder-ide" spellings.
++ for(const name of ['Qoder','Qoder IDE','qoder-ide']){await writeFile(join(dir,'package.json'),JSON.stringify({name}));expect(await qoderIdeWindowsIdentity(dir)).toBe('qoder-ide');}
++ await writeFile(join(dir,'package.json'),JSON.stringify({name:'SomeOtherEditor'}));expect(await qoderIdeWindowsIdentity(dir)).toBeUndefined();
++});
++it('restarts Qoder even though its crash reporter outlives the closed app',async()=>{
++ // Electron's crashpad-handler keeps the app's image name and path after the main process
++ // exits. Treating it as a live instance made every restart fail with "尚未退出".
++ const f=fixture('qoder');
++ f.state.rows=[proc('qoder',{pid:100}),proc('qoder',{pid:777,path:paths.qoder,crashReporter:true})];
++ await f.lifecycle.restart('qoder');
++ const close=f.scripts().find(s=>s.includes('# tokenflow:close'))!;
++ const payload=JSON.parse(Buffer.from(close.match(/FromBase64String\('([^']+)'\)/)![1],'base64').toString());
++ expect(payload.map((p:WindowsProcess)=>p.pid)).toEqual([100]);
++});
++it('treats the Qoder.exe bundled inside a running Qoder IDE as a known IDE helper',async()=>{
++ // Qoder IDE runs its own Qoder.exe under resources/app/resources/bin. Sharing the standalone
++ // app's file name must not block the standalone app as an unknown process.
++ const bundled='C:\\Users\\user\\AppData\\Local\\Programs\\Qoder IDE\\resources\\app\\resources\\bin\\x86_64_windows\\Qoder.exe';
++ expect(await windowsAppIdentity(bundled)).toBe('qoder-ide-helper');
++ // A bare Qoder.exe with no package metadata stays unknown rather than being guessed.
++ expect(await windowsAppIdentity('D:\\Unrelated\\Qoder\\Qoder.exe')).toBeUndefined();
++ const f=fixture('qoder');
++ f.state.rows.push(proc('qoder',{pid:999,parent:10,path:bundled}));
++ f.identity.mockImplementation(async path=>path===bundled?'qoder-ide-helper':'qoder');
++ await f.lifecycle.restart('qoder');
++ const close=f.scripts().find(s=>s.includes('# tokenflow:close'))!;
++ const payload=JSON.parse(Buffer.from(close.match(/FromBase64String\('([^']+)'\)/)![1],'base64').toString());
++ expect(payload.map((p:WindowsProcess)=>p.pid)).toEqual([100]);
++});
++it('resolves Qoder IDE from its current Qoder IDE.exe as well as the legacy Qoder.exe',async()=>{
++ for(const exe of ['Qoder IDE.exe','Qoder.exe']){
++  const root=await mkdtemp(join(tmpdir(),'qoder-ide-exe-'));dirs.push(root);
++  const app=join(root,'resources','app');await mkdir(app,{recursive:true});
++  await writeFile(join(app,'package.json'),JSON.stringify({name:'Qoder IDE'}));
++  await writeFile(join(app,'product.json'),JSON.stringify({win32AppUserModelId:'AlibabaCloud.Qoder',applicationName:'qoder',dataFolderName:'.qoder'}));
++  expect(await windowsAppIdentity(join(root,exe))).toBe('qoder-ide');
++ }
++});
+ 
+-it('does not close an IDE using a custom user-data directory',async()=>{
+- const f=fixture('qoder-ide');f.state.rows=[proc('qoder-ide',{customProfile:true})];await expect(f.lifecycle.stop('qoder-ide')).rejects.toThrow('自定义配置');expect(f.scripts().some(s=>s.includes('# tokenflow:close'))).toBe(false);
++it('does not close an IDE whose profile is outside the default user-data directory',async()=>{
++ const f=fixture('qoder-ide');f.state.rows=[proc('qoder-ide',{profile:'D:\\Portable\\QoderData'})];await expect(f.lifecycle.stop('qoder-ide')).rejects.toThrow('自定义配置');expect(f.scripts().some(s=>s.includes('# tokenflow:close'))).toBe(false);
++});
++it('restarts Qoder IDE although every Electron child carries the default user-data flag',async()=>{
++ // Qoder IDE passes --user-data-dir to each child process; the default path is not a custom profile.
++ const f=fixture('qoder-ide');
++ f.state.rows=[proc('qoder-ide',{pid:100,profile:qoderIdeUserDataPath('win32')})];
++ await f.lifecycle.restart('qoder-ide');
++ const close=f.scripts().find(s=>s.includes('# tokenflow:close'))!;
++ const payload=JSON.parse(Buffer.from(close.match(/FromBase64String\('([^']+)'\)/)![1],'base64').toString());
++ expect(payload.map((p:WindowsProcess)=>p.pid)).toEqual([100]);
+ });
+ it('identifies official OpenAI Codex CLI binaries and ignores them during desktop close',async()=>{
+  expect(codexCliWindowsIdentity('C:\\Users\\user\\AppData\\Local\\OpenAI\\Codex\\bin\\hash123\\codex.exe')).toBe('openai-codex-cli');

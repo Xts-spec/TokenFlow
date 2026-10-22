@@ -9,9 +9,15 @@ import type {Secrets} from './service.js';
 import {z} from 'zod';
 
 export type QoderIdeOptions={path?:string;crypto?:QoderCrypto;platform?:NodeJS.Platform;fetch?:typeof fetch};
-export function qoderIdeLoginPath(platform:NodeJS.Platform=process.platform,home=homedir(),env:NodeJS.ProcessEnv=process.env){
+/** Electron's user-data root for Qoder IDE. Every Electron child process carries it on the
+ * command line, so its presence says nothing about a custom profile; only a different path does. */
+export function qoderIdeUserDataPath(platform:NodeJS.Platform=process.platform,home=homedir(),env:NodeJS.ProcessEnv=process.env){
  const p=platform==='win32'?win32:posix,base=platform==='win32'?(env.APPDATA||p.join(home,'AppData','Roaming')):platform==='darwin'?p.join(home,'Library','Application Support'):(env.XDG_CONFIG_HOME||p.join(home,'.config'));
- return p.join(base,'Qoder','User','globalStorage','state.vscdb');
+ return p.join(base,'Qoder');
+}
+export function qoderIdeLoginPath(platform:NodeJS.Platform=process.platform,home=homedir(),env:NodeJS.ProcessEnv=process.env){
+ const p=platform==='win32'?win32:posix;
+ return p.join(qoderIdeUserDataPath(platform,home,env),'User','globalStorage','state.vscdb');
 }
 const keys=['secret://aicoding.auth.userInfo','secret://aicoding.auth.userPlan','secret://aicoding.auth.creditUsage','secret://aicoding.auth.enterpriseUsage'] as const;
 const stateSchema=z.tuple([z.string().max(2*1024*1024).nullable(),z.string().max(2*1024*1024).nullable(),z.string().max(2*1024*1024).nullable(),z.string().max(2*1024*1024).nullable()]);

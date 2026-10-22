@@ -4,6 +4,7 @@ import {tmpdir} from 'node:os';
 import {join,win32} from 'node:path';
 import {createPackage} from '@electron/asar';
 import {electronPackageName,electronDesktopIdentity,qoderIdeWindowsIdentity,codexCliWindowsIdentity,windowsAppIdentity,WindowsAgentLifecycle,type WindowsProcess,type WindowsTarget} from '../packages/core/src/windows-agent-lifecycle.js';
+import {qoderIdeUserDataPath} from '../packages/core/src/qoder-ide-login.js';
 
 const identities={'claude-desktop':'@ant/desktop',qoder:'qoder','qoder-ide':'qoder-ide',codex:'openai-codex-electron',workbuddy:'@genie/workbuddy-desktop','workbuddy-ai':'@genie/workbuddy-desktop:international',deepseek:'@deepseek-ai/dsh-desktop'};
 const paths={'qoder-ide':'D:\\Apps\\Qoder IDE\\Qoder.exe','claude-desktop':'D:\\Apps\\Claude\\Claude.exe',qoder:'D:\\中文 程序\\Qoder\\Qoder.exe',codex:'D:\\Apps\\Codex\\Codex.exe',workbuddy:'D:\\Apps\\WorkBuddy\\WorkBuddy.exe','workbuddy-ai':'D:\\Apps\\WorkBuddy AI\\WorkBuddyAI.exe',deepseek:'D:\\Apps\\DeepSeek\\DeepSeek Harness.exe'};
@@ -171,9 +172,58 @@ it('validates the unpacked Windows Qoder IDE product instead of accepting the ex
  const product={win32AppUserModelId:'AlibabaCloud.Qoder',applicationName:'qoder',dataFolderName:'.qoder'};await writeFile(join(dir,'product.json'),JSON.stringify(product));expect(await qoderIdeWindowsIdentity(dir)).toBe('qoder-ide');
  await writeFile(join(dir,'product.json'),JSON.stringify({...product,win32AppUserModelId:'Unrelated.Editor'}));expect(await qoderIdeWindowsIdentity(dir)).toBeUndefined();
 });
+it('accepts the package names Qoder IDE builds ship with next to the unchanged product identity',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'qoder-ide-names-'));dirs.push(dir);await writeFile(join(dir,'product.json'),JSON.stringify({win32AppUserModelId:'AlibabaCloud.Qoder',applicationName:'qoder',dataFolderName:'.qoder'}));
+ // 1.106.3 ships "Qoder IDE"; keep accepting the older "Qoder" and Linux "qoder-ide" spellings.
+ for(const name of ['Qoder','Qoder IDE','qoder-ide']){await writeFile(join(dir,'package.json'),JSON.stringify({name}));expect(await qoderIdeWindowsIdentity(dir)).toBe('qoder-ide');}
+ await writeFile(join(dir,'package.json'),JSON.stringify({name:'SomeOtherEditor'}));expect(await qoderIdeWindowsIdentity(dir)).toBeUndefined();
+});
+it('restarts Qoder even though its crash reporter outlives the closed app',async()=>{
+ // Electron's crashpad-handler keeps the app's image name and path after the main process
+ // exits. Treating it as a live instance made every restart fail with "尚未退出".
+ const f=fixture('qoder');
+ f.state.rows=[proc('qoder',{pid:100}),proc('qoder',{pid:777,path:paths.qoder,crashReporter:true})];
+ await f.lifecycle.restart('qoder');
+ const close=f.scripts().find(s=>s.includes('# tokenflow:close'))!;
+ const payload=JSON.parse(Buffer.from(close.match(/FromBase64String\('([^']+)'\)/)![1],'base64').toString());
+ expect(payload.map((p:WindowsProcess)=>p.pid)).toEqual([100]);
+});
+it('treats the Qoder.exe bundled inside a running Qoder IDE as a known IDE helper',async()=>{
+ // Qoder IDE runs its own Qoder.exe under resources/app/resources/bin. Sharing the standalone
+ // app's file name must not block the standalone app as an unknown process.
+ const bundled='C:\\Users\\user\\AppData\\Local\\Programs\\Qoder IDE\\resources\\app\\resources\\bin\\x86_64_windows\\Qoder.exe';
+ expect(await windowsAppIdentity(bundled)).toBe('qoder-ide-helper');
+ // A bare Qoder.exe with no package metadata stays unknown rather than being guessed.
+ expect(await windowsAppIdentity('D:\\Unrelated\\Qoder\\Qoder.exe')).toBeUndefined();
+ const f=fixture('qoder');
+ f.state.rows.push(proc('qoder',{pid:999,parent:10,path:bundled}));
+ f.identity.mockImplementation(async path=>path===bundled?'qoder-ide-helper':'qoder');
+ await f.lifecycle.restart('qoder');
+ const close=f.scripts().find(s=>s.includes('# tokenflow:close'))!;
+ const payload=JSON.parse(Buffer.from(close.match(/FromBase64String\('([^']+)'\)/)![1],'base64').toString());
+ expect(payload.map((p:WindowsProcess)=>p.pid)).toEqual([100]);
+});
+it('resolves Qoder IDE from its current Qoder IDE.exe as well as the legacy Qoder.exe',async()=>{
+ for(const exe of ['Qoder IDE.exe','Qoder.exe']){
+  const root=await mkdtemp(join(tmpdir(),'qoder-ide-exe-'));dirs.push(root);
+  const app=join(root,'resources','app');await mkdir(app,{recursive:true});
+  await writeFile(join(app,'package.json'),JSON.stringify({name:'Qoder IDE'}));
+  await writeFile(join(app,'product.json'),JSON.stringify({win32AppUserModelId:'AlibabaCloud.Qoder',applicationName:'qoder',dataFolderName:'.qoder'}));
+  expect(await windowsAppIdentity(join(root,exe))).toBe('qoder-ide');
+ }
+});
 
-it('does not close an IDE using a custom user-data directory',async()=>{
- const f=fixture('qoder-ide');f.state.rows=[proc('qoder-ide',{customProfile:true})];await expect(f.lifecycle.stop('qoder-ide')).rejects.toThrow('自定义配置');expect(f.scripts().some(s=>s.includes('# tokenflow:close'))).toBe(false);
+it('does not close an IDE whose profile is outside the default user-data directory',async()=>{
+ const f=fixture('qoder-ide');f.state.rows=[proc('qoder-ide',{profile:'D:\\Portable\\QoderData'})];await expect(f.lifecycle.stop('qoder-ide')).rejects.toThrow('自定义配置');expect(f.scripts().some(s=>s.includes('# tokenflow:close'))).toBe(false);
+});
+it('restarts Qoder IDE although every Electron child carries the default user-data flag',async()=>{
+ // Qoder IDE passes --user-data-dir to each child process; the default path is not a custom profile.
+ const f=fixture('qoder-ide');
+ f.state.rows=[proc('qoder-ide',{pid:100,profile:qoderIdeUserDataPath('win32')})];
+ await f.lifecycle.restart('qoder-ide');
+ const close=f.scripts().find(s=>s.includes('# tokenflow:close'))!;
+ const payload=JSON.parse(Buffer.from(close.match(/FromBase64String\('([^']+)'\)/)![1],'base64').toString());
+ expect(payload.map((p:WindowsProcess)=>p.pid)).toEqual([100]);
 });
 it('identifies official OpenAI Codex CLI binaries and ignores them during desktop close',async()=>{
  expect(codexCliWindowsIdentity('C:\\Users\\user\\AppData\\Local\\OpenAI\\Codex\\bin\\hash123\\codex.exe')).toBe('openai-codex-cli');

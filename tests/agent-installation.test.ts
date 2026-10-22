@@ -60,6 +60,12 @@ it('searches user-configured install roots before the fixed application roots',(
  // Fixed roots keep the folder-based layout only; no extra flat variant is probed there.
  expect(candidates).not.toContain('C:\\Users\\test\\AppData\\Local\\Programs\\Qoder.exe');
 });
+it('probes both Qoder IDE executable names because 1.106 renamed the binary',()=>{
+ const candidates=desktopCandidates('qoder-ide','win32','C:\\Users\\test',{LOCALAPPDATA:'C:\\Users\\test\\AppData\\Local',ProgramFiles:'C:\\Program Files'});
+ expect(candidates).toContain('C:\\Users\\test\\AppData\\Local\\Programs\\Qoder IDE\\Qoder IDE.exe');
+ expect(candidates).toContain('C:\\Users\\test\\AppData\\Local\\Programs\\Qoder IDE\\Qoder.exe');
+ expect(candidates.indexOf('C:\\Users\\test\\AppData\\Local\\Programs\\Qoder IDE\\Qoder IDE.exe')).toBeLessThan(candidates.indexOf('C:\\Users\\test\\AppData\\Local\\Programs\\Qoder IDE\\Qoder.exe'));
+});
 it.skipIf(process.platform!=='darwin')('searches user-configured install roots for mac bundles too',()=>{
  expect(desktopCandidates('deepseek','darwin','/home/test',{AGENT_INSTALL_DIRS:'/portable'})).toContain('/portable/DeepSeek Harness.app');
 });

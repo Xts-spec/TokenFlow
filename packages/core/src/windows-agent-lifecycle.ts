@@ -4,10 +4,11 @@ import {open,readFile,lstat,access} from 'node:fs/promises';
 import {win32,join} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import {desktopCandidates,desktopNames,windowsRegistryApp,storePackageFor} from './agent-installation.js';
+import {qoderIdeUserDataPath} from './qoder-ide-login.js';
 
 export type WindowsTarget='claude-desktop'|'qoder'|'qoder-ide'|'codex'|'workbuddy'|'workbuddy-ai'|'deepseek';
 export type WindowsRun=(file:string,args:string[])=>Promise<{stdout:string}>;
-export type WindowsProcess={pid:number;parent:number;path:string;started:string;customProfile?:boolean};
+export type WindowsProcess={pid:number;parent:number;path:string;started:string;profile?:string;crashReporter?:boolean};
 const exec=promisify(execFile);
 const runDefault:WindowsRun=(file,args)=>exec(file,args,{timeout:15000,maxBuffer:2*1024*1024,windowsHide:true});
 const failure=(message:string)=>Object.assign(new Error(message),{statusCode:409});
@@ -16,7 +17,8 @@ const canonical=(path:string)=>win32.normalize(path).toLowerCase();
 const apps={
  'claude-desktop':{name:'Claude',images:['Claude.exe'],package:'@ant/desktop'},
  qoder:{name:'Qoder',images:['Qoder.exe'],package:'qoder'},
- 'qoder-ide':{name:'Qoder IDE',images:['Qoder.exe'],package:'qoder-ide'},
+ // Qoder IDE 1.106+ names its executable "Qoder IDE.exe"; earlier builds used "Qoder.exe".
+ 'qoder-ide':{name:'Qoder IDE',images:['Qoder IDE.exe','Qoder.exe'],package:'qoder-ide'},
  codex:{name:'Codex',images:['Codex.exe','ChatGPT.exe','CodexCLI.exe'],package:'openai-codex-electron'},
  workbuddy:{name:'WorkBuddy',images:['WorkBuddy.exe'],package:'@genie/workbuddy-desktop'},
  'workbuddy-ai':{name:'WorkBuddyAI 国际版',images:['WorkBuddyAI.exe','WorkBuddy AI.exe'],package:'@genie/workbuddy-desktop:international'},
@@ -58,7 +60,8 @@ export async function electronDesktopIdentity(archive:string){
 export async function qoderIdeWindowsIdentity(directory:string){
  const read=async(name:string)=>{const path=join(directory,name),info=await lstat(path);if(!info.isFile()||info.size>1024*1024)throw Error();return JSON.parse(await readFile(path,'utf8'));};
  const [pkg,product]=await Promise.all([read('package.json'),read('product.json')]);
- if(pkg.name!=='Qoder'||product.win32AppUserModelId!=='AlibabaCloud.Qoder'||product.applicationName!=='qoder'||product.dataFolderName!=='.qoder')return;
+ // product.json carries the identity; the package name varies between builds ("Qoder", "Qoder IDE", "qoder-ide").
+ if(!/^qoder(?:[ -]ide)?$/i.test(String(pkg.name??''))||product.win32AppUserModelId!=='AlibabaCloud.Qoder'||product.applicationName!=='qoder'||product.dataFolderName!=='.qoder')return;
  return 'qoder-ide';
 }
 export function codexCliWindowsIdentity(path:string):string|undefined{
@@ -72,7 +75,13 @@ export async function windowsAppIdentity(path:string):Promise<string|undefined>{
  const claudeHelper=process.env.LOCALAPPDATA?win32.join(process.env.LOCALAPPDATA,'Claude-3p','claude-code'):undefined;
  if(base==='claude.exe'&&claudeHelper&&win32.normalize(path).toLowerCase().startsWith(canonical(claudeHelper)+win32.sep))return 'claude-desktop-helper';
  try{const identity=await electronDesktopIdentity(win32.join(win32.dirname(path),'resources','app.asar'));if(identity)return identity;}catch{}
- if(base==='qoder.exe')try{return await qoderIdeWindowsIdentity(win32.join(win32.dirname(path),'resources','app'));}catch{}
+ if(base==='qoder.exe'||base==='qoder ide.exe'){
+  try{return await qoderIdeWindowsIdentity(win32.join(win32.dirname(path),'resources','app'));}catch{}
+  // Qoder IDE bundles its own Qoder.exe helper (resources/app/resources/bin). It shares the
+  // standalone app's file name but belongs to a different, known application: report it as
+  // such so it can be ignored instead of blocking the standalone app as an unknown process.
+  if(/[\\/]qoder ide[\\/]resources[\\/]/i.test(win32.normalize(path)))return 'qoder-ide-helper';
+ }
  if(base==='codex.exe'||base==='codexcli.exe')try{return codexCliWindowsIdentity(path);}catch{}
 }
 
@@ -85,7 +94,7 @@ export class WindowsAgentLifecycle {
   let rows:unknown;
   try{rows=JSON.parse(await powershell(this.run,`# tokenflow:inspect\n$rows=@(Get-CimInstance Win32_Process -Filter ${quote(filter)} | ForEach-Object {
 $p=Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
-if($p){try{[pscustomobject]@{pid=$p.Id;parent=$_.ParentProcessId;path=$p.Path;started=$p.StartTime.ToUniversalTime().Ticks.ToString();customProfile=[bool]($_.CommandLine -match '(?i)(?:^|\\s)--(?:user-data-dir|profile)(?:=|\\s|$)')}}catch{[pscustomobject]@{pid=$p.Id}}}
+if($p){try{$profile='';if($_.CommandLine -match '(?i)--(?:user-data-dir|profile)=("?)([^"\\s]+)\\1'){$profile=$matches[2]};[pscustomobject]@{pid=$p.Id;parent=$_.ParentProcessId;path=$p.Path;started=$p.StartTime.ToUniversalTime().Ticks.ToString();profile=$profile;crashReporter=[bool]($_.CommandLine -match '(?i)--type=crashpad-handler')}}catch{[pscustomobject]@{pid=$p.Id}}}
 })\nConvertTo-Json -Compress -InputObject @($rows)`));}catch{throw failure('无法可靠检查 Windows Agent 进程，请手动退出并重新打开。');}
   if(!Array.isArray(rows))throw failure('Windows 进程信息不完整，已停止自动重启。');
   const found:WindowsProcess[]=[];
@@ -94,7 +103,13 @@ if($p){try{[pscustomobject]@{pid=$p.Id;parent=$_.ParentProcessId;path=$p.Path;st
    if(!p||!Number.isSafeInteger(p.pid)||p.pid<=1||p.pid===process.pid||!Number.isSafeInteger(p.parent)||typeof p.path!=='string'||!win32.isAbsolute(p.path)||typeof p.started!=='string'||!/^\d+$/.test(p.started))throw failure('无法确认同名进程的路径或启动时间，请手动退出目标 Agent。');
    const name=await this.identity(p.path);
    if(!name)throw failure(`无法确认 ${apps[target].name} 同名进程的应用身份，请手动退出目标 Agent（包括 CLI）。`);
-   if(name===apps[target].package){if(target==='qoder-ide'&&p.customProfile)throw failure('Qoder IDE 正在使用自定义配置目录或个人资料，请在 IDE 内切换账号。');found.push(p);}
+   // A crash reporter outlives the app it belongs to and never re-reads configuration.
+   if(name===apps[target].package&&!p.crashReporter){
+    // Every Electron child process carries --user-data-dir, so only a value that differs from
+    // the default profile roots the login outside the store this feature can safely rewrite.
+    if(target==='qoder-ide'&&p.profile&&canonical(win32.resolve(p.profile))!==canonical(win32.resolve(qoderIdeUserDataPath())))throw failure('Qoder IDE 正在使用自定义配置目录或个人资料，请在 IDE 内切换账号。');
+    found.push(p);
+   }
   }
   return found;
  }

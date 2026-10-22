@@ -1028,9 +1028,13 @@ export async function createDesktopService(options:ServiceOptions) {
       if(Object.hasOwn(fixed.modelAliases,desktopAlias))req.body={...(req.body as Record<string,unknown>),model:fixed.modelAliases[desktopAlias]};
     }
     if(path!=='models'&&fixed&&!fixed.selections&&client.sourceId===fixed.sourceId&&client.models.length===1&&client.models[0]===fixed.model){
-      z.object({model:z.string().min(1).max(300)}).parse(req.body);
-      req.body={...(req.body as Record<string,unknown>),model:fixed.model};
-      reply.header('X-Token-Flow-Model',fixed.model);
+      const {model:requested}=z.object({model:z.string().min(1).max(300)}).parse(req.body);
+      // A pinned single-model key accepts the native id the client sends (for example "dfmodel"
+      // for "qoder/dfmodel"). Anything else is not an alias of the pinned model: leave it alone
+      // so the authorization check below rejects it instead of silently switching models.
+      if(requested===fixed.model||fixed.model.endsWith(`/${requested}`)){
+        if(requested!==fixed.model){req.body={...(req.body as Record<string,unknown>),model:fixed.model};reply.header('X-Token-Flow-Model',fixed.model);}
+      }
     }
     const started=Date.now();const traceRequest=requestTrace(req.body);let traceResponse:ResponseObservation={tools:[]};let compaction:CompactionReport|undefined;let contextUsageIncomplete=false;let recorded=false;let callError:{code:string;message:string}|undefined;
     const record=(status:number,usage:{inputTokens:number|null;outputTokens:number|null;cachedTokens?:number|null;cacheWriteTokens?:number|null;reasoningTokens?:number|null}={inputTokens:null,outputTokens:null})=>{

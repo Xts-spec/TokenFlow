@@ -44,10 +44,11 @@ export function desktopCandidates(target:Target|'claude-desktop'|'workbuddy-ai'|
  if(platform==='darwin')return [...envRoots(env,platform).flatMap(root=>names.map(name=>join(root,`${name}.app`))),...names.flatMap(name=>['/Applications',join(home,'Applications')].map(base=>join(base,`${name}.app`)))];
  if(platform==='win32'&&target==='claude-desktop'&&env.LOCALAPPDATA)return [win32.join(env.LOCALAPPDATA,'AnthropicClaude','Claude.exe'),win32.join(env.LOCALAPPDATA,'Programs','Claude','Claude.exe'),win32.join(env.LOCALAPPDATA,'Claude','Claude.exe')];
  if(platform==='win32')return names.flatMap(name=>{
-  const exe=target==='workbuddy-ai'?'WorkBuddyAI':target==='qoder-ide'?'Qoder':name;
+  // Qoder IDE renamed its executable from "Qoder.exe" to "Qoder IDE.exe" in 1.106.
+  const executables=target==='workbuddy-ai'?['WorkBuddyAI']:target==='qoder-ide'?['Qoder IDE','Qoder']:[name];
   const standard=[env.LOCALAPPDATA&&win32.join(env.LOCALAPPDATA,'Programs'),env.LOCALAPPDATA,env.ProgramFiles,env['ProgramFiles(x86)']].filter((base):base is string=>!!base&&win32.isAbsolute(base));
   // User-configured roots are searched first and accept either a per-app folder or the executable directly.
-  return [...envRoots(env,platform).flatMap(root=>[win32.join(root,name,`${exe}.exe`),win32.join(root,`${exe}.exe`)]),...standard.map(base=>win32.join(base,name,`${exe}.exe`))];
+  return [...envRoots(env,platform).flatMap(root=>executables.flatMap(exe=>[win32.join(root,name,`${exe}.exe`),win32.join(root,`${exe}.exe`)])),...standard.flatMap(base=>executables.map(exe=>win32.join(base,name,`${exe}.exe`)))];
  });
  return [];
 }
