@@ -17,12 +17,13 @@ const old='gpt-6-astra',selected='codex/gpt-6-luna';const progress=[];
 const server=createServer(async(req,res)=>{
  let text='';for await(const c of req)text+=c;
  const body=JSON.parse(text||'{}');
- const compact=JSON.stringify(body.input?.at(-1)).includes('CONTEXT CHECKPOINT COMPACTION');
+ const remote=body.input?.some(item=>item.type==='compaction_trigger');
+ const compact=remote||JSON.stringify(body.input?.at(-1)).includes('CONTEXT CHECKPOINT COMPACTION');
  calls.push({phase,path:req.url,model:body.model,compact,hasFirst:JSON.stringify(body.input).includes('FIRST_MARKER')});
  console.log(JSON.stringify(calls.at(-1)));
  if(phase===1&&body.model!==selected){res.writeHead(403,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:'unauthorized model '+body.model,type:'invalid_request_error',code:'model_not_allowed'}}));return;}
  const id=++n,answer=compact?'SYNTHETIC_SUMMARY preserve FIRST_MARKER':'SYNTHETIC_REPLY preserve FIRST_MARKER';
- const item={id:`msg_${id}`,type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:answer,annotations:[]}]};
+ const item=remote?{type:'compaction',encrypted_content:'synthetic_FIRST_MARKER_checkpoint'}:{id:`msg_${id}`,type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:answer,annotations:[]}]};
  const response={id:`resp_${id}`,object:'response',created_at:Math.floor(Date.now()/1000),model:body.model,status:'completed',output:[item],usage:{input_tokens:compact?100:150000,output_tokens:1,total_tokens:compact?101:150001}};
  if(!body.stream){res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(response));return;}
  const events=[{type:'response.created',response:{...response,status:'in_progress',output:[]}},{type:'response.output_item.added',output_index:0,item},{type:'response.output_item.done',output_index:0,item},{type:'response.completed',response}];
@@ -59,7 +60,7 @@ try{
  assert.ok(oldThreadCalls.every(c=>c.model===selected&&c.hasFirst),'model selection or checkpoint continuity lost');
  const compacted=oldThreadCalls.filter(c=>c.compact).length;
  assert.ok(compacted>=1,'model switch must compact the inherited usage when Codex requests it');
- // body_after_prefix does not require each tiny follow-up to compact again.
+ // The fixture reports high usage on each answer, so Codex can compact again.
  // Repeated tool growth is covered by codex-context-migration-smoke instead.
  assert.equal(progress.filter(p=>p.phase===1&&p.method==='item/started').length,compacted);
  assert.equal(progress.filter(p=>p.phase===1&&p.method==='item/completed').length,compacted);

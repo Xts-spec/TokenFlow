@@ -369,16 +369,15 @@ export function connectedConfig(target:Target,original:string|null,origin:string
   const doc=original===null?{}:parse(original);
   // Full original bytes remain in the backup; TOML serialization preserves semantic settings.
   const providers=doc.model_providers===undefined?{}:object(doc.model_providers);
-  // Upstream usage includes the caller's fixed instructions and tool schemas.
-  // Compact growth after the carried prefix, otherwise that fixed cost alone
-  // can exceed the catalog threshold again after every small tool result.
-  const routing={model,model_provider:'token_flow',model_auto_compact_token_limit_scope:'body_after_prefix',...(catalogPath?{model_catalog_json:catalogPath}:{}),...(chosen.some(model=>a2aCapabilities(model)?.serverTools===false)?{web_search:'disabled'}:{})};
-  delete doc.openai_base_url;delete doc.review_model;
-  const next:{[key:string]:any}={...doc,...routing,model_providers:{...providers,token_flow:{name:'TokenFlow',base_url:`${url.origin}/v1`,wire_api:'responses',experimental_bearer_token:key,requires_openai_auth:false,supports_websockets:false}}};
+  // Codex gates remote compaction on the OpenAI wire-provider identity. Keep
+  // the TokenFlow provider key and endpoint, and let Codex count the full context.
+  const routing={model,model_provider:'token_flow',model_auto_compact_token_limit_scope:'total',...(catalogPath?{model_catalog_json:catalogPath}:{}),...(chosen.some(model=>a2aCapabilities(model)?.serverTools===false)?{web_search:'disabled'}:{})};
+  delete doc.openai_base_url;delete doc.review_model;delete doc.model_auto_compact_token_limit;delete doc.model_context_window;
+  const next:{[key:string]:any}={...doc,...routing,model_providers:{...providers,token_flow:{name:'OpenAI',base_url:`${url.origin}/v1`,wire_api:'responses',experimental_bearer_token:key,requires_openai_auth:false,supports_websockets:false}}};
   // Legacy clients overlay the selected profile. Keep its policy and selection;
   // update only model routing. Newer CLI-selected profile files stay user-owned.
   const profile=codexProfile(doc);
-  if(profile){const selected:{[key:string]:any}={...profile,...routing};delete selected.openai_base_url;delete selected.review_model;next.profiles={...object(doc.profiles),[doc.profile as string]:selected};}
+  if(profile){const selected:{[key:string]:any}={...profile,...routing};delete selected.openai_base_url;delete selected.review_model;delete selected.model_auto_compact_token_limit;delete selected.model_context_window;next.profiles={...object(doc.profiles),[doc.profile as string]:selected};}
   // Remove only explicit subagent model defaults while connected. Codex then
   // inherits the current parent's model/effort, including in-app model changes.
   // The connection journal restores these defaults with the official config.

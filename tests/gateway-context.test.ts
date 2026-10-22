@@ -184,7 +184,7 @@ it.each([20,100])('compacts a single tool loop with a %i KiB latest result witho
  const input:Record<string,unknown>[]=[{role:'developer',content:'Project rules '.repeat(10000)},{role:'user',content:'Continue the task, preserve my constraints.'}];
  for(let i=0;i<6;i++)input.push({type:'function_call',call_id:`call-${i}`,name:'read',arguments:'{}'},{type:'function_call_output',call_id:`call-${i}`,output:String(i).repeat(kib*1024)});
  const original=structuredClone(input);let forwarded:Record<string,unknown>[]=[];let summaries=0;
- const response=await context.response('responses',{model,input,tools:[{type:'function',name:'read',parameters:{type:'object'}}]},'a','s',async(_path,body)=>{
+ const response=await context.response('responses',{context_management:[{type:'compaction',compact_threshold:65536}],model,input,tools:[{type:'function',name:'read',parameters:{type:'object'}}]},'a','s',async(_path,body)=>{
   if(!body.tools){summaries++;expect(JSON.stringify(body.input)).not.toContain('Project rules');return Response.json(answer('Completed earlier reads; continue using the latest tool result.'));}
   forwarded=body.input as Record<string,unknown>[];return Response.json(answer());
  },{scope,threadId:'fixture-thread',recover:async()=>[]});
@@ -197,4 +197,32 @@ it.each([20,100])('compacts a single tool loop with a %i KiB latest result witho
  const calls=new Set(forwarded.filter(item=>item.type==='function_call').map(item=>item.call_id));
  for(const item of forwarded.filter(item=>item.type==='function_call_output'))expect(calls.has(item.call_id)).toBe(true);
  expect(input).toEqual(original);
+});
+
+it.each(['flat','nested','failed'])('normalizes real context overflow %s SSE into the Codex terminal error without triggering compaction',async shape=>{
+ const {context}=await setup();let calls=0,compactions=0;
+ const error={code:'context_too_large',message:'Too large'};
+ const event=shape==='flat'?{type:'error',...error}:shape==='nested'?{type:'error',error}:{type:'response.failed',response:{error,status:'failed',usage}};
+ const response=await context.response('responses',{model:'codex/m',input:longInput},'a','s',async()=>{calls++;return new Response('event: error\ndata: '+JSON.stringify(event)+'\n\n',{headers:{'content-type':'text/event-stream'}});},{scope:{owner:'codex',source:'portable',model:'portable'},threadId:'thread',recover:async()=>[]},{onCompaction:()=>{compactions++;}});
+ const wire=await response.text(),result=JSON.parse(wire.split('\n').find(line=>line.startsWith('data:'))!.slice(5));
+ expect(wire).toContain('event: response.failed');expect(wire).not.toContain('incomplete_stream');
+ expect(result).toMatchObject({type:'response.failed',response:{status:'failed',error:{code:'context_length_exceeded'}}});
+ if(shape==='failed')expect(result.response.usage).toEqual(usage);
+ expect(calls).toBe(1);expect(compactions).toBe(0);
+});
+it('normalizes an HTTP context overflow but does not relabel unrelated payload or rate errors',async()=>{
+ const {context}=await setup();
+ for(const code of ['context_too_large','invalid_request','rate_limit_exceeded']){
+  const response=await context.response('responses',{model:'codex/m',input:'hello'},'a','s',async()=>Response.json({error:{code,message:'source message'}},{status:413}));
+  expect((await response.json()).error.code).toBe(code==='context_too_large'?'context_length_exceeded':code);
+  expect(response.status).toBe(code==='context_too_large'?400:413);
+ }
+});
+it('forwards long first and later managed histories without gateway-owned automatic compaction',async()=>{
+ const {context}=await setup();const input=[{role:'user',content:'Keep my task'},...Array.from({length:30},()=>({role:'assistant',content:'x'.repeat(40000)}))];let calls=0,compactions=0;
+ const migration={scope:{owner:'codex',source:'portable',model:'portable'},threadId:'thread',recover:async()=>input};
+ for(const history of [input,[{type:'compaction',encrypted_content:'foreign'}],input]){
+  await context.response('responses',{model:'codex/m',input:history,store:false},'a','s',async(_path,body)=>{calls++;expect(body.input).toEqual(input);expect(body.instructions).toBeUndefined();return Response.json(answer());},migration,{onCompaction:()=>{compactions++;}});
+ }
+ expect(calls).toBe(3);expect(compactions).toBe(0);
 });

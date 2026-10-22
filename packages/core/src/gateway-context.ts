@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile, rename, rm, readdir, stat } from 'node:fs/p
 import { join } from 'node:path';
 import {providerUsage} from './gateway-observation.js';
 import {readUpstreamError,upstreamError} from './upstream-errors.js';
-import {readSummaryResponse,summaryTranscript,splitTranscript,SUMMARY_CHUNK_BYTES,CONTEXT_INPUT_BYTES,CONTEXT_TRIGGER_BYTES} from './context-summary.js';
+import {readSummaryResponse,summaryTranscript,splitTranscript,SUMMARY_CHUNK_BYTES,CONTEXT_INPUT_BYTES} from './context-summary.js';
 
 type Item = Record<string, unknown>;
 type RequestBody = Item & {model:string};
@@ -24,11 +24,6 @@ const canonical=(value:unknown):unknown=>Array.isArray(value)?value.map(canonica
 // This is a history-reduction target, not the provider's context limit. Fixed
 // instructions/tools and the current user request cannot be summarized away.
 // Leave checkpoint room around them instead of rejecting a fresh conversation.
-function fixedContext(body:RequestBody,input:Item[]){
- let lastUser:Item|undefined;for(let index=input.length-1;index>=0;index--)if(input[index]!.role==='user'){lastUser=input[index];break;}
- const fixed=input.filter(item=>['system','developer'].includes(String(item.role))||item===lastUser);
- return size({input:fixed,instructions:body.instructions,tools:body.tools});
-}
 function contextBudget(body:RequestBody,input:Item[]){
  // The latest complete (or still pending) tool exchange is needed to continue
  // execution. Its size is not a provider context limit and must not turn a
@@ -45,6 +40,12 @@ function contextBudget(body:RequestBody,input:Item[]){
  return Math.max(CONTEXT_INPUT_BYTES,size({input:retained,instructions:body.instructions,tools:body.tools})+32*1024);
 }
 
+function contextLengthError(value:unknown):Item|undefined {
+ if(!object(value))return;
+ const error=object(value.error)?value.error:value;
+ if(!['context_too_large','context_length_exceeded'].includes(String(error.code)))return;
+ return {...error,type:'invalid_request_error',code:'context_length_exceeded',message:'Your input exceeds the context window of this model. Please compact earlier history and try again.'};
+}
 export class GatewayContextError extends Error {
  constructor(message:string, readonly statusCode=400, readonly usage?:unknown, readonly code='context_error',readonly unmetered=false) {super(message);}
 }
@@ -226,7 +227,6 @@ export class GatewayContext {
  async response(path:string,body:RequestBody,owner:string,source:string,send:Send,migration?:ContextMigration,options:ContextOptions={}):Promise<Response> {
   const scope=migration?.scope??{owner,model:body.model,source};const expanded=await this.expand(body,scope,migration);let input=expanded.input;const coveredUsers=expanded.coveredUsers;
   const session=migration?await this.managedSession(migration):undefined;
-  const takeover=!!migration&&!expanded.managed&&(session?!session.state.initialized||session.state.connectionId!==migration.connectionId||expanded.foreign.some(hash=>!session.state.foreign.includes(hash)):expanded.foreign.length>0);
   if(session){
    const used=new Set<string>();
    for(;;){
@@ -270,26 +270,12 @@ export class GatewayContext {
    return new Response(events.map((event,sequence_number)=>'event: '+event.type+'\ndata: '+JSON.stringify({...event,sequence_number})+'\n\n').join(''),{headers:{'content-type':'text/event-stream','x-token-flow-compaction':'model-summary-v1'}});
   }
   let checkpoint:Item|undefined;let summaryUsage:unknown;
-  if(body.context_management!=null||takeover){
-   const rules=body.context_management??[{type:'compaction',compact_threshold:CONTEXT_TRIGGER_BYTES}];
+  if(body.context_management!=null){
+   const rules=body.context_management;
    if(!Array.isArray(rules)||rules.length!==1||!object(rules[0])||rules[0].type!=='compaction'||!Number.isSafeInteger(rules[0].compact_threshold)||Number(rules[0].compact_threshold)<=0)throw new GatewayContextError('context_management requires one compaction rule with a positive compact_threshold');
-   // Native Chat sources expose no tokenizer. Use a conservative UTF-8 byte
-   // upper bound so we compact early rather than silently exceed the threshold.
-   // Static tool definitions cannot be reduced by summarizing history. Avoid
-   // compacting a tiny conversation every turn just because its tools are big.
-   const automatic=takeover&&body.context_management==null;
-   const fixed=fixedContext(body,input);
-   const budget=contextBudget(body,input);
-   const historyBytes=size({input,instructions:body.instructions,tools:body.tools})-fixed;
-   const threshold=automatic?Math.max(16*1024,budget-(CONTEXT_INPUT_BYTES-CONTEXT_TRIGGER_BYTES)-fixed):Number(rules[0].compact_threshold);
-   // A checkpoint plus a short recent tail may still exceed the soft trigger.
-   // Wait for meaningful old work to accumulate instead of summarizing that
-   // checkpoint to the same size on every subsequent tool turn.
-   const oldWork=input.slice(0,Math.max(0,input.length-8)).filter(item=>!['user','system','developer'].includes(String(item.role)));
-   const olderUsers=input.slice(0,Math.max(0,input.length-8)).filter(item=>item.role==='user');
-   const hasWork=input.some(item=>!['user','system','developer'].includes(String(item.role)));
-   const worthwhile=body.context_management!=null||size(oldWork)>=4096||(hasWork&&size(olderUsers)>16*1024);
-   if((automatic?historyBytes:size(input))>=threshold&&worthwhile){
+   // Only an explicit caller request enters this path. Ordinary managed
+   // Codex traffic never starts a gateway-owned compaction pass.
+   if(size(input)>=Number(rules[0].compact_threshold)){
     const compacted=await compact(input);if(!compacted.ok)return compacted;
     const result=await json(compacted);checkpoint=items(result.output).at(-1);summaryUsage=result.usage;
     const saved=this.unsealHistory(checkpoint?.encrypted_content,scope);const restored=saved.input;for(const hash of saved.coveredUsers)coveredUsers.add(hash);
@@ -303,6 +289,8 @@ export class GatewayContext {
    throw new GatewayContextError('历史摘要已保存，但续聊连接中断；请检查来源后手动重试。',502,summaryUsage,'compaction_continuation_failed',true);
   }
   if(!response.ok){
+   const original=await response.clone().json().catch(()=>undefined),contextError=contextLengthError(original);
+   if(contextError){const headers=new Headers(response.headers);headers.delete('content-length');headers.set('content-type','application/json');return new Response(JSON.stringify({error:contextError,...(checkpoint?{usage:combinedUsage(summaryUsage,object(original)?original.usage:undefined)}:{})}),{status:400,headers});}
    if(!checkpoint)return response;
    const error=upstreamError(response.status,await readUpstreamError(response));
    throw new GatewayContextError('历史摘要已保存，但续聊失败：'+error.message,response.status,summaryUsage,'compaction_continuation_failed',response.status>=500);
@@ -332,6 +320,8 @@ export class GatewayContext {
    const data=frame.split('\n').filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trimStart()).join('\n');
    if(!data||data==='[DONE]')return frame+'\n\n';
    let event:Item;try{const parsed:unknown=JSON.parse(data);if(!object(parsed))throw new Error();event=parsed;}catch{throw new GatewayContextError('Invalid Responses stream event',502);}
+   const contextError=contextLengthError(object(event.response)?event.response:event);
+   if(contextError&&['error','response.failed'].includes(String(event.type)))event={type:'response.failed',sequence_number:event.sequence_number,response:{...(object(event.response)?event.response:{}),id,object:'response',status:'failed',error:contextError}};
    if(object(event.response)){
     if(event.type==='response.completed'||event.type==='response.incomplete'){event.response=await finish(event.response);terminal=true;}
     else {
@@ -354,7 +344,7 @@ export class GatewayContext {
     checkpointSent=true;
     suffix=['response.output_item.added','response.output_item.done'].map(type=>'event: '+type+'\ndata: '+JSON.stringify({type,sequence_number:sequence++,output_index:0,item:checkpoint})+'\n\n').join('');
    }
-   return frame.split('\n').filter(line=>!line.startsWith('data:')).concat('data: '+JSON.stringify(event)).join('\n')+'\n\n'+suffix;
+   return frame.split('\n').filter(line=>!line.startsWith('data:')&&!line.startsWith('event:')).concat('event: '+event.type,'data: '+JSON.stringify(event)).join('\n')+'\n\n'+suffix;
   };
   const stream=response.body.pipeThrough(new TransformStream<Uint8Array,Uint8Array>({
    async transform(chunk,controller){

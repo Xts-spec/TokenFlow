@@ -101,7 +101,7 @@ it('summarizes a recovered long window in bounded calls while keeping constraint
  const f=await fixture();const input:any[]=[{type:'message',role:'user',content:'Keep the original API and user files.'}];
  for(let i=0;i<15;i++)input.push({type:'function_call',call_id:`c${i}`,name:'read',arguments:'{}'},{type:'function_call_output',call_id:`c${i}`,output:i<10?'中'.repeat(10000):'recent result'});
  const requests:any[]=[];const send=async(_p:string,b:any)=>{requests.push(b);return Response.json({status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'Earlier reads completed; preserve API; continue current task.'}]}],usage:{input_tokens:10,output_tokens:2,total_tokens:12}});};
- const result=await(await f.context.response('responses',{model:'workbuddy/m',input,store:false},'new-key','new-source',send,{scope:codexContextScope,threadId:'fixture-thread',recover:i=>f.migration.recover(i,[])})).json();
+ const result=await(await f.context.response('responses',{context_management:[{type:'compaction',compact_threshold:65536}],model:'workbuddy/m',input,store:false},'new-key','new-source',send,{scope:codexContextScope,threadId:'fixture-thread',recover:i=>f.migration.recover(i,[])})).json();
  const summaries=requests.filter(r=>r.instructions?.startsWith('Summarize the supplied'));expect(summaries.length).toBe(1);expect(summaries[0].input[0].content).toContain("middle omitted");
  for(const r of summaries)expect(Buffer.byteLength(r.input[0].content)).toBeLessThan(50*1024);
  const forwarded=requests.at(-1).input;expect(forwarded[0]).toEqual(input[0]);expect(forwarded.slice(-8)).toEqual(input.slice(-8));expect(JSON.stringify(forwarded).length).toBeLessThan(10000);expect(result.output[0].type).toBe('compaction');

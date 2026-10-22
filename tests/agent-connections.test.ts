@@ -42,12 +42,16 @@ it('allows restore and model replacement when Codex changed only its selected to
 it('preserves Codex local policy and active legacy profile through model switches, reviews and rollback',async()=>{
  const {paths,connections}=await setup();
  const original=`model = "old"
+model_auto_compact_token_limit = 9999999
+model_context_window = 123456
 profile = "work"
 model_auto_compact_token_limit_scope = "total"
 approval_policy = "untrusted"
 sandbox_mode = "read-only"
 [profiles.work]
 model = "profile-model"
+model_auto_compact_token_limit = 8888888
+model_context_window = 123456
 model_provider = "original"
 model_auto_compact_token_limit_scope = "total"
 approval_policy = "on-request"
@@ -73,7 +77,10 @@ trust_level = "untrusted"
   expect(preview.routing).toMatchObject({profile:'work',model,model_provider:'token_flow',web_search:model==='codex/test'?'live':'disabled'});
   const record=await connections.apply({target:'codex',revision:preview.revision,replaceId:preview.replaceId,origin:'http://127.0.0.1:9527',model,sourceId:'s',keyId:randomUUID(),key:'fixture-key'});
   const after=parse(await readFile(paths.codex,'utf8'));
-  expect(after).toMatchObject({profile:'work',model_auto_compact_token_limit_scope:'body_after_prefix',approval_policy:'untrusted',sandbox_mode:'read-only',profiles:{work:{model,model_provider:'token_flow',model_auto_compact_token_limit_scope:'body_after_prefix',approval_policy:'on-request',sandbox_mode:'workspace-write',web_search:model==='codex/test'?'live':'disabled'},other:{model:'untouched',approval_policy:'never'}}});
+  expect(after).toMatchObject({profile:'work',model_auto_compact_token_limit_scope:'total',approval_policy:'untrusted',sandbox_mode:'read-only',profiles:{work:{model,model_provider:'token_flow',model_auto_compact_token_limit_scope:'total',approval_policy:'on-request',sandbox_mode:'workspace-write',web_search:model==='codex/test'?'live':'disabled'},other:{model:'untouched',approval_policy:'never'}}});
+  expect(after.model_auto_compact_token_limit).toBeUndefined();expect(after.model_context_window).toBeUndefined();
+  expect((after.profiles as any).work.model_auto_compact_token_limit).toBeUndefined();expect((after.profiles as any).work.model_context_window).toBeUndefined();
+  expect((after.model_providers as any).token_flow.name).toBe('OpenAI');
   for(const field of ['sandbox_workspace_write','shell_environment_policy','mcp_servers','projects'])expect(after[field]).toEqual(before[field]);
   expect((await connections.review(record.id)).checks.every(c=>c.ok)).toBe(true);
  }
@@ -112,7 +119,7 @@ it('configures supported Codex tools by source and restores search when switchin
   expect(parse(await readFile(paths.codex,'utf8'))).toMatchObject({web_search:expected,approval_policy:'on-request'});
   const manual=agentConfig('codex','http://127.0.0.1:9527',model);
   expect(manual.includes('web_search="disabled"')).toBe(expected==='disabled');
-  expect(manual).toContain('model_auto_compact_token_limit_scope="body_after_prefix"');
+  expect(manual).toContain('model_auto_compact_token_limit_scope="total"');
  }
  const record=(await connections.status())[0].connection!;await connections.restore(record.id);expect(await readFile(paths.codex,'utf8')).toBe(original);
 });

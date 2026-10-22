@@ -42,7 +42,7 @@ it('bounds an 11 MiB recovered tool transcript before sending summaries or infer
  {type:'function_call',call_id:'c'+i,name:'read',arguments:'{}'},
  {type:'function_call_output',call_id:'c'+i,output:i%2?'x'.repeat(115000):[{type:'input_text',text:'x'.repeat(115000)}]},
  ]).flat(),...history.slice(-8)];let calls=0;
- const result=await context.response('responses',{model:'qoder/m',input:[{type:'compaction',encrypted_content:'official-opaque'},{role:'user',content:'Continue TASK_MARKER.'}],store:false},'a','s',async(_p,b)=>{
+ const result=await context.response('responses',{context_management:[{type:'compaction',compact_threshold:65536}],model:'qoder/m',input:[{type:'compaction',encrypted_content:'official-opaque'},{role:'user',content:'Continue TASK_MARKER.'}],store:false},'a','s',async(_p,b)=>{
   calls++;expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThan(128*1024);expect(calls).toBeLessThanOrEqual(12);
   return stream('TASK_MARKER: API kept compatible. Verify tests next.');
  },{threadId:'fixture-thread',scope:{owner:'portable',source:'portable',model:'portable'},recover:async()=>old});
@@ -135,7 +135,7 @@ it('fits JSON-escaped summaries into the retained-context budget before inferenc
  const {context}=await setup();let calls=0;
  const input=[...Array.from({length:70},()=>({role:'assistant',content:'historical work '.repeat(1000)})),{role:'user',content:'Current constraint: '+'x'.repeat(118*1024)},...Array.from({length:7},()=>({role:'assistant',content:'recent'}))];
  const migration={threadId:'fixture-thread',scope:{owner:'portable',source:'portable',model:'portable'},recover:async()=>[]};
- const response=await context.response('responses',{model:'qoder/m',input,store:false},'a','s',async(_p,b)=>{
+ const response=await context.response('responses',{context_management:[{type:'compaction',compact_threshold:65536}],model:'qoder/m',input,store:false},'a','s',async(_p,b)=>{
   if(!b.instructions){expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThan(151*1024);return Response.json({status:'completed',output:[],usage});}
   return stream(++calls<4?'"quoted code"\n'.repeat(600):'Checkpoint: old work completed; preserve current constraint.');
  },migration);
@@ -173,7 +173,7 @@ it('compacts accumulated history with large fixed tools and preserves the new re
  const {context}=await setup();const tools=[{type:'function',name:'read',description:'tool schema '.repeat(18000)}];
  const input=[{role:'developer',content:'Keep instructions verbatim.'},...Array.from({length:30},()=>({role:'assistant',content:'Old completed work '.repeat(2000)})),{role:'user',content:'Continue current task.'}];
  let summaries=0;let answers=0;
- await context.response('responses',{model:'cursor/test',input,tools,store:false},'a','s',async(_p,b)=>{
+ await context.response('responses',{context_management:[{type:'compaction',compact_threshold:65536}],model:'cursor/test',input,tools,store:false},'a','s',async(_p,b)=>{
   if(b.instructions){summaries++;return stream('Old work finished. Check tests next.');}
   answers++;expect(b.tools).toEqual(tools);expect(b.input).toContainEqual(input[0]);expect(b.input).toContainEqual(input.at(-1));expect(JSON.stringify(b.input).length).toBeLessThan(32*1024);
   return Response.json({status:'completed',output:[],usage});
@@ -197,7 +197,7 @@ it('compacts more than 16 MiB of replayed old tool results before forwarding',as
  const {context}=await setup();const input:Record<string,unknown>[]=[{role:'user',content:'Keep the public API unchanged.'}];
  for(let i=0;i<18;i++)input.push({type:'function_call',name:'read',call_id:'large'+i,arguments:'{}'},{type:'function_call_output',call_id:'large'+i,output:'x'.repeat(1024*1024)});
  input.push({role:'user',content:'Now run the tests.'});let summaries=0,answers=0;
- await context.response('responses',{model:'qoder/m',input,store:false},'a','s',async(_p,b)=>{
+ await context.response('responses',{context_management:[{type:'compaction',compact_threshold:65536}],model:'qoder/m',input,store:false},'a','s',async(_p,b)=>{
   expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThan(128*1024);
   if(b.instructions){summaries++;return stream('Read results checked. Preserve the API and run tests next.');}
   answers++;expect(b.input).toContainEqual(input.at(-1));return Response.json({status:'completed',output:[],usage});

@@ -1,3 +1,4 @@
+import {CODEX_AUTO_COMPACT_TOKEN_LIMIT} from './codex-model-catalog.js';
 import {codexRuntimeClient,migrationBinary} from './codex-runtime.js';
 import {mkdir, readdir, readFile, writeFile, rename, copyFile, chmod, stat, rm} from 'node:fs/promises';
 import {constants} from 'node:fs';
@@ -11,19 +12,36 @@ const active=(entry:Entry)=>entry.state!=='restored'&&entry.state!=='deleted'&&e
 const fail=(message:string,code='codex_migration_failed')=>new RunnerCoreError(message,{statusCode:409,code});
 type Route={id:string;provider:string;model:string;rollout:string;archived:boolean;source:string};
 type HistoryBackup={journalId:string;file:string};
-type Entry=Route&{historyBackup?:HistoryBackup;historySnapshots?:{snapshot:HistorySnapshot;provider:string;model:string;recordedAt:string}[];observedRoute?:{provider:string;model:string};nextModel:string;returnModel?:string;rearchive?:boolean;state:'pending'|'migrated'|'restored'|'deleted'|'unavailable'};
+type Entry=Route&{compactionChecked?:boolean;initialCompaction?:'pending'|'complete';historyBackup?:HistoryBackup;historySnapshots?:{snapshot:HistorySnapshot;provider:string;model:string;recordedAt:string}[];observedRoute?:{provider:string;model:string};nextModel:string;returnModel?:string;rearchive?:boolean;state:'pending'|'migrated'|'restored'|'deleted'|'unavailable'};
 type Journal={version:1;id:string;createdAt:string;databaseBackup?:string;state:'prepared'|'migrated'|'restored';entries:Entry[]};
 export type MigrationStatus={lifecyclePhase?:'idle'|'stopping'|'changing'|'opening';backups:number;remaining:number;restorable:number;unavailable?:number;phase:'idle'|'backup'|'migrating'|'restoring';done:number;total:number};
-export interface MigrationClient {pid?:number;resume(id:string,provider:string,model:string):Promise<void>;setArchived(id:string,archived:boolean):Promise<void>;close():Promise<void>}
+export interface MigrationClient {pid?:number;resume(id:string,provider:string,model:string,compact?:boolean):Promise<void>;setArchived(id:string,archived:boolean):Promise<void>;close():Promise<void>}
 
-/** Resume only: no turn or tool is started. */
+/** Resume routing and, when needed, ask Codex to run its remote compact task. No user turn or tool is started. */
 export async function codexMigrationClient(home:string,binary?:string):Promise<MigrationClient>{
  const client=await codexRuntimeClient(home,binary);
- return {pid:client.pid,close:client.close,setArchived:async(id,archived)=>{await client.rpc(archived?'thread/archive':'thread/unarchive',{threadId:id});},resume:async(id,provider,model)=>{
+ return {pid:client.pid,close:client.close,setArchived:async(id,archived)=>{await client.rpc(archived?'thread/archive':'thread/unarchive',{threadId:id});},resume:async(id,provider,model,compact=false)=>{
   const result=await client.rpc('thread/resume',{threadId:id,modelProvider:provider,model});
   if(result.thread?.id!==id||result.thread?.modelProvider!==provider)throw fail('Codex 未确认新来源，迁移已停止，备份保留。');
+  if(compact)await client.compact(id);
   await client.rpc('thread/unsubscribe',{threadId:id}).catch(()=>{});
  }};
+}
+
+/** Bootstrap only at connection migration. This is the client's soft compaction
+ * budget, not an inference rejection limit; no usage counters are fabricated. */
+export function needsInitialCodexCompaction(rollout:string){
+ let bytes=0,foreign=false;
+ const consume=(item:any)=>{
+  if(item?.type==='compaction'){bytes=0;foreign=typeof item.encrypted_content==='string'&&!item.encrypted_content.startsWith('tfctx1.');}
+  else if(item&&typeof item==='object')bytes+=Buffer.byteLength(JSON.stringify(item));
+ };
+ for(const line of rollout.split('\n')){
+  let row;try{row=JSON.parse(line);}catch{continue;}
+  if(row.type==='compacted'&&Array.isArray(row.payload?.replacement_history)){bytes=0;foreign=false;for(const item of row.payload.replacement_history)consume(item);}
+  else if(row.type==='response_item')consume(row.payload);
+ }
+ return foreign||bytes>CODEX_AUTO_COMPACT_TOKEN_LIMIT*4;
 }
 
 export class CodexThreadMigration {
@@ -187,8 +205,14 @@ export class CodexThreadMigration {
   const journals=await this.journals(),entries=journals.flatMap(j=>j.entries.filter(active));
   if(!entries.length)return {migrated:0};
   if(!restore){
+   for(const journal of journals){let changed=false;for(const entry of journal.entries){
+    if(!entries.includes(entry)||entry.compactionChecked||!await this.hasHistory(entry))continue;
+    await this.idle();entry.compactionChecked=true;
+    if(needsInitialCodexCompaction(await readFile(entry.rollout,'utf8'))){entry.initialCompaction='pending';entry.state='pending';}
+    changed=true;
+   }if(changed)await this.save(journal);}
    const rows=new Map((await this.rows()).map(row=>[row.id,row]));
-   if(entries.every(entry=>{const row=rows.get(entry.id);return entry.state==='migrated'&&!entry.rearchive&&row?.provider==='token_flow'&&row.source===entry.source&&allowedModels.includes(row.model);}))return {migrated:0};
+   if(entries.every(entry=>{const row=rows.get(entry.id);return entry.state==='migrated'&&entry.initialCompaction!=='pending'&&!entry.rearchive&&row?.provider==='token_flow'&&row.source===entry.source&&allowedModels.includes(row.model);}))return {migrated:0};
   }
   await this.idle();
   if(!await this.database())throw fail('找不到旧对话数据库，备份已保留，请检查 Codex 数据目录后重试。');
@@ -203,7 +227,7 @@ export class CodexThreadMigration {
     if(row&&entry.rearchive){if(!row.archived)await (await getClient()).setArchived(entry.id,true);entry.rearchive=false;await this.save(journal);row=(await this.rows()).find(row=>row.id===entry.id);}
     if(!row){entry.state='deleted';await this.save(journal);continue;}
     if(row.source!==entry.source)throw fail('旧对话来源已被其他程序修改，未覆盖；请检查后重试。');
-    if(!restore&&row.provider==='token_flow'&&allowedModels.includes(row.model)){entry.state='migrated';entry.nextModel=row.model;await this.save(journal);continue;}
+    if(!restore&&entry.initialCompaction!=='pending'&&row.provider==='token_flow'&&allowedModels.includes(row.model)){entry.state='migrated';entry.nextModel=row.model;await this.save(journal);continue;}
     if(restore&&model){entry.returnModel=model;await this.save(journal);}
     const restoredModel=entry.returnModel??(entry.provider==='token_flow'?'':entry.model),restoredProvider=entry.provider==='token_flow'?'openai':entry.provider;
     if(restore&&!restoredModel)throw fail('请先选择一个官方 Codex 模型，再还原这些对话。');
@@ -216,7 +240,8 @@ export class CodexThreadMigration {
     if(row.archived){entry.rearchive=true;await this.save(journal);}
     try{
      if(row.archived)await runtime.setArchived(entry.id,false);
-     await runtime.resume(entry.id,restore?restoredProvider:'token_flow',restore?restoredModel:entry.nextModel);
+     await runtime.resume(entry.id,restore?restoredProvider:'token_flow',restore?restoredModel:entry.nextModel,!restore&&entry.initialCompaction==='pending');
+     if(!restore&&entry.initialCompaction==='pending')entry.initialCompaction='complete';
     }finally{
      if(entry.rearchive){await runtime.setArchived(entry.id,true);entry.rearchive=false;await this.save(journal);}
     }

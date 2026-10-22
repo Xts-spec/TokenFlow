@@ -45,7 +45,7 @@ const server=createServer(async(req,res)=>{
 
 });
 async function start(){
- child=spawn(process.argv[2]??'codex',['app-server','--listen','stdio://',...(process.argv.includes('--local-compaction')?[]:['-c','model_providers.token_flow.name="OpenAI"'])],{cwd:root,env:{PATH:process.env.PATH,HOME:root,CODEX_HOME:root},stdio:['pipe','pipe','pipe']});
+ child=spawn(process.argv[2]??'codex',['app-server','--listen','stdio://',...(process.argv.includes('--local-compaction')?['-c','model_providers.token_flow.name="TokenFlow"']:[])],{cwd:root,env:{PATH:process.env.PATH,HOME:root,CODEX_HOME:root},stdio:['pipe','pipe','pipe']});
  const proc=child;let buffer='',id=0,turnResolve;const pending=new Map();
  proc.stderr.on('data',chunk=>{if(process.env.DEBUG_FIXTURE)process.stderr.write(chunk);});
  proc.stdout.on('data',chunk=>{buffer+=chunk;let end;while((end=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,end);buffer=buffer.slice(end+1);let msg;try{msg=JSON.parse(line);}catch{continue;}if(pending.has(msg.id)){const wait=pending.get(msg.id);pending.delete(msg.id);msg.error?wait.reject(Error(JSON.stringify(msg.error))):wait.resolve(msg.result);}if(msg.method&&(/compact/i.test(msg.method)||/compact/i.test(msg.params?.item?.type??'')))compactionProgress.push({phase,method:msg.method,itemType:msg.params?.item?.type});if(msg.method==='turn/completed')turnResolve?.(msg.params.turn);}});

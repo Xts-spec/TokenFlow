@@ -7,7 +7,7 @@ import {RunnerCoreError} from './errors.js';
 import {windowsStoreApp} from './agent-installation.js';
 const fail=(message:string)=>new RunnerCoreError(message,{statusCode:409,code:'codex_migration_failed'});
 
-/** Uses the installed runtime's supported resume API, never starts a turn or tool. */
+/** Locate the installed runtime used for routing and explicit remote compaction. */
 export async function migrationBinary(binary?:string){
  const win=process.platform==='win32';
  const candidates=binary?[binary]:[
@@ -39,14 +39,20 @@ export async function codexRuntimeClient(home:string,binary?:string){
  const launch=await runtimeLaunch(await migrationBinary(binary));
  const child:ChildProcessWithoutNullStreams=spawn(launch.file,[...launch.args,'app-server','--listen','stdio://'],{cwd:home,env:{...process.env,...launch.env,CODEX_HOME:home},stdio:['pipe','pipe','pipe'],windowsHide:true});
  let buffer='',next=0,closed=false;const pending=new Map<number,{resolve:(v:any)=>void;reject:(e:Error)=>void}>();
- const rejectAll=()=>{for(const request of pending.values())request.reject(fail('Codex 会话服务已停止，备份保留，可再次点击启动继续迁移。'));pending.clear();};
+ const compactions=new Map<string,{resolve:()=>void;reject:(error:Error)=>void}>();
+ const rejectAll=()=>{for(const request of compactions.values())request.reject(fail('Codex 压缩服务已停止，原始备份保留。'));compactions.clear();for(const request of pending.values())request.reject(fail('Codex 会话服务已停止，备份保留，可再次点击启动继续迁移。'));pending.clear();};
  child.on('error',rejectAll);child.on('exit',()=>{closed=true;rejectAll();});child.stderr.resume();child.stdout.setEncoding('utf8');
  child.stdout.on('data',chunk=>{
   buffer+=String(chunk);if(buffer.length>128*1024*1024){rejectAll();child.kill();return;}
   let end;while((end=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,end);buffer=buffer.slice(end+1);let message;try{message=JSON.parse(line);}catch{continue;}
    if(typeof message.id==='number'&&pending.has(message.id)){const request=pending.get(message.id)!;pending.delete(message.id);message.error?request.reject(fail('Codex 无法恢复这段旧对话，迁移已停止，备份保留。')):request.resolve(message.result);}
+   const threadId=message.params?.threadId,compact=compactions.get(threadId);
+   if(compact&&message.method==='turn/completed'){
+    compactions.delete(threadId);message.params.turn?.status==='completed'?compact.resolve():compact.reject(fail('Codex 首次压缩未完成，原始历史与备份保留，可重试。'));
+   }
+   if(compact&&message.method==='error'&&!message.params.willRetry){compactions.delete(threadId);compact.reject(fail('Codex 首次压缩失败，原始历史与已完成摘要保留，可重试。'));}
    // Approval/tool requests cannot execute anything during migration.
-   else if(message.method&&message.id!==undefined)child.stdin.write(JSON.stringify({id:message.id,error:{code:-32601,message:'Migration does not execute tools or approvals'}})+'\n');
+   if(message.method&&message.id!==undefined)child.stdin.write(JSON.stringify({id:message.id,error:{code:-32601,message:'Migration does not execute tools or approvals'}})+'\n');
   }
  });
  const rpc=(method:string,params:unknown):Promise<any>=>new Promise((resolve,reject)=>{
@@ -57,7 +63,13 @@ export async function codexRuntimeClient(home:string,binary?:string){
  });
  const close=async()=>{if(closed)return;await new Promise<void>(resolve=>{const timer=setTimeout(()=>{child.kill('SIGKILL');},5000);child.once('exit',()=>{clearTimeout(timer);resolve();});child.kill();});};
  try{await rpc('initialize',{clientInfo:{name:'token_flow_migration',version:'1.0'}});child.stdin.write(JSON.stringify({method:'initialized'})+'\n');}catch(error){await close();throw error;}
- return {pid:child.pid,close,rpc};
+ const compact=async(threadId:string)=>{
+  let resolve!:()=>void,reject!:(error:Error)=>void;const done=new Promise<void>((yes,no)=>{resolve=yes;reject=no;});
+  // Register before the RPC: fast providers can finish before its acknowledgement.
+  compactions.set(threadId,{resolve,reject});const observed=done.catch(error=>{throw error;});observed.catch(()=>{});
+  try{await rpc('thread/compact/start',{threadId});await observed;}finally{compactions.delete(threadId);}
+ };
+ return {pid:child.pid,close,rpc,compact};
 }
 
 /** Resolve the installed runtime's default instead of pinning a model name. */

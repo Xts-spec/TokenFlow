@@ -22,6 +22,9 @@ it('shares each source with every local target, preserving accounts, settings an
  await writeFile(workbuddySettings,localSettings);
  await mkdir(join(root,'cliproxy'));const pool=join(root,'cliproxy','fixture-accounts.json');
  await writeFile(pool,JSON.stringify(['qoder','workbuddy','claude','codex'].map(provider=>({name:`${provider}.json`,provider,status:'active',models:['shared-model'],access_token:`original-${provider}`,refresh_token:`refresh-${provider}`}))));
+ const nativeWorkbuddy={type:'workbuddy',access_token:'original-workbuddy',refresh_token:'refresh-workbuddy'};
+ await mkdir(join(root,'cliproxy/auth'));await writeFile(join(root,'cliproxy/auth/workbuddy.json'),JSON.stringify(nativeWorkbuddy));
+ await writeFile(join(root,'cliproxy/fixture-options.json'),JSON.stringify({localCredentials:{workbuddy:nativeWorkbuddy}}));
  const poolBefore=await readFile(pool,'utf8');
  const service=await createDesktopService({workbuddySDKFactory:fakeWorkbuddySDK,root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin-token',localKey:'internal-key',secrets:{get:async()=>'',set:async()=>{}},agentPaths:paths,agentProcesses:async()=>[]});
  const headers={host:'127.0.0.1:9527',authorization:'Bearer admin-token'};
