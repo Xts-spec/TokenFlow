@@ -119,7 +119,7 @@ Windows 上判断"某个同名进程属于哪个应用"不能只看 exe 名字�
 
 ## 四、已知平台差异与限制
 
-- `agent-installation.test.ts` 在 Windows 有预存在失败（`automatic` 在 win32 恒为 `false`），与合并无关。
+- `tests/agent-installation.test.ts`（5 项）与 `tests/agent-processes.test.ts`（4 项）在 Windows 实机上有预存在失败（含 `automatic` 在 win32 恒为 `false` 等），2026-10-23 经 worktree 在合并前的两个父提交上复测确认与合并无关；macOS 上这些用例全部通过。
 - `tests/local-usage-index.test.ts` 在 Windows 上失败：索引 worker 以 `--import tsx/esm` 启动后无法把 `./local-usage.js` 解析到 `.ts`（`ERR_MODULE_NOT_FOUND`）。只影响 dev/test 下的 TS 运行，不影响 `dist` 打包产物。
 - `package.json` 的 `build.mac.icon` 曾被误同步成 `.ico`；在 mac 上打包前应确认改回 `app-icon.png`。
 - 真实 Windows 系统按钮、DPI、Snap、多显示器行为只能实机验收，渲染层模拟不能替代。
@@ -130,3 +130,24 @@ Windows 上判断"某个同名进程属于哪个应用"不能只看 exe 名字�
 - [win-fix 与 main 差异对照](win-fix-与main差异-Windows兼容修改清单.md)：2026-10-17 的早期逐文件对照快照。
 - [win-fix 同步与修复记录](win-fix-2026-10-17-同步与修复记录.md)：2026-10-17 实机验收发现的问题与打包坑。
 - [Qoder IDE 1.106 与重启修复](fixes/README-qoder-ide-and-restart-2026-10-22.md)：最近的 Qoder 兼容修复与补丁。
+
+## 六、同步记录
+
+### 2026-10-23：合并 origin/main（65caf25），提交 7b4be1b
+
+**纳入内容**：macOS 侧 41 个提交，集中在 Codex 压缩与检查点体系（并行初始压缩、远程压缩委托、分支检查点固化、容量默认值）、Qoder 账号直切与过期 grant 清理、控制台加载反馈与模型应用对话框统一、原生登录导入与 LAN HTTP 端点支持。
+
+**冲突收敛要点**：
+
+| 冲突点 | 处理方式 |
+| --- | --- |
+| 局域网 HTTP 放宽（win-fix 39b9110）vs macOS 2d99c98 的 LAN 端点支持 | 两侧行为一致，收敛为共享模块 `apps/shared/api-url-policy.ts`（回环 + 私网 + `.local` + ULA），渲染端与服务端共用，无分叉 |
+| `packages/core/src/service.ts`（两侧同时修改） | 按"main 产品逻辑 + win-fix 平台分支"叠加：保留 main 的压缩/用量改动，叠加 win-fix 的 restore `overwrite` 容错与单模型 Key 只接受原生 id 的授权修复 |
+
+**合并后验证（2026-10-23，Windows 实机）**：
+
+- `tsc --noEmit` 类型检查通过。
+- `tests/windows-agent-lifecycle.test.ts` **45/45 全部通过**（Windows 兼容核心用例）。
+- `tests/agent-installation.test.ts` / `tests/agent-processes.test.ts` 共 9 项失败；经 git worktree 在合并前 win-fix（808d098）与 main（65caf25）两个父提交上复测，**失败集合完全一致**，确认为本机预存在的环境性失败（见第四节），与本次合并无关。
+- Windows 兼容关键项逐一抽查在位：`process.noAsar`、Qoder IDE 1.106 身份识别（`Qoder IDE.exe`）、`qoder-ide-helper`、`--type=crashpad-handler` 忽略、`windowsRegistryApp` 注册表发现、`AGENT_INSTALL_DIRS`、`build.win.icon=app-icon.ico`、`asarUnpack`、`run-all-windows-e2e.mjs` 与启动脚本。
+- 合并后 win-fix 相对 main 的净差异：54 个文件、约 +1466/-140 行，全部落在本文第二节清单范围内。
