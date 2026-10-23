@@ -151,3 +151,20 @@ Windows 上判断"某个同名进程属于哪个应用"不能只看 exe 名字�
 - `tests/agent-installation.test.ts` / `tests/agent-processes.test.ts` 共 9 项失败；经 git worktree 在合并前 win-fix（808d098）与 main（65caf25）两个父提交上复测，**失败集合完全一致**，确认为本机预存在的环境性失败（见第四节），与本次合并无关。
 - Windows 兼容关键项逐一抽查在位：`process.noAsar`、Qoder IDE 1.106 身份识别（`Qoder IDE.exe`）、`qoder-ide-helper`、`--type=crashpad-handler` 忽略、`windowsRegistryApp` 注册表发现、`AGENT_INSTALL_DIRS`、`build.win.icon=app-icon.ico`、`asarUnpack`、`run-all-windows-e2e.mjs` 与启动脚本。
 - 合并后 win-fix 相对 main 的净差异：54 个文件、约 +1466/-140 行，全部落在本文第二节清单范围内。
+
+**实机端到端全量测试（2026-10-23 17:04，Windows，构建后 dist）**：8/8 通过——
+
+| # | 测试 | 结果 |
+| --- | --- | --- |
+| 1 | 本机 Codex 真实 CLI 与 RPC 握手 | ✓ 7.5s |
+| 2 | 本机 Desktop Service 与 Native Sidecar 服务 | ✓ 13.3s |
+| 3 | Windows 无边框标题栏、Snap 与主题融合 | ✓ 3.8s |
+| 4 | 启动窗口、授权卡片与焦点交互 | ✓ |
+| 5 | 账号启动加载与初次轮询 | ✓ |
+| 6 | Agent 启动与状态 | ✓ |
+| 7 | 本地网络诊断 | ✓ |
+| 8 | 本机原生垃圾清理 | ✓ 1.6s |
+
+> 环境注意：在部分宿主环境（如 WorkBuddy 沙箱会话）下，Electron 的 GPU 进程会以 0xC0000005 崩溃、且环境变量 `ELECTRON_RUN_AS_NODE=1` 会让 Electron 退化为纯 Node。跑 UI 检查需：
+> `env -u ELECTRON_RUN_AS_NODE npx electron --no-sandbox --disable-gpu --disable-gpu-sandbox --in-process-gpu scripts/<xxx-ui-check>.cjs`
+> 这属于本机环境限制，与代码无关；真机直接 `node scripts/run-all-windows-e2e.mjs` 即可。
