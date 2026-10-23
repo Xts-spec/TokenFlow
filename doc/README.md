@@ -15,6 +15,7 @@
 | Codex 新账号完整日对账、逐请求日志与官方日桶快照 | [对账记录器](testing/native-direct-usage.md#新账号完整日对账记录器2026-10-17) |
 | WorkBuddy 导入后只显示名称，以及名称到路由的映射 | [WorkBuddy 模型名称验证](testing/workbuddy-model-labels.md) |
 | 官方登录能否与网关模型并存，Qoder／Codex 名称复核 | [官方登录与自定义模型](testing/official-login-coexist.md) |
+| win-fix 分支做什么、同步 main 时保留什么 | [win-fix 跨设备兼容说明](win-fix-跨设备兼容说明.md) |
 | Windows 进程、授权、窗口与完整功能测试 | [Windows 兼容与验收](待修复的问题win兼容.md) |
 | 文件清理的范围与恢复方式 | [文件清理](guides/file-cleanup.md) |
 
