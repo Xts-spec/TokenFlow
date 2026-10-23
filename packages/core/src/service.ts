@@ -212,8 +212,10 @@ export async function createDesktopService(options:ServiceOptions) {
     catch(error){throw new RunnerCoreError(error instanceof Error?error.message:'Local Agent 操作失败',{code:'local_agent_error',statusCode:400});}
   };
   const connections=new AgentConnections(root,options.agentPaths,options.agentProcesses);
-  const catalogRefresh=await connections.refreshCodexCompactionLimits(model=>compactionModelWindow(model,proxy.snapshot().models,connections.paths.codex));
-  if(catalogRefresh.failed)app.log.warn({failed:catalogRefresh.failed},'Some generated Codex compaction metadata could not be refreshed; model routing remains available.');
+  const refreshCodexCatalog=async()=>{
+    const catalogRefresh=await connections.refreshCodexCompactionLimits(model=>compactionModelWindow(model,proxy.snapshot().models,connections.paths.codex));
+    if(catalogRefresh.failed)app.log.warn({failed:catalogRefresh.failed},'Some generated Codex compaction metadata could not be refreshed; model routing remains available.');
+  };
   const claudeDesktop=new ClaudeDesktopConnections(options.secrets,options.claudeDesktop);
   const claudeTerminal=new ClaudeTerminalLifecycle(undefined,undefined,undefined,{},dirname(connections.paths.claude));
   const switchJournal=new SwitchJournal(join(root,'switch-failures.json'));await switchJournal.load();
@@ -315,6 +317,7 @@ export async function createDesktopService(options:ServiceOptions) {
     for(const provider of ['trae'] as const){
       try{await proxy.importLocal(provider,true);}catch{discovery.unavailable.push(provider);}
     }}finally{
+      await refreshCodexCatalog();
       discovery.state='ready';
     }
   })();

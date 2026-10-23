@@ -147,7 +147,7 @@ export class CodexContext {
    views.set(path,{header,originalHeader:views.get(path)?.originalHeader??header,row,boundaries});
   };
   for(const {path} of await this.files()){
-   await safePath(path);const before=await readFile(path,'utf8');remember(path,before);const lines=before.split('\n');let index=-1,event:Item|undefined;let malformed=false;
+   await safePath(path);const before=await readFile(path,'utf8');remember(path,before);const lines=before.split('\n');let malformed=false;
    let gatewayTurn=false;const foreignReasoning=new Set<string>();
    const normalizeItem=(item:Item):Item[]=>{
     // Gateway item IDs identify records in that source, not persisted OpenAI
@@ -172,50 +172,50 @@ export class CodexContext {
      const normalized=normalizeItem(row.payload);
      if(normalized.length!==1||normalized[0]!==row.payload)lines[i]=(normalized.length?normalized:[{type:'message',role:'assistant',content:[{type:'output_text',text:''}]}]).map(payload=>JSON.stringify({...row,payload})).join('\n');
     }
+    let event:Item|undefined;
     if(row.type==='compacted'){
      const history=row.payload.replacement_history;
      if(Array.isArray(history)){
       const normalized=history.flatMap(normalizeItem);
       if(JSON.stringify(normalized)!==JSON.stringify(history)){row.payload.replacement_history=normalized;delete row.payload.replacement_history_metadata;lines[i]=JSON.stringify(row);}
      }
-     index=i;event=row;
-    }else if(row.type==='response_item'&&row.payload.type==='compaction'){index=i;event={...row,type:'compacted',payload:{message:'',replacement_history:[row.payload]}};}
+     event=row;
+    }else if(row.type==='response_item'&&row.payload.type==='compaction'){event={...row,type:'compacted',payload:{message:'',replacement_history:[row.payload]}};}
+    // Any checkpoint can be the latest one in a frozen branch or after revert.
+    // Materialize each in place, preserving event ordinals and all later turns.
+    if(!normalize)continue;
+    const history=event?.payload?.replacement_history;if(!Array.isArray(history))continue;
+    const recoveredTokens=new Map<string,Item[]>();
+    for(const item of history){
+     if(item?.type!=='compaction'||typeof item.encrypted_content!=='string')continue;
+     const token=item.encrypted_content;
+     const recovered=token.startsWith('tfctx1.')?this.context.decodeCheckpoint(token,[codexContextScope,...scopes]):await this.cached(token);
+     if(recovered)recoveredTokens.set(token,recovered);
+    }
+    if(!recoveredTokens.size)continue;
+    let changed=false;const output:Item[]=[];
+    for(const item of history){
+     if(item?.type!=='compaction'){output.push(...portableCodexItem(item));continue;}
+     const recovered=recoveredTokens.get(item.encrypted_content);
+     if(!recovered){output.push(item);continue;}
+     // This checkpoint covers preceding retained user messages; use the full
+     // restored window, not both copies of the same turns.
+     const fresh=output.filter(entry=>['user','system','developer'].includes(String(entry.role))&&!recovered!.some(saved=>saved.role===entry.role&&JSON.stringify(saved.content)===JSON.stringify(entry.content)));
+     output.length=0;output.push(...recovered.flatMap(portableCodexItem),...fresh);changed=true;
+    }
+    if(changed){
+     if(malformed)throw new GatewayContextError('会话记录不完整，迁移已停止；请先退出 Codex 后重试，原文件保留。',409);
+     event!.payload.replacement_history=output;
+     // This optional array is position-aligned with the OLD history. Keeping it
+     // causes Codex to ignore the rewritten checkpoint on resume. The independent
+     // guardian history and retained user/assistant records remain unchanged.
+     delete event!.payload.replacement_history_metadata;
+     lines[i]=JSON.stringify(event);
+    }
    }
-   const retainChanges=async()=>{
-    const after=lines.join('\n');if(after===before)return;
-    if(malformed)throw new GatewayContextError('会话记录不完整，迁移已停止；请先退出 Codex 后重试，原文件保留。',409);
-    await stage(path,before,after);remember(path,after);
-   };
-   if(!normalize){await retainChanges();continue;}
-   const history=event?.payload?.replacement_history;if(index<0||!Array.isArray(history)){await retainChanges();continue;}
-   const recoveredTokens=new Map<string,Item[]>();
-   for(const item of history){
-    if(item?.type!=='compaction'||typeof item.encrypted_content!=='string')continue;
-    const token=item.encrypted_content;
-    const recovered=token.startsWith('tfctx1.')?this.context.decodeCheckpoint(token,[codexContextScope,...scopes]):await this.cached(token);
-    if(recovered)recoveredTokens.set(token,recovered);
-   }
-   if(!recoveredTokens.size){await retainChanges();continue;}
-   let changed=false;const output:Item[]=[];
-   for(const item of history){
-    if(item?.type!=='compaction'){output.push(...portableCodexItem(item));continue;}
-    const recovered=recoveredTokens.get(item.encrypted_content);
-    if(!recovered){output.push(item);continue;}
-    // This checkpoint covers preceding retained user messages; use the full
-    // restored window, not both copies of the same turns.
-    const fresh=output.filter(entry=>['user','system','developer'].includes(String(entry.role))&&!recovered!.some(saved=>saved.role===entry.role&&JSON.stringify(saved.content)===JSON.stringify(entry.content)));
-    output.length=0;output.push(...recovered.flatMap(portableCodexItem),...fresh);changed=true;
-   }
-   if(changed){
-    if(malformed)throw new GatewayContextError('会话记录不完整，迁移已停止；请先退出 Codex 后重试，原文件保留。',409);
-    event!.payload.replacement_history=output;
-    // This optional array is position-aligned with the OLD history. Keeping it
-    // causes Codex to ignore the rewritten checkpoint on resume. The independent
-    // guardian history and retained user/assistant records remain unchanged.
-    delete event!.payload.replacement_history_metadata;
-    lines[index]=JSON.stringify(event);
-   }
-   await retainChanges();
+   const after=lines.join('\n');if(after===before)continue;
+   if(malformed)throw new GatewayContextError('会话记录不完整，迁移已停止；请先退出 Codex 后重试，原文件保留。',409);
+   await stage(path,before,after);remember(path,after);
   }
   // Codex paginated branches pin an ordinal AND a byte boundary in the
   // canonical source rollout. Rewriting JSON changes UTF-8 byte lengths even

@@ -406,23 +406,35 @@ export class AgentConnections {
   async refreshCodexCompactionLimits(window:(model:string)=>Promise<number|undefined>){
     const {readdir}=await import('node:fs/promises');
     const files=await readdir(this.dir()).catch(error=>{if(error.code==='ENOENT')return [];throw error;});
-    const metadata=new Map<string,ReturnType<typeof codexContextMetadata>>();let updated=0,failed=0;
+    const capacities=new Map<string,number|undefined>();let updated=0,failed=0;
+    const positive=(value:unknown):value is number=>typeof value==='number'&&Number.isSafeInteger(value)&&value>0;
     for(const name of files.filter(name=>/^codex-models-[a-f0-9]+\.json$/.test(name))){
       const path=join(this.dir(),name),temp=`${path}.${randomUUID()}.tmp`;
       try{
         await safePath(path);const catalog=JSON.parse(await readFile(path,'utf8'));
         if(!Array.isArray(catalog.models)||!catalog.models.every((model:any)=>model&&typeof model.slug==='string')){failed++;continue;}
-        let changed=false;
+        const legacy=catalog.tokenflow_context_windows===undefined;
+        const windows={...object(catalog.tokenflow_context_windows??{})};let changed=legacy;
         for(const model of catalog.models){
-          if(!metadata.has(model.slug))metadata.set(model.slug,codexContextMetadata(await window(model.slug)));
-          const next=metadata.get(model.slug)!;
+          if(!capacities.has(model.slug))capacities.set(model.slug,await window(model.slug));
+          const discovered=capacities.get(model.slug);
+          if(positive(discovered)&&windows[model.slug]!==discovered){windows[model.slug]=discovered;changed=true;}
+          const known=windows[model.slug];
+          // Preserve existing metadata when discovery is unavailable. Older
+          // catalogs did not store provenance; migrate their known hardcoded
+          // defaults, while retaining other declared windows or trigger values.
+          const oldDefault=legacy&&model.context_window===131072&&model.auto_compact_token_limit===65536;
+          const declared=!oldDefault&&positive(model.context_window)?model.context_window:undefined;
+          const limit=positive(model.auto_compact_token_limit)?model.auto_compact_token_limit:undefined;
+          const capacity=positive(known)?known:declared;
+          const next:ReturnType<typeof codexContextMetadata>=capacity!==undefined?codexContextMetadata(capacity):limit!==undefined&&!(legacy&&[65536,128000,217600].includes(limit))?{auto_compact_token_limit:limit}:codexContextMetadata();
           for(const field of ['context_window','max_context_window','auto_compact_token_limit'] as const){
             const value=field==='max_context_window'?undefined:next[field];
             if(value===undefined){if(field in model){delete model[field];changed=true;}}
             else if(model[field]!==value){model[field]=value;changed=true;}
           }
         }
-        if(changed){await writeFile(temp,JSON.stringify(catalog),{mode:0o600,flag:'wx'});await rename(temp,path);updated++;}
+        if(changed){catalog.tokenflow_context_windows=windows;await writeFile(temp,JSON.stringify(catalog),{mode:0o600,flag:'wx'});await rename(temp,path);updated++;}
       }catch{failed++;}finally{await rm(temp,{force:true}).catch(()=>{});}
     }
     return {updated,failed};

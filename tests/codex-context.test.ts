@@ -276,6 +276,32 @@ it('rebases paginated history cutoffs when compatibility rewrites shrink their s
  expect(JSON.parse(await readFile(f.file,'utf8')).payload.history_base.end_byte_offset).toBe(Buffer.byteLength(current));
  expect(await f.migration.prepareOfficial([],async()=>[])).toEqual({migrated:0});
 });
+it('materializes earlier checkpoints referenced by branches and reverts while preserving frozen history',async()=>{
+ const f=await fixture(),id='00000000-0000-0000-0000-000000000031';
+ const source=join(f.file,'..',`rollout-2026-10-12T00-00-00-${id}.jsonl`);
+ const message=(text:string)=>({type:'message',role:'user',content:[{type:'input_text',text}]});
+ const first=[message('EARLIER_A'),{type:'message',role:'assistant',content:'SUMMARY_A'}],second=[...first,message('LATER_B')];
+ const firstToken=f.context.encodeCheckpoint(first,codexContextScope),secondToken=f.context.encodeCheckpoint(second,codexContextScope);
+ const rows=[{type:'session_meta',payload:{id,model_provider:'token_flow'}},{type:'response_item',payload:message('EARLIER_A')},{type:'compacted',payload:{replacement_history:[{type:'compaction',encrypted_content:firstToken}]}},{type:'response_item',payload:message('LATER_B')},{type:'response_item',payload:{type:'compaction',encrypted_content:secondToken}},{type:'compacted',payload:{replacement_history:[message('OFFICIAL_PLAINTEXT_LATER')]}}];
+ const original=rows.map((row,ordinal)=>JSON.stringify({...row,ordinal})+'\n').join('');await writeFile(source,original);
+ const boundary=Buffer.byteLength(original.split('\n').slice(0,3).join('\n')+'\n');
+ await writeFile(f.file,JSON.stringify({type:'session_meta',ordinal:3,payload:{id:'fork',history_base:{thread_id:id,end_ordinal_exclusive:3,end_byte_offset:boundary}}})+'\n');
+ await f.migration.prepareOfficial([],async()=>[]);
+ const saved=await readFile(source,'utf8'),base=JSON.parse(await readFile(f.file,'utf8')).payload.history_base;
+ expect(saved).not.toContain('tfctx1.');
+ const branchRows=Buffer.from(saved).subarray(0,base.end_byte_offset).toString().trim().split('\n').map(line=>JSON.parse(line));
+ const replay=replayCodexHistory(branchRows,row=>row.type==='compacted'?row.payload.replacement_history:undefined);
+ expect(replay).toEqual(first.flatMap(portableCodexItem));expect(JSON.stringify(replay)).not.toContain('LATER_B');
+ const updated=saved.trim().split('\n').map(line=>JSON.parse(line));
+ expect(updated[4].type).toBe('compacted');expect(updated[4].payload.replacement_history).toEqual(second.flatMap(portableCodexItem));
+ expect(updated.at(-1).payload).toEqual(rows.at(-1)!.payload);
+ expect(updated.map(row=>row.ordinal)).toEqual(rows.map((_,i)=>i));
+ const batch=(await readdir(join(f.root,'codex-context-backups')))[0]!;
+ const manifest=JSON.parse(await readFile(join(f.root,'codex-context-backups',batch,'manifest.json'),'utf8'));
+ const backedUp=manifest.files.find((entry:any)=>entry.path.endsWith(source.split('/').at(-1)));
+ expect((await new CodexHistoryBackups(f.root).read(backedUp.historySnapshot)).toString()).toBe(original);
+ expect(await f.migration.prepareOfficial([],async()=>[])).toEqual({migrated:0});
+});
 it('repairs an already stale paginated byte cutoff using explicit persisted ordinals',async()=>{
  const f=await fixture();const id='00000000-0000-0000-0000-000000000002';const source=join(f.file,'..',`rollout-2026-10-12T00-00-00-${id}.jsonl`);
  const text=[{ordinal:0,type:'session_meta',payload:{id}},{ordinal:1,type:'response_item',payload:{type:'message',role:'user',content:'retained'}},{ordinal:2,type:'response_item',payload:{type:'message',role:'user',content:'later turn'}}].map(r=>JSON.stringify(r)+'\n').join('');await writeFile(source,text);
