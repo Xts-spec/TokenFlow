@@ -10,7 +10,7 @@ import { parse, stringify } from 'smol-toml';
 import { z } from 'zod';
 import { parseDocument as parseYAMLDocument, stringify as stringifyYAML } from 'yaml';
 import { detectAgent } from './agent-installation.js';
-import { codexModelCatalog, codexCompactionLimit } from './codex-model-catalog.js';
+import { codexModelCatalog, codexContextMetadata } from './codex-model-catalog.js';
 import { apiModelDisplayName } from '../../../apps/shared/api-endpoint.js';
 import { deepseekConfigPath,deepseekHome } from './deepseek-config.js';
 import {WindowsAgentLifecycle} from './windows-agent-lifecycle.js';
@@ -406,7 +406,7 @@ export class AgentConnections {
   async refreshCodexCompactionLimits(window:(model:string)=>Promise<number|undefined>){
     const {readdir}=await import('node:fs/promises');
     const files=await readdir(this.dir()).catch(error=>{if(error.code==='ENOENT')return [];throw error;});
-    const limits=new Map<string,number>();let updated=0,failed=0;
+    const metadata=new Map<string,ReturnType<typeof codexContextMetadata>>();let updated=0,failed=0;
     for(const name of files.filter(name=>/^codex-models-[a-f0-9]+\.json$/.test(name))){
       const path=join(this.dir(),name),temp=`${path}.${randomUUID()}.tmp`;
       try{
@@ -414,9 +414,13 @@ export class AgentConnections {
         if(!Array.isArray(catalog.models)||!catalog.models.every((model:any)=>model&&typeof model.slug==='string')){failed++;continue;}
         let changed=false;
         for(const model of catalog.models){
-          if(!limits.has(model.slug))limits.set(model.slug,codexCompactionLimit(await window(model.slug)));
-          const limit=limits.get(model.slug)!;
-          if(model.auto_compact_token_limit!==limit){model.auto_compact_token_limit=limit;changed=true;}
+          if(!metadata.has(model.slug))metadata.set(model.slug,codexContextMetadata(await window(model.slug)));
+          const next=metadata.get(model.slug)!;
+          for(const field of ['context_window','max_context_window','auto_compact_token_limit'] as const){
+            const value=field==='max_context_window'?undefined:next[field];
+            if(value===undefined){if(field in model){delete model[field];changed=true;}}
+            else if(model[field]!==value){model[field]=value;changed=true;}
+          }
         }
         if(changed){await writeFile(temp,JSON.stringify(catalog),{mode:0o600,flag:'wx'});await rename(temp,path);updated++;}
       }catch{failed++;}finally{await rm(temp,{force:true}).catch(()=>{});}

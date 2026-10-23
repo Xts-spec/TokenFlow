@@ -1,10 +1,19 @@
 import { apiModelDisplayName } from '../../../apps/shared/api-endpoint.js';
-/** Compatibility trigger when the source has not published its capacity. This
- * is not a declared model window or an inference request limit. */
-export const CODEX_DEFAULT_COMPACT_TOKEN_LIMIT=217600;
+/** Match the installed Codex client's unknown-model fallback. This is client
+ * scheduling metadata, not a gateway request limit or a claim about the source. */
+export const CODEX_DEFAULT_CONTEXT_WINDOW=272000;
+export const CODEX_DEFAULT_COMPACT_TOKEN_LIMIT=244800;
+const validWindow=(value?:number)=>typeof value==='number'&&Number.isSafeInteger(value)&&value>0?value:undefined;
 export function codexCompactionLimit(contextWindow?:number){
- if(typeof contextWindow==='number'&&Number.isSafeInteger(contextWindow)&&contextWindow>0)return Math.max(1,Math.floor(contextWindow*0.8));
- return CODEX_DEFAULT_COMPACT_TOKEN_LIMIT;
+ return Math.max(1,Math.floor((validWindow(contextWindow)??CODEX_DEFAULT_CONTEXT_WINDOW)*0.9));
+}
+export function codexContextMetadata(contextWindow?:number):{context_window?:number;auto_compact_token_limit?:number}{
+ const capacity=validWindow(contextWindow)??CODEX_DEFAULT_CONTEXT_WINDOW;
+ // Codex 0.163 pre-compacts with the old model when the new window is smaller.
+ // Across providers that model may not be authorized by the current key. For
+ // these windows publish the same native 90% trigger without old-model pre-compaction.
+ // Other models expose their window and let Codex derive the trigger itself.
+ return capacity<CODEX_DEFAULT_CONTEXT_WINDOW?{auto_compact_token_limit:codexCompactionLimit(capacity)}:{context_window:capacity};
 }
 /** Codex reads this catalog at startup instead of its bundled OpenAI picker entries.
  * Keep it scoped to the models authorized by this connection's client key. */
@@ -15,9 +24,7 @@ export function codexModelCatalog(selection:string|string[],labels:Record<string
   default_reasoning_level:'medium',supported_reasoning_levels:[{effort:'medium',description:'默认'}],
   shell_type:'shell_command',base_instructions:'You are a coding assistant. Help the user complete their coding tasks.',
   supports_reasoning_summaries:false,support_verbosity:false,
-  // A smaller declared context_window causes Codex to compact with the previous
-  // model on a downshift. Publish only the trigger, based on receiver metadata.
-  auto_compact_token_limit:codexCompactionLimit(contextWindows[model]),
+  ...codexContextMetadata(contextWindows[model]),
   // Codex requires this field; its schema has no unlimited variant. Use the
   // largest exactly representable JSON integer so this catalog does not clip tools.
   apply_patch_tool_type:'freeform',truncation_policy:{mode:'bytes',limit:Number.MAX_SAFE_INTEGER},
