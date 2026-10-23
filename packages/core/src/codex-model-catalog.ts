@@ -1,7 +1,7 @@
 import { apiModelDisplayName } from '../../../apps/shared/api-endpoint.js';
 /** Compatibility trigger when the source has not published its capacity. This
  * is not a declared model window or an inference request limit. */
-export const CODEX_DEFAULT_COMPACT_TOKEN_LIMIT=128000;
+export const CODEX_DEFAULT_COMPACT_TOKEN_LIMIT=217600;
 export function codexCompactionLimit(contextWindow?:number){
  if(typeof contextWindow==='number'&&Number.isSafeInteger(contextWindow)&&contextWindow>0)return Math.max(1,Math.floor(contextWindow*0.8));
  return CODEX_DEFAULT_COMPACT_TOKEN_LIMIT;

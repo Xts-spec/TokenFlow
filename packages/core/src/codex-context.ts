@@ -5,6 +5,7 @@ import {constants} from 'node:fs';
 import {GatewayContext,GatewayContextError,type ContextScope} from './gateway-context.js';
 import {safePath} from './agent-connections.js';
 import {CodexHistoryBackups,type HistorySnapshot} from './codex-history-backups.js';
+import {replayCodexHistory} from './codex-rollout-history.js';
 
 type Item=Record<string,any>;
 const digest=(text:string)=>createHash('sha256').update(text).digest('hex');
@@ -13,6 +14,9 @@ const detached=(text:string):string=>JSON.parse(JSON.stringify(text));
 export const codexContextScope:ContextScope={owner:'managed-agent:codex',source:'portable-context',model:'portable-context'};
 const failure=()=>new GatewayContextError('无法恢复这段压缩上下文。请在保留原始会话记录的本机继续，或提供可读交接摘要；原会话未被清空。');
 const object=(v:unknown):v is Item=>!!v&&typeof v==='object'&&!Array.isArray(v);
+// history_base.thread_id is the immutable rollout ID, not session_meta.id.
+// Reverts keep the logical thread ID and add a new rollout UUID after an underscore.
+const rolloutId=(path:string)=>{const match=/^rollout-.+-([\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12})(?:_([\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}))?\.jsonl$/i.exec(basename(path));return match?.[2]??match?.[1];};
 export function portableCodexItem(item:Item):Item[]{
  if(!object(item))throw failure();
  // Responses Lite declarations describe the tools available in that old turn,
@@ -65,40 +69,55 @@ export class CodexContext {
   const token=item.encrypted_content;if(typeof token!=='string'||!token)throw failure();
   if(token.startsWith('tfctx1.'))return this.context.decodeCheckpoint(token,[codexContextScope,...scopes]).flatMap(portableCodexItem);
   const cached=await this.cached(token);if(cached)return cached.flatMap(portableCodexItem);
-  for(const {path} of await this.files()){
+  const files=await this.files();
+  const parseRows=(text:string)=>text.split('\n').filter(line=>line.trim()).map(line=>{try{return JSON.parse(line) as Item;}catch{throw failure();}});
+  const locate=async(base:Item,currentPath:string,visited:Set<string>)=>{
+   for(const {path} of files){
+    if(rolloutId(path)!==base.thread_id||path===currentPath||visited.has(path))continue;
+    await safePath(path);const raw=await readFile(path);
+    if(base.end_byte_offset>raw.length)throw failure();
+    const prefix=raw.subarray(0,base.end_byte_offset);if(prefix.length&&prefix.at(-1)!==10)continue;
+    const rows=parseRows(prefix.toString('utf8'));
+    const last=rows.at(-1)?.ordinal;
+    if(Number.isSafeInteger(last)&&Number.isSafeInteger(base.end_ordinal_exclusive)&&last+1!==base.end_ordinal_exclusive)throw failure();
+    return {path,rows};
+   }
+   throw failure();
+  };
+  const ancestors=async(rows:Item[],currentPath:string,visited:Set<string>):Promise<Item[]>=>{
+   const base=rows[0]?.type==='session_meta'?rows[0].payload?.history_base:undefined;
+   if(!base)return rows;
+   if(typeof base.thread_id!=='string'||!Number.isSafeInteger(base.end_byte_offset)||base.end_byte_offset<0)throw failure();
+   const next=new Set(visited);next.add(currentPath);
+   const prior=await locate(base,currentPath,next);
+   return [...(await ancestors(prior.rows,prior.path,next)).filter(row=>row.type!=='session_meta'),...rows];
+  };
+  const replace=(row:Item):Item[]|undefined=>{
+   const value=row.type==='compacted'?row.payload?.replacement_history:row.type==='response_item'&&row.payload?.type==='compaction'?[row.payload]:undefined;
+   if(!Array.isArray(value)||!value.every(object))return;
+   // Earlier official opaque windows are not readable summaries. Keep their
+   // original response items; a newer local/plaintext checkpoint can replace them.
+   if(value.some(item=>item.type==='compaction'&&!String(item.encrypted_content).startsWith('tfctx1.')))return;
+   const items:Item[]=[];
+   for(const item of value){
+    if(item.type==='compaction'){items.length=0;items.push(...this.context.decodeCheckpoint(item.encrypted_content,[codexContextScope,...scopes]));}
+    else items.push(item);
+   }
+   return items;
+  };
+  for(const {path} of files){
    await safePath(path);const text=await readFile(path,'utf8');if(!text.includes(token))continue;
-   let history:Item[]=[];let complete=false;
+   const rows:Item[]=[];let complete=false;
    for(const line of text.split('\n')){
-    let event:Item;try{event=JSON.parse(line);}catch{if(line.trim())throw failure();continue;}
-    const payload=event.payload;if(!object(payload))continue;
-    if(event.type==='event_msg'&&payload.type==='thread_rolled_back')throw failure();
-    if(event.type==='response_item'){
-     if(payload.type==='compaction'){
-      if(payload.encrypted_content===token){complete=true;break;}
-      if(typeof payload.encrypted_content==='string'&&payload.encrypted_content.startsWith('tfctx1.'))history=this.context.decodeCheckpoint(payload.encrypted_content,[codexContextScope,...scopes]).flatMap(portableCodexItem);
-      continue;
-     }
-     history.push(...portableCodexItem(payload));
-    }
-    if(event.type==='compacted'){
-     const replacement=payload.replacement_history;
-     if(!Array.isArray(replacement)||!replacement.every(object))throw failure();
-     if(replacement.some(i=>i.type==='compaction'&&i.encrypted_content===token)){complete=true;break;}
-     if(!replacement.some(i=>i.type==='compaction'))history=replacement.flatMap(portableCodexItem);
-     else if(replacement.some(i=>i.type==='compaction'&&String(i.encrypted_content).startsWith('tfctx1.'))){
-      history=[];
-      for(const item of replacement){
-       if(item.type==='compaction'&&String(item.encrypted_content).startsWith('tfctx1.'))history=this.context.decodeCheckpoint(item.encrypted_content,[codexContextScope,...scopes]).flatMap(portableCodexItem);
-       else if(item.type!=='compaction')history.push(...portableCodexItem(item));
-      }
-     }
-     // Earlier opaque windows are reconstructed from their original response
-     // items already on disk; never pretend the ciphertext is a readable summary.
-    }
+    if(!line.trim())continue;
+    let row:Item;try{row=JSON.parse(line);}catch{throw failure();}
+    const value=row.type==='compacted'?row.payload?.replacement_history:row.type==='response_item'?[row.payload]:[];
+    if(Array.isArray(value)&&value.some(item=>item?.type==='compaction'&&item.encrypted_content===token)){complete=true;break;}
+    rows.push(row);
    }
-   if(complete&&history.some(i=>i.role==='user')){
-    await this.save(token,history);return history;
-   }
+   if(!complete)continue;
+   const history=replayCodexHistory(await ancestors(rows,path,new Set()),replace).flatMap(portableCodexItem);
+   if(history.some(item=>item.role==='user')){await this.save(token,history);return history;}
   }
   throw failure();
  }
@@ -122,7 +141,7 @@ export class CodexContext {
   const views=new Map<string,{header:string;originalHeader:string;row:Item;boundaries:number[]}>();
   const remember=(path:string,text:string)=>{
    const lines=text.split('\n');let row:Item;try{row=JSON.parse(lines[0]!);}catch{return;}
-   const boundaries=[0];let bytes=0,ordinal=0;
+   const boundaries:number[]=[];let bytes=0,ordinal=Number.isSafeInteger(row.ordinal)&&row.ordinal>=0?row.ordinal:0;boundaries[ordinal]=0;
    for(const line of lines){if(!line)break;let event:Item;try{event=JSON.parse(line);}catch{break;}if(event.ordinal!==ordinal)break;bytes+=Buffer.byteLength(line)+1;boundaries[++ordinal]=bytes;}
    const header=detached(lines[0]!);
    views.set(path,{header,originalHeader:views.get(path)?.originalHeader??header,row,boundaries});
@@ -203,7 +222,7 @@ export class CodexContext {
   // when every event stays in place. Rebase dependants, including stale bounds
   // left by older TokenFlow versions, from explicit ordinals (never guess).
   const sources=new Map<string,string>(),invalidated=new Set<string>();
-  for(const [path,view] of views){const meta=view.row.payload;if(typeof meta?.id==='string'&&basename(path).endsWith(`-${meta.id}.jsonl`))sources.set(meta.id,path);}
+  for(const [path] of views){const id=rolloutId(path);if(id)sources.set(id,path);}
   let changed=true,passes=0;
   while(changed){
    if(++passes>views.size+1)throw new GatewayContextError('分页历史依赖存在循环，原记录保留。',409);
@@ -214,9 +233,9 @@ export class CodexContext {
     const source=sources.get(base.thread_id);if(!source)continue;
     const offset=views.get(source)!.boundaries[base.end_ordinal_exclusive];
     if(offset===undefined||offset===base.end_byte_offset)continue;
-    invalidated.add(base.thread_id);base.end_byte_offset=offset;
+    const sourceThread=views.get(source)!.row.payload?.id;if(typeof sourceThread==='string')invalidated.add(sourceThread);base.end_byte_offset=offset;
     const header=JSON.stringify(view.row),delta=Buffer.byteLength(header)-Buffer.byteLength(view.header);
-    for(let ordinal=1;ordinal<view.boundaries.length;ordinal++)view.boundaries[ordinal]!+=delta;
+    for(let ordinal=0;ordinal<view.boundaries.length;ordinal++)if(view.boundaries[ordinal]!==undefined&&view.boundaries[ordinal]!>0)view.boundaries[ordinal]!+=delta;
     view.header=header;changed=true;
    }
   }

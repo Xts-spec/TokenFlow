@@ -13,6 +13,16 @@ const summary=(text:string)=>({type:'message',role:'assistant',content:[{type:'o
 const completed=(text:string)=>Response.json({status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text}]}],usage:{input_tokens:50,output_tokens:10}});
 async function setup(){const root=await mkdtemp(join(tmpdir(),'codex-reported-'));roots.push(root);return GatewayContext.open(root);}
 
+it('preserves capacity advice on ordinary Codex streaming calls without inventing a compaction',async()=>{
+ const context=await setup();let recorded:unknown,compactions=0;
+ const send=async()=>Response.json({error:{code:'qoder_capacity_wait_exhausted'}},{status:429});
+ const migration={scope,threadId:'client-summary',recover:async()=>[]};
+ const response=await context.response('responses',{model:scope.model,input:'Client-owned summary request',stream:true},scope.owner,scope.source,send,migration,{onError:error=>recorded=error,onCompaction:()=>compactions++});
+ expect(response.status).toBe(200);expect(response.headers.get('content-type')).toBe('text/event-stream');
+ expect(await response.text()).toContain('选择其他模型');expect(recorded).toMatchObject({statusCode:429});expect(compactions).toBe(0);
+ expect((await context.response('responses',{model:scope.model,input:'No stream'},scope.owner,scope.source,send,migration)).status).toBe(429);
+});
+
 it('merges previous checkpoints into the next summary instead of accumulating them verbatim',async()=>{
  const context=await setup();let input:Record<string,unknown>[]=[summary('ORIGINAL_DECISION: preserve billing. '+ 'Completed earlier work. '.repeat(1800))];
  for(let round=0;round<4;round++){

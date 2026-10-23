@@ -80,7 +80,7 @@ trust_level = "untrusted"
   expect(after).toMatchObject({profile:'work',model_auto_compact_token_limit_scope:'total',approval_policy:'untrusted',sandbox_mode:'read-only',profiles:{work:{model,model_provider:'token_flow',model_auto_compact_token_limit_scope:'total',approval_policy:'on-request',sandbox_mode:'workspace-write',web_search:'live'},other:{model:'untouched',approval_policy:'never'}}});
   expect(after.model_auto_compact_token_limit).toBeUndefined();expect(after.model_context_window).toBeUndefined();
   expect((after.profiles as any).work.model_auto_compact_token_limit).toBeUndefined();expect((after.profiles as any).work.model_context_window).toBeUndefined();
-  expect((after.model_providers as any).token_flow.name).toBe('OpenAI');
+  expect((after.model_providers as any).token_flow.name).toBe('TokenFlow');
   for(const field of ['sandbox_workspace_write','shell_environment_policy','mcp_servers','projects'])expect(after[field]).toEqual(before[field]);
   expect((await connections.review(record.id)).checks.every(c=>c.ok)).toBe(true);
  }

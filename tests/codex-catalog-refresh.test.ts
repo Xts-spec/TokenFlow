@@ -24,14 +24,14 @@ it('reapplies unchanged selections to replace the legacy downshift window and ke
  const second=await apply(first.id),after=parse(await readFile(configPath,'utf8'));
  expect(after.model_catalog_json).not.toBe(before.model_catalog_json);
  const entry=JSON.parse(await readFile(String(after.model_catalog_json),'utf8')).models[0];
- expect(entry.slug).toBe(model);expect(entry.context_window).toBeUndefined();expect(entry.auto_compact_token_limit).toBe(128000);
+ expect(entry.slug).toBe(model);expect(entry.context_window).toBeUndefined();expect(entry.auto_compact_token_limit).toBe(217600);
  await connections.restore(second.id);expect(await readFile(configPath,'utf8')).toBe(original);
 });
 it('uses receiver capacity for the compaction trigger without declaring a downshift window',()=>{
  const catalog=codexModelCatalog(['codex/gpt-6-luna','api-example/custom','unknown/model'],{}, {'codex/gpt-6-luna':272000,'api-example/custom':64000});
- expect(catalog.models.map(model=>model.auto_compact_token_limit)).toEqual([217600,51200,128000]);
+ expect(catalog.models.map(model=>model.auto_compact_token_limit)).toEqual([217600,51200,217600]);
  expect(catalog.models.every(model=>!('context_window'in model))).toBe(true);
- for(const invalid of [undefined,NaN,Infinity,-1,0])expect(codexCompactionLimit(invalid)).toBe(128000);
+ for(const invalid of [undefined,NaN,Infinity,-1,0])expect(codexCompactionLimit(invalid)).toBe(217600);
 });
 it('updates existing generated catalogs while preserving routing, original backups and history',async()=>{
  const root=await mkdtemp(join(await realpath(tmpdir()),'codex-compaction-metadata-'));roots.push(root);

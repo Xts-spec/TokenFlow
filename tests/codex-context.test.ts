@@ -8,6 +8,7 @@ import {tmpdir} from 'node:os';
 import {CodexContext,codexContextScope,portableCodexItem} from '../packages/core/src/codex-context.js';
 import {parseCodeBuddyInput} from '../packages/core/src/codebuddy.js';
 import {GatewayContext} from '../packages/core/src/gateway-context.js';
+import {CODEX_SUMMARY_PREFIX,codexUserTurnBoundary,replayCodexHistory} from '../packages/core/src/codex-rollout-history.js';
 const roots:string[]=[];afterEach(async()=>{for(const root of roots.splice(0))await rm(root,{recursive:true,force:true});});
 async function fixture(){const root=await mkdtemp(join(await realpath(tmpdir()),'codex-context-test-'));roots.push(root);const home=join(root,'codex'),file=join(home,'sessions/2026/10/12/rollout-fixture.jsonl');await mkdir(join(home,'sessions/2026/10/12'),{recursive:true});const context=await GatewayContext.open(root);return {root,file,context,migration:new CodexContext(root,join(home,'config.toml'),context)};}
 const history=[{type:'message',role:'user',content:[{type:'input_text',text:'Preserve requirements'}]},{type:'function_call',call_id:'one',name:'read',arguments:'{}'},{type:'function_call_output',call_id:'one',output:'original tool result'}];
@@ -93,9 +94,56 @@ it('keeps managed history across source/model/key switches while ordinary export
  const compact=await(await f.context.response('responses/compact',{model:'qoder/a',input:history},'key-a','account-a',send,migration)).json();
  await f.context.response('responses',{model:'workbuddy/b',input:compact.output},'key-b','account-b',send,migration);expect(seen.input).toEqual(history);
 });
-it('refuses ambiguous rolled-back histories instead of resurrecting discarded turns',async()=>{
+it('treats rollback before any user turn as a no-op like Codex',async()=>{
  const f=await fixture();await writeFile(f.file,JSON.stringify({type:'event_msg',payload:{type:'thread_rolled_back',num_turns:1}})+'\n'+rollout('rolled-back'));
- await expect(f.migration.recover({type:'compaction',encrypted_content:'rolled-back'},[])).rejects.toThrow('无法恢复');
+ expect(await f.migration.recover({type:'compaction',encrypted_content:'rolled-back'},[])).toEqual(history);
+});
+it('recovers only surviving turns after rollback, ignoring a checkpoint in the discarded turn',async()=>{
+ const f=await fixture(),summary={type:'message',role:'user',content:[{type:'input_text',text:CODEX_SUMMARY_PREFIX+'\nSUMMARY_A'}]};
+ const user=(text:string)=>({type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}});
+ const start=(id:string)=>({type:'event_msg',payload:{type:'task_started',turn_id:id}});
+ const rows=[start('A'),user('A'),{type:'compacted',payload:{replacement_history:[user('A').payload,summary]}},
+  start('B'),user('B_REMOVED'),{type:'compacted',payload:{replacement_history:[user('B_REMOVED').payload,{...summary,content:[{type:'input_text',text:CODEX_SUMMARY_PREFIX+'\nSUMMARY_AB_REMOVED'}]}]}},
+  {type:'event_msg',payload:{type:'thread_rolled_back',num_turns:1}},start('D'),user('D_KEPT'),checkpoint('after-rollback')];
+ const original=rows.map(row=>JSON.stringify(row)).join('\n');await writeFile(f.file,original);
+ const recovered=await f.migration.recover({type:'compaction',encrypted_content:'after-rollback'},[]);
+ expect(JSON.stringify(recovered)).toContain('SUMMARY_A');expect(JSON.stringify(recovered)).toContain('D_KEPT');expect(JSON.stringify(recovered)).not.toContain('REMOVED');
+ expect(await readFile(f.file,'utf8')).toBe(original);
+});
+it('loads inherited history only up to the fork boundary before restoring a foreign checkpoint',async()=>{
+ const f=await fixture(),parentId='00000000-0000-0000-0000-000000000011',parent=join(f.file,'..',`rollout-2026-10-12T00-00-00-${parentId}.jsonl`);
+ const row=(text:string)=>({type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}});
+ const prefix=[{type:'session_meta',payload:{id:parentId}},row('A_SHARED')].map(row=>JSON.stringify(row)+'\n').join('');
+ await writeFile(parent,prefix+JSON.stringify(row('B_PARENT_ONLY'))+'\n');
+ await writeFile(f.file,[{type:'session_meta',payload:{id:'child',history_base:{thread_id:parentId,end_byte_offset:Buffer.byteLength(prefix),end_ordinal_exclusive:2}}},row('D_CHILD_ONLY'),checkpoint('child-token')].map(row=>JSON.stringify(row)).join('\n'));
+ const result=JSON.stringify(await f.migration.recover({type:'compaction',encrypted_content:'child-token'},[]));
+ expect(result).toContain('A_SHARED');expect(result).toContain('D_CHILD_ONLY');expect(result).not.toContain('B_PARENT_ONLY');
+});
+it('follows immutable rollout IDs through repeated reverts of the same logical thread',async()=>{
+ const f=await fixture(),id='00000000-0000-0000-0000-000000000012',r1='00000000-0000-0000-0000-000000000013',r2='00000000-0000-0000-0000-000000000014';
+ const path=(suffix='')=>join(f.file,'..',`rollout-2026-10-12T00-00-00-${id}${suffix?'_'+suffix:''}.jsonl`);
+ const row=(text:string)=>({type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}});
+ const encode=(rows:any[],start=0)=>rows.map((r,i)=>JSON.stringify({...r,ordinal:start+i})+'\n').join('');
+ const a=encode([{type:'session_meta',payload:{id}},row('A_SHARED')]);
+ await writeFile(path(),a+encode([row('B_REMOVED')],2));
+ const d=encode([{type:'session_meta',payload:{id,history_base:{thread_id:id,end_byte_offset:Buffer.byteLength(a),end_ordinal_exclusive:2}}},row('D_KEPT')],2);
+ await writeFile(path(r1),d+encode([row('E_REMOVED')],4));
+ await writeFile(path(r2),encode([{type:'session_meta',payload:{id,history_base:{thread_id:r1,end_byte_offset:Buffer.byteLength(d),end_ordinal_exclusive:4}}},row('F_KEPT'),checkpoint('twice-reverted')],4));
+ // A sibling with the same starting ordinal must never win by recency or length.
+ await writeFile(path('00000000-0000-0000-0000-000000000015'),d.replace('D_KEPT','X_WRONG')+encode([row('sibling future')],4));
+ const result=JSON.stringify(await f.migration.recover({type:'compaction',encrypted_content:'twice-reverted'},[]));
+ for(const text of ['A_SHARED','D_KEPT','F_KEPT'])expect(result).toContain(text);
+ for(const text of ['B_REMOVED','E_REMOVED','X_WRONG'])expect(result).not.toContain(text);
+});
+it('does not count synthetic summaries or contextual user messages as rollback turns',()=>{
+ const item=(text:string)=>({type:'message',role:'user',content:[{type:'input_text',text}]});
+ for(const text of [CODEX_SUMMARY_PREFIX+'\nsummary','<ENVIRONMENT_CONTEXT>cwd</ENVIRONMENT_CONTEXT>','<skill>instructions</skill>','<external_repo>context</external_repo>','<goal_context>goal</goal_context>'])expect(codexUserTurnBoundary(item(text))).toBe(false);
+ expect(codexUserTurnBoundary(item('Actual user task'))).toBe(true);
+ expect(codexUserTurnBoundary({type:'agent_message',content:[]})).toBe(true);
+ expect(codexUserTurnBoundary({type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify({author:'/root/a',recipient:'/root',content:'Task',trigger_turn:true})}]})).toBe(true);
+ const rows=[item('A'),item(CODEX_SUMMARY_PREFIX+'\nsummary'),item('<environment_context>cwd</environment_context>'),item('B')].map(payload=>({type:'response_item',payload}));
+ rows.push({type:'event_msg',payload:{type:'thread_rolled_back',num_turns:2}} as any);
+ expect(replayCodexHistory(rows,()=>undefined)).toEqual([]);
 });
 it('summarizes a recovered long window in bounded calls while keeping constraints and recent tool pairs',async()=>{
  const f=await fixture();const input:any[]=[{type:'message',role:'user',content:'Keep the original API and user files.'}];
@@ -234,6 +282,21 @@ it('repairs an already stale paginated byte cutoff using explicit persisted ordi
  const bound=Buffer.byteLength(text.split('\n').slice(0,2).join('\n')+'\n');
  await writeFile(f.file,JSON.stringify({ordinal:0,type:'session_meta',payload:{id:'fork',history_base:{thread_id:id,end_ordinal_exclusive:2,end_byte_offset:999999}}})+'\n');
  await f.migration.prepareOfficial([],async()=>[]);expect(JSON.parse(await readFile(f.file,'utf8')).payload.history_base.end_byte_offset).toBe(bound);
+});
+it('rebases inherited byte cutoffs through same-thread delta rollouts with nonzero ordinals',async()=>{
+ const f=await fixture(),id='00000000-0000-0000-0000-000000000021',r1='00000000-0000-0000-0000-000000000022';
+ const source=join(f.file,'..',`rollout-2026-10-12T00-00-00-${id}.jsonl`),delta=join(f.file,'..',`rollout-2026-10-12T00-00-00-${id}_${r1}.jsonl`);
+ const encode=(rows:any[],start=0)=>rows.map((row,i)=>JSON.stringify({...row,ordinal:start+i})+'\n').join('');
+ const reasoning={type:'response_item',payload:{type:'reasoning',id:'rs_chatcmpl_test',encrypted_content:'',summary:[{type:'summary_text',text:'saved details'}]}};
+ const original=encode([{type:'session_meta',payload:{id,model_provider:'token_flow'}},reasoning]);await writeFile(source,original);
+ const prior=encode([{type:'session_meta',payload:{id,model_provider:'token_flow',history_base:{thread_id:id,end_ordinal_exclusive:2,end_byte_offset:Buffer.byteLength(original)}}},reasoning],2);await writeFile(delta,prior);
+ await writeFile(f.file,encode([{type:'session_meta',payload:{id:'child',history_base:{thread_id:r1,end_ordinal_exclusive:4,end_byte_offset:Buffer.byteLength(prior)}}}],4));
+ await f.migration.prepareOfficial([],async()=>[]);
+ const revisedSource=await readFile(source,'utf8'),revisedDelta=await readFile(delta,'utf8');
+ expect(JSON.parse(revisedDelta.split('\n')[0]!).payload.history_base.end_byte_offset).toBe(Buffer.byteLength(revisedSource));
+ expect(JSON.parse(await readFile(f.file,'utf8')).payload.history_base.end_byte_offset).toBe(Buffer.byteLength(revisedDelta));
+ expect(revisedDelta.trim().split('\n').map(line=>JSON.parse(line).ordinal)).toEqual([2,3]);
+ expect(await f.migration.prepareOfficial([],async()=>[])).toEqual({migrated:0});
 });
 
 it('backs up and invalidates only derived history projections whose rollout bytes changed',async()=>{

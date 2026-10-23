@@ -15,6 +15,7 @@ import {codexContextScope,portableCodexItem} from '../packages/core/src/codex-co
 const root=await mkdtemp(join(await realpath(tmpdir()),'tf-checkpoint-native-'));
 const binary=process.argv[2]??'/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex';
 const model='qoder/checkpoint-fixture',context=await GatewayContext.open(root);
+const localCompaction=process.argv.includes('--local-compaction');
 let child,failSummary=false,serial=0,summaryCalls=0,normalCalls=0;
 const checkpoints=[],notifications=[];
 const server=createServer(async(req,res)=>{
@@ -23,7 +24,7 @@ const server=createServer(async(req,res)=>{
   if(req.headers['content-encoding']==='zstd')raw=zstdDecompressSync(raw);
   const body=JSON.parse(raw.toString());
   const response=await context.response('responses',body,'fixture-key','fixture-source',async(_path,request)=>{
-   const compact=request.instructions?.startsWith('Summarize the supplied');if(compact)summaryCalls++;else normalCalls++;
+   const compact=request.instructions?.startsWith('Summarize the supplied')||JSON.stringify(request.input?.at(-1)).includes('CONTEXT CHECKPOINT COMPACTION');if(compact)summaryCalls++;else normalCalls++;
    if(compact&&failSummary)return Response.json({error:{code:'rate_limit_exceeded',message:JSON.stringify({error:{code:'qoder_capacity_wait_exhausted'}})}},{status:429});
    const text=compact?'ORIGINAL_FACT: keep the API. Completed work retained; continue remaining steps.':'ORIGINAL_FACT: keep the API. '+ 'Synthetic completed step. '.repeat(600);
    const n=++serial,item={id:`msg_${n}`,type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text,annotations:[]}]};
@@ -43,7 +44,7 @@ try{
  await new Promise(r=>server.listen(0,'127.0.0.1',r));const config=join(root,'config.toml');await writeFile(config,'');
  const connections=new AgentConnections(root,{codex:config},async()=>[]);
  await connections.apply({target:'codex',revision:(await connections.status()).find(t=>t.id==='codex').revision,origin:`http://127.0.0.1:${server.address().port}`,model,sourceId:'a'.repeat(24),keyId:'fixture-key',key:'synthetic-fixture'});
- const settings=parse(await readFile(config,'utf8'));Object.assign(settings.model_providers.token_flow,{request_max_retries:0,stream_max_retries:0});await writeFile(config,stringify(settings));
+ const settings=parse(await readFile(config,'utf8'));Object.assign(settings.model_providers.token_flow,{name:localCompaction?'TokenFlow':'OpenAI',request_max_retries:0,stream_max_retries:0});await writeFile(config,stringify(settings));
  child=spawn(binary,['app-server','--listen','stdio://'],{cwd:root,env:{PATH:process.env.PATH,HOME:root,CODEX_HOME:root},stdio:['pipe','pipe','pipe']});
  let buffer='',id=0;const pending=new Map();child.stderr.on('data',()=>{});
  child.stdout.on('data',chunk=>{buffer+=chunk;let end;while((end=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,end);buffer=buffer.slice(end+1);let message;try{message=JSON.parse(line);}catch{continue;}const task=pending.get(message.id);if(task){pending.delete(message.id);message.error?task.reject(Error(JSON.stringify(message.error))):task.resolve(message.result);}else if(message.method)notifications.push(message);}});
@@ -61,7 +62,7 @@ try{
   await waitFor((n)=>notifications.indexOf(n)>=from&&n.method==='item/completed'&&n.params.item.type==='contextCompaction');
   await waitFor(n=>notifications.indexOf(n)>=from&&n.method==='turn/completed');
  }
- assert.equal(checkpoints.length,3);assert.ok(checkpoints.every(c=>c.summaryCount===1));
+ assert.equal(checkpoints.length,localCompaction?0:3);assert.ok(checkpoints.every(c=>c.summaryCount===1));if(localCompaction)assert.equal(summaryCalls,3);
  // Add uncached work so the next compact reaches the failing source rather
  // than correctly reusing the checkpoint produced by the previous request.
  for(let turn=0;turn<6;turn++){
@@ -71,7 +72,7 @@ try{
  failSummary=true;const from=notifications.length;await rpc('thread/compact/start',{threadId:thread.id});
  const error=await waitFor(n=>notifications.indexOf(n)>=from&&n.method==='error');
  const message=JSON.stringify(error.params);assert.ok(message.includes('Qoder 当前模型容量不足'),message);assert.ok(message.includes('选择其他模型'),message);
- console.log(JSON.stringify({passed:true,normalCalls,summaryCalls,checkpoints,qoderAdviceReachedCodex:true,error:JSON.parse(message).error?.message??message,scope:'installed Codex, real GatewayContext, synthetic sources, isolated HOME'}));
+ console.log(JSON.stringify({passed:true,localCompaction,normalCalls,summaryCalls,checkpoints,qoderAdviceReachedCodex:true,error:JSON.parse(message).error?.message??message,scope:'installed Codex, real GatewayContext, synthetic sources, isolated HOME'}));
 }finally{
  if(child&&child.exitCode===null&&child.signalCode===null)await new Promise(r=>{child.once('exit',r);child.kill();});server.closeAllConnections();await new Promise(r=>server.close(r));await rm(root,{recursive:true,force:true,maxRetries:3,retryDelay:100});
 }

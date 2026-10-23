@@ -104,7 +104,7 @@ const server=createServer(async(req,res)=>{
   try{const result=await rawSend(path,forward,clock);return initial?finishUpstream(result,detach):result;}catch(error){if(initial){detach();}throw error;}
  };
  try{
-  const response=phase===0?await send('responses',body):await context.response(req.url.endsWith('/compact')?'responses/compact':'responses',body,'fixture-key','fixture-source',send,{bootstrapHistory:'official-history-import',contextWindowTokens,scope:codexContextScope,...(clientOnly?{}:{threadId:req.headers.session_id??req.headers['session-id']}),recover:item=>migration.recover(item,[]),normalize:portableCodexItem},{signal:lifetime.signal,onCancel:cancel,onInitialCompaction:active=>{initial=active;},onCompaction:report=>{reports.push(report);console.log(JSON.stringify({compactionReport:report}));}});
+  const response=phase===0||req.url.startsWith('/original/')?await send('responses',body):await context.response(req.url.endsWith('/compact')?'responses/compact':'responses',body,'fixture-key','fixture-source',send,{bootstrapHistory:'official-history-import',contextWindowTokens,scope:codexContextScope,...(clientOnly?{}:{threadId:req.headers.session_id??req.headers['session-id']}),recover:item=>migration.recover(item,[]),normalize:portableCodexItem},{signal:lifetime.signal,onCancel:cancel,onInitialCompaction:active=>{initial=active;},onCompaction:report=>{reports.push(report);console.log(JSON.stringify({compactionReport:report}));}});
   res.writeHead(response.status,Object.fromEntries(response.headers));if(response.body)for await(const chunk of response.body)res.write(chunk);res.end();
  }catch(error){console.log(JSON.stringify({gatewayError:{code:error.code,status:error.statusCode}}));res.writeHead(error.statusCode??500,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:error.message,code:error.code}}));}finally{abort.signal.removeEventListener('abort',cancel);}
 });
@@ -141,7 +141,7 @@ try{
  // The high threshold belongs only to fixture seeding. Do not carry it into the actual Codex test.
  await writeFile(join(root,'config.toml'),(await readFile(join(root,'config.toml'),'utf8')).replace(/^model_auto_compact_token_limit = 100000000\n/m,''));
  const connections=new AgentConnections(root,{codex:join(root,'config.toml')},async()=>[]);
- await connections.apply({target:'codex',revision:(await connections.status()).find(item=>item.id==='codex').revision,origin,model,sourceId:'a'.repeat(24),keyId:randomUUID(),key:'fixture-key'});
+ const connection=await connections.apply({target:'codex',revision:(await connections.status()).find(item=>item.id==='codex').revision,origin,model,sourceId:'a'.repeat(24),keyId:randomUUID(),key:'fixture-key'});
  const appliedConfig=await readFile(join(root,'config.toml'),'utf8');assert.ok(!/^model_auto_compact_token_limit\s*=/m.test(appliedConfig),'seed-only threshold leaked into the gateway test');
  assert.equal(reports.length,0,'switching must not start compaction');
  phase=1;const bootstrapCompactions=0;
@@ -158,10 +158,23 @@ try{
  const followupResult=await followupResponse.json();assert.equal(followupResponse.status,200,JSON.stringify(followupResult));
  followupTiming={durationMs:Math.round(performance.now()-followupStarted),rawHistoryBytes:Buffer.byteLength(JSON.stringify(followup)),newSummaryCalls:upstream.filter(item=>item.summary).length-summariesBefore,report:reports.at(-1)};
  }
- const latestSaved=await readFile(rollouts[0],'utf8');const persistedCompactions=latestSaved.split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(event=>['compacted','compaction'].includes(event.type)).length;
+ const latestSaved=await readFile(rollouts[0],'utf8');const persistedCompactions=latestSaved.split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(event=>event.type==='compacted'||event.type==='response_item'&&event.payload?.type==='compaction').length;
+ let officialReturn;
+ if(process.argv.includes('--return-official')){
+  assert.ok(!live,'Official-return fixture uses a synthetic official provider');
+  await client.stop();const summaries=reports.length;
+  const materialized=await migration.prepareOfficial([],async()=>[]);assert.ok(materialized.migrated>0,'Initial inline checkpoint must be restored to text');
+  await connections.restore(connection.id);phase=2;client=await start();
+  await client.rpc('thread/resume',{threadId,model:'native-fixture',modelProvider:'original',approvalPolicy:'never',sandbox:'read-only'});
+  turnResult=await client.turn(threadId,continuation);assert.equal(turnResult.status,'completed');assert.ok(reply.includes(marker));
+  assert.equal(reports.length,summaries,'Returning to official must not run another gateway summary');
+  const request=calls.filter(call=>call.phase===2).at(-1);assert.ok(request.path.startsWith('/original/'));assert.ok(request.bytes<200000,'Official must receive the saved summary, not replay the 12 MB original');
+  officialReturn={passed:true,requestBytes:request.bytes,earliestRequirementPreserved:true};
+ }
  const preserved=reply.includes(marker),clientCompactions=progress.filter(item=>item.phase===1&&item.method==='item/started').length;
  if(!live&&process.argv.includes('--expensive-summary')){assert.ok(reports[0].inputTokens>=1000000);assert.equal(clientUsage.at(-1)?.last.inputTokens,100,'Summary charges contaminated the live Codex context');}
  const result={reports,progress,clientUsage,timing:{firstTurnMs,firstCompaction:reports[0],reuse:resumed,followup:followupTiming},passed:turnResult.status==='completed'&&preserved,clientOnly,live,largeHistory,bootstrapCompactions,normalizeContextError,remoteCompaction:process.argv.includes('--remote-compaction'),seedThresholdCleared:true,seedReportedInputTokens:process.argv.includes('--known-usage')?150000:100,totalScope:process.argv.includes('--total-scope'),persistedCompactions,resumed,firstTurnStatus,firstError,retryTurn:process.argv.includes('--retry-turn'),singleAttempt:process.argv.includes('--single-attempt'),knownUsage:process.argv.includes('--known-usage'),model,turnStatus:turnResult.status,errorCode:turnResult.error?.codexErrorInfo??null,historyBytes:Buffer.byteLength(JSON.stringify(history)),clientCompactions,gatewayCompactions:reports.length,summaryCalls:upstream.filter(item=>item.summary).length,sourceContextErrors:upstream.filter(item=>item.errorCode==='context_length_exceeded'||item.streamError?.code==='context_too_large'||item.streamError?.code==='context_length_exceeded').length,earliestRequirementPreserved:preserved,requests:calls.filter(item=>item.phase===1),upstream:upstream.filter(item=>item.phase===1)};
+ result.officialReturn=officialReturn;
  console.log(JSON.stringify(result));if(process.env.RESULT_PATH)await writeFile(process.env.RESULT_PATH,JSON.stringify(result,null,2)+'\n');await client.stop();
  assert.ok(result.passed,'long uncompacted history did not continue with the earliest requirement');
 }catch(error){

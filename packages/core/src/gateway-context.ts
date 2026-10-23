@@ -267,7 +267,15 @@ export class GatewayContext {
   // starts, keep the Responses stream open and deliver a typed terminal
   // failure with the source's actionable message, for every compaction.
   const task=this.respond(path,body,owner,source,send,migration,{...options,onCompactionStart:()=>{options.onCompactionStart?.();begin(compactionProgress(task,options.onCancel,body.model));}}).catch(error=>{if(error instanceof GatewayContextError)options.onError?.(error);throw error;});
-  return Promise.race([task,started]);
+  const response=await Promise.race([task,started]);
+  if(response.status!==429)return response;
+  // Client-owned compaction uses an ordinary Responses call. Deliver its
+  // terminal capacity failure just like remote compaction, without inspecting
+  // prompts or treating the ordinary request as a new compaction trigger.
+  const error=upstreamError(response.status,await readUpstreamError(response));
+  options.onError?.(new GatewayContextError(error.message,429,undefined,error.code??error.type));
+  const terminal={id:'resp_tf_'+randomBytes(16).toString('hex'),object:'response',created_at:Math.floor(Date.now()/1000),model:body.model,status:'failed',output:[],error};
+  return new Response('event: response.failed\ndata: '+JSON.stringify({type:'response.failed',response:terminal})+'\n\n',{headers:{'content-type':'text/event-stream'}});
  }
  private async respond(path:string,body:RequestBody,owner:string,source:string,send:Send,migration?:ContextMigration,options:ContextOptions={}):Promise<Response> {
   const scope=migration?.scope??{owner,model:body.model,source};const expanded=await this.expand(body,scope,migration);let input=expanded.input;const coveredUsers=expanded.coveredUsers;
