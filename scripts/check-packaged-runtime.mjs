@@ -134,7 +134,7 @@ try{
   const resumed=await service.app.inject({method:'POST',url:'/v1/responses',headers:{...headers,authorization:`Bearer ${key.apiKey}`},payload:{model:'qoder/kmodel_latest',input:[...recovered.json().output,{role:'user',content:'Continue.'}]}});
   assert.equal(resumed.statusCode,200,resumed.body);
   // Production A2A wiring: switching makes no model call; only the requested
-  // thread bootstraps once, then repeated growth waits for Codex's trigger.
+  // gateway-born thread waits for Codex's trigger, even with large input.
   const a2a=await request('/api/a2a'),target=a2a.targets.find(item=>item.id==='codex');
   await request('/api/a2a/connect','POST',{target:'codex',sourceId:source.id,model:'qoder/kmodel_latest',revision:target.revision,tokenLimit:null});
   assert.equal(summaryCalls,2,'Switching Codex must not generate summaries');
@@ -142,13 +142,13 @@ try{
   const managedHeaders={...headers,authorization:'Bearer '+JSON.parse(match[1]),session_id:'d0783e2e-6dfb-4e7b-8bb3-3704eafc9c23'};
   const longInput=[{role:'user',content:'Keep current task'},{role:'assistant',content:'Archived findings. '.repeat(20000)},{role:'user',content:'Continue current task'}];
   const continuation=input=>service.app.inject({method:'POST',url:'/v1/responses',headers:managedHeaders,payload:{model:'qoder/kmodel_latest',input}});
-  const firstManaged=await continuation(longInput);assert.equal(firstManaged.statusCode,200,firstManaged.body);assert.ok(summaryCalls>2,'Full history must be summarized');const firstManagedSummaryCalls=summaryCalls;
-  assert.equal((await continuation(longInput)).statusCode,200);assert.equal(summaryCalls,firstManagedSummaryCalls,'Replay must reuse the saved summary');
+  const firstManaged=await continuation(longInput);assert.equal(firstManaged.statusCode,200,firstManaged.body);assert.equal(summaryCalls,2,'A gateway-born thread must not bootstrap without imported history');const firstManagedSummaryCalls=summaryCalls;
+  assert.equal((await continuation(longInput)).statusCode,200);assert.equal(summaryCalls,firstManagedSummaryCalls,'Replay must not invent a migration checkpoint');
   const grown=[...longInput,{role:'assistant',content:'Later tool work. '.repeat(20000)},{role:'user',content:'Next step'}];
   assert.equal((await continuation(grown)).statusCode,200);assert.equal(summaryCalls,firstManagedSummaryCalls,'Later growth must wait for Codex');
   assert.equal((await continuation([...grown,{type:'compaction_trigger'}])).statusCode,200);assert.ok(summaryCalls>firstManagedSummaryCalls,'Explicit compaction must summarize new history');
  }finally{globalThis.fetch=originalFetch;}
  const zstd=await service.app.inject({method:'POST',url:'/v1/responses',headers:{...headers,authorization:`Bearer ${key.apiKey}`,'content-type':'application/json','content-encoding':'zstd'},payload:zstdCompressSync(Buffer.from(JSON.stringify({model:'qoder/kmodel_latest',input:'Packaged zstd complete history 首🙂尾',store:false})))});
  assert.equal(zstd.statusCode,200,zstd.body);assert.equal(zstd.json().output[0].content[0].text,'qoder');
- console.log(JSON.stringify({passed:true,electron:process.versions.electron,platform:process.platform,arch:process.arch,checks:['native zstd request decoded by the packaged gateway','no switch-time summary; current-thread lazy bootstrap and explicit later compaction','valid expanding summaries, immediate failed-summary retry and cached continuation','production dependencies','bundled licenses','Cursor native SDK','WorkBuddy SDK import','static UI','Responses gateway','Pi repair conversation','selected usage evidence','local usage worker','Claude native account attribution','existing Qoder and both WorkBuddy edition identities','Qoder IDE switch, restore and standalone isolation','automatic LAN listener, per-key source IPs and isolated model routes','Claude Desktop subagent roles and independent menu routes','Claude Desktop external gateway drift detection']},null,2));
+ console.log(JSON.stringify({passed:true,electron:process.versions.electron,platform:process.platform,arch:process.arch,checks:['native zstd request decoded by the packaged gateway','no switch-time or gateway-born bootstrap; explicit Codex compaction','valid expanding summaries, immediate failed-summary retry and cached continuation','production dependencies','bundled licenses','Cursor native SDK','WorkBuddy SDK import','static UI','Responses gateway','Pi repair conversation','selected usage evidence','local usage worker','Claude native account attribution','existing Qoder and both WorkBuddy edition identities','Qoder IDE switch, restore and standalone isolation','automatic LAN listener, per-key source IPs and isolated model routes','Claude Desktop subagent roles and independent menu routes','Claude Desktop external gateway drift detection']},null,2));
 }finally{await service?.app.close();await rm(root,{recursive:true,force:true});}
