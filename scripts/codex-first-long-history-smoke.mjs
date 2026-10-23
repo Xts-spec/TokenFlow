@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import {setTimeout as delay} from 'node:timers/promises';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
+import {zstdDecompressSync} from 'node:zlib';
 import {mkdtemp,writeFile,readFile,rm,realpath,readdir} from 'node:fs/promises';
 import {join} from 'node:path';
 import {homedir,tmpdir} from 'node:os';
@@ -32,7 +33,7 @@ const normalizeContextError=process.argv.includes('--normalize-context-error');
 const abort=new AbortController();
 const model=process.argv.find(value=>value.startsWith('--model='))?.slice(8)??'codex/gpt-6-luna';const marker='LONG_HISTORY_ANCHOR_'+randomUUID().replaceAll('-','');
 const runStarted=performance.now();
-const calls=[],upstream=[],progress=[],reports=[];let phase=0,child,responseID=0,turnResult,reply='',seedTools=0;
+const calls=[],upstream=[],progress=[],reports=[],clientUsage=[];let phase=0,child,responseID=0,turnResult,reply='',seedTools=0;
 const context=await GatewayContext.open(root),migration=new CodexContext(root,join(root,'config.toml'),context);
 let endpoint,key;const contextWindowTokens=live?await compactionModelWindow(model,[],join(homedir(),'.codex/config.toml')):undefined;
 console.log(JSON.stringify({modelContextWindow:contextWindowTokens??null}));
@@ -41,7 +42,7 @@ if(largeHistory){const lines=[];let bytes=0;while(bytes<1024*1024){const line=`a
 if(live){const config=YAML.parse(await readFile(join(homedir(),'Library/Application Support/desktop-browser-agent/cliproxy/config.yaml'),'utf8'));endpoint=`http://127.0.0.1:${config.port}/v1/responses`;key=config['api-keys'][0];}
 function synthetic(body,answer,tool=false){
  const id=++responseID,item=tool?{id:`fc_${id}`,type:'function_call',call_id:`seed_${id}`,name:'exec_command',arguments:JSON.stringify({cmd:"python3 -c \"print('archive/component.ts: export const value = 42;\\n' * 800)\"",max_output_tokens:16000})}:{id:`msg_${id}`,type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:answer,annotations:[]}]};
- const inputTokens=phase===0&&!tool&&process.argv.includes('--known-usage')?150000:100;
+ const inputTokens=phase>0&&body.instructions?.startsWith('Summarize the supplied')&&process.argv.includes('--expensive-summary')?1000000:phase===0&&!tool&&process.argv.includes('--known-usage')?150000:100;
  const usage={input_tokens:inputTokens,output_tokens:20,total_tokens:inputTokens+20};
  const response={id:`resp_${id}`,object:'response',created_at:Math.floor(Date.now()/1000),model:body.model,status:'completed',output:[item],usage};
  if(!body.stream)return Response.json(response);
@@ -49,7 +50,7 @@ function synthetic(body,answer,tool=false){
  return new Response(events.map((event,sequence_number)=>`event: ${event.type}\ndata: ${JSON.stringify({...event,sequence_number})}\n\n`).join(''),{headers:{'content-type':'text/event-stream'}});
 }
 const server=createServer(async(req,res)=>{
- let raw='';for await(const chunk of req)raw+=chunk;
+ const chunks=[];for await(const chunk of req)chunks.push(chunk);let bytes=Buffer.concat(chunks);if(req.headers['content-encoding']==='zstd')bytes=zstdDecompressSync(bytes);const raw=bytes.toString();
  const body=JSON.parse(raw||'{}'),trigger=body.input?.some(item=>item.type==='compaction_trigger'),localCompact=JSON.stringify(body.input?.at(-1)).includes('CONTEXT CHECKPOINT COMPACTION');
  const request={phase,path:req.url,bytes:Buffer.byteLength(raw),items:body.input?.length,trigger:!!trigger,localCompact,model:body.model};calls.push(request);
  if(phase>0||calls.length===1)console.log(JSON.stringify({clientRequest:request}));
@@ -103,7 +104,7 @@ const server=createServer(async(req,res)=>{
   try{const result=await rawSend(path,forward,clock);return initial?finishUpstream(result,detach):result;}catch(error){if(initial){detach();}throw error;}
  };
  try{
-  const response=phase===0?await send('responses',body):await context.response(req.url.endsWith('/compact')?'responses/compact':'responses',body,'fixture-key','fixture-source',send,{bootstrapOnFirstRequest:true,contextWindowTokens,scope:codexContextScope,connectionId:'test-gateway',...(clientOnly?{}:{threadId:req.headers.session_id??req.headers['session-id']}),recover:item=>migration.recover(item,[]),normalize:portableCodexItem},{signal:lifetime.signal,onCancel:cancel,onInitialCompaction:active=>{initial=active;},onCompaction:report=>{reports.push(report);console.log(JSON.stringify({compactionReport:report}));}});
+  const response=phase===0?await send('responses',body):await context.response(req.url.endsWith('/compact')?'responses/compact':'responses',body,'fixture-key','fixture-source',send,{bootstrapHistory:'official-history-import',contextWindowTokens,scope:codexContextScope,...(clientOnly?{}:{threadId:req.headers.session_id??req.headers['session-id']}),recover:item=>migration.recover(item,[]),normalize:portableCodexItem},{signal:lifetime.signal,onCancel:cancel,onInitialCompaction:active=>{initial=active;},onCompaction:report=>{reports.push(report);console.log(JSON.stringify({compactionReport:report}));}});
   res.writeHead(response.status,Object.fromEntries(response.headers));if(response.body)for await(const chunk of response.body)res.write(chunk);res.end();
  }catch(error){console.log(JSON.stringify({gatewayError:{code:error.code,status:error.statusCode}}));res.writeHead(error.statusCode??500,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:error.message,code:error.code}}));}finally{abort.signal.removeEventListener('abort',cancel);}
 });
@@ -120,7 +121,7 @@ async function start(){
  const proc=child=spawn(binary,args,{cwd:root,env:{PATH:process.env.PATH,HOME:root,CODEX_HOME:root},stdio:['pipe','pipe','pipe']});
  let buffer='',sequence=0,complete;const pending=new Map();
  proc.stderr.on('data',()=>{});
- proc.stdout.on('data',chunk=>{buffer+=chunk;let end;while((end=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,end);buffer=buffer.slice(end+1);let message;try{message=JSON.parse(line);}catch{continue;}const waiting=pending.get(message.id);if(waiting){pending.delete(message.id);message.error?waiting.reject(Error(JSON.stringify(message.error))):waiting.resolve(message.result);}if(message.params?.item?.type==='contextCompaction'){progress.push({phase,method:message.method});console.log(JSON.stringify({clientCompaction:progress.at(-1)}));}if(phase>0&&message.method==='thread/tokenUsage/updated')console.log(JSON.stringify({clientTokenUsage:message.params.tokenUsage}));if(message.method==='error')console.log(JSON.stringify({clientError:message.params}));if(message.method==='item/completed'&&message.params.item.type==='agentMessage')reply+=message.params.item.text??'';if(message.method==='turn/completed')complete?.(message.params.turn);}});
+ proc.stdout.on('data',chunk=>{buffer+=chunk;let end;while((end=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,end);buffer=buffer.slice(end+1);let message;try{message=JSON.parse(line);}catch{continue;}const waiting=pending.get(message.id);if(waiting){pending.delete(message.id);message.error?waiting.reject(Error(JSON.stringify(message.error))):waiting.resolve(message.result);}if(message.params?.item?.type==='contextCompaction'){progress.push({phase,method:message.method});console.log(JSON.stringify({clientCompaction:progress.at(-1)}));}if(phase>0&&message.method==='thread/tokenUsage/updated'){clientUsage.push(message.params.tokenUsage);console.log(JSON.stringify({clientTokenUsage:message.params.tokenUsage}));}if(message.method==='error')console.log(JSON.stringify({clientError:message.params}));if(message.method==='item/completed'&&message.params.item.type==='agentMessage')reply+=message.params.item.text??'';if(message.method==='turn/completed')complete?.(message.params.turn);}});
  const rpc=(method,params)=>new Promise((resolve,reject)=>{const id=++sequence,timer=setTimeout(()=>reject(Error('RPC timeout '+method)),30000);pending.set(id,{resolve:value=>{clearTimeout(timer);resolve(value);},reject:error=>{clearTimeout(timer);reject(error);}});proc.stdin.write(JSON.stringify({id,method,params})+'\n');});
  await rpc('initialize',{clientInfo:{name:'first_long_history_fixture',version:'1.0'},capabilities:{experimentalApi:true}});proc.stdin.write(JSON.stringify({method:'initialized'})+'\n');
  return {rpc,turn:async(threadId,text)=>{reply='';let timer;const done=new Promise((resolve,reject)=>{complete=resolve;timer=setTimeout(()=>reject(Error('Turn timed out')),live?900000:60000);});try{await rpc('turn/start',{threadId,input:[{type:'text',text}]});return await done;}finally{clearTimeout(timer);}},stop:()=>new Promise(resolve=>{proc.once('exit',resolve);proc.kill();})};
@@ -159,7 +160,8 @@ try{
  }
  const latestSaved=await readFile(rollouts[0],'utf8');const persistedCompactions=latestSaved.split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(event=>['compacted','compaction'].includes(event.type)).length;
  const preserved=reply.includes(marker),clientCompactions=progress.filter(item=>item.phase===1&&item.method==='item/started').length;
- const result={reports,progress,timing:{firstTurnMs,firstCompaction:reports[0],reuse:resumed,followup:followupTiming},passed:turnResult.status==='completed'&&preserved,clientOnly,live,largeHistory,bootstrapCompactions,normalizeContextError,remoteCompaction:process.argv.includes('--remote-compaction'),seedThresholdCleared:true,seedReportedInputTokens:process.argv.includes('--known-usage')?150000:100,totalScope:process.argv.includes('--total-scope'),persistedCompactions,resumed,firstTurnStatus,firstError,retryTurn:process.argv.includes('--retry-turn'),singleAttempt:process.argv.includes('--single-attempt'),knownUsage:process.argv.includes('--known-usage'),model,turnStatus:turnResult.status,errorCode:turnResult.error?.codexErrorInfo??null,historyBytes:Buffer.byteLength(JSON.stringify(history)),clientCompactions,gatewayCompactions:reports.length,summaryCalls:upstream.filter(item=>item.summary).length,sourceContextErrors:upstream.filter(item=>item.errorCode==='context_length_exceeded'||item.streamError?.code==='context_too_large'||item.streamError?.code==='context_length_exceeded').length,earliestRequirementPreserved:preserved,requests:calls.filter(item=>item.phase===1),upstream:upstream.filter(item=>item.phase===1)};
+ if(!live&&process.argv.includes('--expensive-summary')){assert.ok(reports[0].inputTokens>=1000000);assert.equal(clientUsage.at(-1)?.last.inputTokens,100,'Summary charges contaminated the live Codex context');}
+ const result={reports,progress,clientUsage,timing:{firstTurnMs,firstCompaction:reports[0],reuse:resumed,followup:followupTiming},passed:turnResult.status==='completed'&&preserved,clientOnly,live,largeHistory,bootstrapCompactions,normalizeContextError,remoteCompaction:process.argv.includes('--remote-compaction'),seedThresholdCleared:true,seedReportedInputTokens:process.argv.includes('--known-usage')?150000:100,totalScope:process.argv.includes('--total-scope'),persistedCompactions,resumed,firstTurnStatus,firstError,retryTurn:process.argv.includes('--retry-turn'),singleAttempt:process.argv.includes('--single-attempt'),knownUsage:process.argv.includes('--known-usage'),model,turnStatus:turnResult.status,errorCode:turnResult.error?.codexErrorInfo??null,historyBytes:Buffer.byteLength(JSON.stringify(history)),clientCompactions,gatewayCompactions:reports.length,summaryCalls:upstream.filter(item=>item.summary).length,sourceContextErrors:upstream.filter(item=>item.errorCode==='context_length_exceeded'||item.streamError?.code==='context_too_large'||item.streamError?.code==='context_length_exceeded').length,earliestRequirementPreserved:preserved,requests:calls.filter(item=>item.phase===1),upstream:upstream.filter(item=>item.phase===1)};
  console.log(JSON.stringify(result));if(process.env.RESULT_PATH)await writeFile(process.env.RESULT_PATH,JSON.stringify(result,null,2)+'\n');await client.stop();
  assert.ok(result.passed,'long uncompacted history did not continue with the earliest requirement');
 }catch(error){

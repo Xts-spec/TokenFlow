@@ -20,16 +20,17 @@ it.each([
  {label:'unknown optional details',usage:base,expected:{cachedTokens:null,cacheWriteTokens:null,reasoningTokens:null}},
  {label:'known write with unknown cache read',usage:{...base,input_tokens_details:{cache_write_tokens:5}},expected:{cachedTokens:null,cacheWriteTokens:10,reasoningTokens:null}},
 ])('emits Codex-compatible completed usage after compaction with $label',async({usage,expected})=>{
- const root=await mkdtemp(join(tmpdir(),'context-usage-'));roots.push(root);const context=await GatewayContext.open(root);let report:CompactionReport|undefined;
+ const root=await mkdtemp(join(tmpdir(),'context-usage-'));roots.push(root);const context=await GatewayContext.open(root);let report:CompactionReport|undefined,billed:unknown;
  const response=await context.response('responses',{model:'qoder/gfmodel',input:history,stream:true,store:false,context_management:[{type:'compaction',compact_threshold:100}]},'a','s',async(_p,b)=>{
   const result={id:'resp_fixture',object:'response',created_at:1,status:'completed',output:[message],usage};
   if(b.instructions)return Response.json(result);
   return new Response('data: '+JSON.stringify({type:'response.completed',response:result})+'\n\n',{headers:{'content-type':'text/event-stream'}});
- },undefined,{onCompaction:value=>report=value});
+ },undefined,{onCompaction:value=>report=value,onBillingUsage:value=>billed=value});
  const event=(await response.text()).split('\n').filter(line=>line.startsWith('data:')).map(line=>JSON.parse(line.slice(5))).at(-1);
  expect(event.type).toBe('response.completed');counters(event.response.usage);
- expect(event.response.usage).toMatchObject({input_tokens:200,output_tokens:20,total_tokens:220});
- expect(providerUsage(event.response.usage)).toMatchObject(expected);
+ expect(event.response.usage).toMatchObject({input_tokens:100,output_tokens:10,total_tokens:110});
+ expect(billed).toMatchObject({input_tokens:200,output_tokens:20,total_tokens:220});
+ expect(providerUsage(billed)).toMatchObject(expected);
  expect(report?.cacheWriteTokens).toBe(expected.cacheWriteTokens===null?null:5);
 });
 

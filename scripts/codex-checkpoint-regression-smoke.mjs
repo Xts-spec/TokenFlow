@@ -30,7 +30,7 @@ const server=createServer(async(req,res)=>{
    const terminal={id:`upstream_${n}`,object:'response',model,status:'completed',output:[item],usage:{input_tokens:1000,output_tokens:100,total_tokens:1100}};
    if(!request.stream)return Response.json(terminal);
    return new Response([{type:'response.created',response:{...terminal,status:'in_progress',output:[]}},{type:'response.output_item.added',output_index:0,item},{type:'response.output_item.done',output_index:0,item},{type:'response.completed',response:terminal}].map((event,sequence_number)=>`event: ${event.type}\ndata: ${JSON.stringify({...event,sequence_number})}\n\n`).join(''),{headers:{'content-type':'text/event-stream'}});
-  },{scope:codexContextScope,threadId:req.headers.session_id??'fixture-thread',connectionId:'fixture-key',bootstrapOnFirstRequest:true,normalize:portableCodexItem,recover:async()=>{throw Error('Unexpected foreign checkpoint');}});
+  },{scope:codexContextScope,threadId:req.headers.session_id??'fixture-thread',normalize:portableCodexItem,recover:async()=>{throw Error('Unexpected foreign checkpoint');}});
   const text=await response.text();
   for(const line of text.split('\n').filter(l=>l.startsWith('data: '))){const event=JSON.parse(line.slice(6));if(event.type==='response.completed')for(const item of event.response.output??[])if(item.type==='compaction'){
    const restored=context.decodeCheckpoint(item.encrypted_content,[codexContextScope]);const count=restored.filter(i=>JSON.stringify(i).includes('Historical task checkpoint (summary of earlier work):')).length;

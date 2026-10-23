@@ -13,7 +13,7 @@ async function setup(){
  const root=await mkdtemp(join(tmpdir(),'managed-continuation-'));roots.push(root);
  const requests:any[]=[];let summaries=0;
  const send=async(_path:string,body:any)=>{requests.push(body);const summary=body.instructions?.startsWith('Summarize the supplied');return Response.json({status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:summary?`SAVED_SUMMARY_${++summaries}: retain task constraints and test results.`:'Answer'}]}],usage:{input_tokens:100,output_tokens:10}});};
- const migration:ContextMigration={bootstrapOnFirstRequest:true,threadId:'thread-a',connectionId:'gateway-a',scope:codexContextScope,normalize:portableCodexItem,recover:async()=>{throw Error('Unexpected recovery');}};
+ const migration:ContextMigration={bootstrapHistory:'official-history-A',threadId:'thread-a',scope:codexContextScope,normalize:portableCodexItem,recover:async()=>{throw Error('Unexpected recovery');}};
  return {root,requests,send,migration,summaries:()=>summaries,context:await GatewayContext.open(root)};
 }
 it('bootstraps only the current first request and waits for Codex after restart',async()=>{
@@ -43,17 +43,17 @@ it('reuses durable per-thread summary prefixes across models and summarizes only
  // Long-lived conversation summaries outlive the transient per-call cache.
  for(const file of await readdir(join(f.root,'gateway-context')))if(file.startsWith('managed-'))await utimes(join(f.root,'gateway-context',file),new Date(0),new Date(0));
  const again=await GatewayContext.open(f.root);
- await again.response('responses',{model:'workbuddy/m',input:original,store:false},'new-key','new-source',f.send,{...f.migration,connectionId:'gateway-b'});
+ await again.response('responses',{model:'workbuddy/m',input:original,store:false},'new-key','new-source',f.send,{...f.migration,bootstrapHistory:'official-history-A'});
  expect(f.summaries()).toBe(count);expect(JSON.stringify(f.requests.at(-1).input)).toContain('SAVED_SUMMARY_1');expect(JSON.stringify(f.requests.at(-1).input)).not.toContain('initial0');
  const added=[{role:'user',content:'OFFICIAL_NEW_WORK'},...work('official'),{role:'user',content:'Resume from official.'}];
- const result=await(await again.response('responses',{model:'workbuddy/m',input:[...original,...added],store:false},'new-key','new-source',f.send,{...f.migration,connectionId:'gateway-c'})).json();
+ const result=await(await again.response('responses',{model:'workbuddy/m',input:[...original,...added],store:false},'new-key','new-source',f.send,{...f.migration,bootstrapHistory:'official-history-AB'})).json();
  expect(f.summaries()).toBeGreaterThan(count);
  const recentSummary=f.requests.filter(body=>body.instructions?.startsWith('Summarize the supplied')).slice(count).map(body=>body.input);
  expect(JSON.stringify(recentSummary)).toContain('OFFICIAL_NEW_WORK');expect(JSON.stringify(recentSummary)).not.toContain('initial0');expect(JSON.stringify(recentSummary)).not.toContain('SAVED_SUMMARY_1');
  const restored=again.decodeCheckpoint(result.output[0].encrypted_content,[codexContextScope]);
  expect(JSON.stringify(restored)).toContain('SAVED_SUMMARY_1');expect(JSON.stringify(restored)).toContain('SAVED_SUMMARY_2');
  const after=f.summaries();
- await (await GatewayContext.open(f.root)).response('responses',{model:'cursor/m',input:[...original,...added],store:false},'third-key','third-source',f.send,{...f.migration,connectionId:'gateway-d'});
+ await (await GatewayContext.open(f.root)).response('responses',{model:'cursor/m',input:[...original,...added],store:false},'third-key','third-source',f.send,{...f.migration,bootstrapHistory:'official-history-AB'});
  expect(f.summaries()).toBe(after);expect(JSON.stringify(f.requests.at(-1).input)).toContain('SAVED_SUMMARY_2');
  // Identical text in another chat has its own continuity record.
  await again.response('responses',{model:'cursor/m',input:[instructions,{role:'user',content:'OTHER_THREAD_CONSTRAINT'},...original.slice(2)],store:false},'other-key','other-source',f.send,{...f.migration,threadId:'thread-b'});
@@ -74,7 +74,7 @@ it('keeps completed summary chunks across a later failure, cache cleanup and a g
  const files=(await readdir(join(f.root,'gateway-context'))).filter(name=>name.startsWith('managed-summary-'));expect(files.length).toBeGreaterThan(0);
  for(const file of files)await utimes(join(f.root,'gateway-context',file),new Date(0),new Date(0));
  let report:any;const restarted=await GatewayContext.open(f.root);
- await restarted.response('responses/compact',{model:'workbuddy/m',input,store:false},'new-key','new-source',f.send,{...f.migration,connectionId:'new-connection'},{onCompaction:value=>{report=value;}});
+ await restarted.response('responses/compact',{model:'workbuddy/m',input,store:false},'new-key','new-source',f.send,{...f.migration,bootstrapHistory:'official-history-A'},{onCompaction:value=>{report=value;}});
  expect(report.reused).toBeGreaterThanOrEqual(1);expect(report.failed).toBe(false);
 });
 

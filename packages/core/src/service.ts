@@ -1119,7 +1119,7 @@ export async function createDesktopService(options:ServiceOptions) {
       req.body={...(req.body as Record<string,unknown>),model:fixed.model};
       reply.header('X-Token-Flow-Model',fixed.model);
     }
-    const started=Date.now();const traceRequest=requestTrace(req.body);let traceResponse:ResponseObservation={tools:[]};let compaction:CompactionReport|undefined;let contextUsageIncomplete=false;let recorded=false;let callError:{code:string;message:string}|undefined;let contextFailureStatus:number|undefined;
+    const started=Date.now();const traceRequest=requestTrace(req.body);let traceResponse:ResponseObservation={tools:[]};let compaction:CompactionReport|undefined;let contextUsageIncomplete=false;let recorded=false;let callError:{code:string;message:string}|undefined;let contextFailureStatus:number|undefined;let billingUsage:ReturnType<typeof providerUsage>|undefined;
     const record=(status:number,usage:{inputTokens:number|null;outputTokens:number|null;cachedTokens?:number|null;cacheWriteTokens?:number|null;reasoningTokens?:number|null}={inputTokens:null,outputTokens:null})=>{
       if(recorded||path==='models')return;recorded=true;
       const rawModel=(req.body as {model?:unknown})?.model;
@@ -1220,13 +1220,14 @@ export async function createDesktopService(options:ServiceOptions) {
         try{return finishUpstream(await transport(route,forward,clock),detach);}catch(error){detach();throw error;}
       };
       const sessionId=req.headers['session_id']??req.headers['session-id'];
-      const response=bridgeContext?await gatewayContext.response(path,req.body as {model:string},client?.id??'workspace',client?.modelSources?.[model]??client?.sourceId??apiSource?.id??upstreamURL,dispatch,fixed?.target==='codex'?{bootstrapOnFirstRequest:true,contextWindowTokens:await compactionModelWindow(model,proxy.snapshot().models,connections.paths.codex),scope:codexContextScope,threadId:typeof sessionId==='string'?sessionId:undefined,connectionId:client?.id,normalize:portableCodexItem,recover:async item=>codexContext.recover(item,await codexContextScopes())}:undefined,{signal:abort.signal,onCancel:()=>abort.abort(),onInitialCompaction:active=>{initialCompaction=active;},onCompaction:report=>{compaction=report;},onError:error=>{contextFailureStatus=error.statusCode;callError={code:error.code,message:error.message};},onUsageIncomplete:()=>{contextUsageIncomplete=true;if(compaction)compaction={...compaction,unmetered:true};}}):await dispatch(path,req.body);
+      const importedHistory=fixed?.target==='codex'?await codexThreads.bootstrapHistory(typeof sessionId==='string'?sessionId:undefined):undefined;
+      const response=bridgeContext?await gatewayContext.response(path,req.body as {model:string},client?.id??'workspace',client?.modelSources?.[model]??client?.sourceId??apiSource?.id??upstreamURL,dispatch,fixed?.target==='codex'?{bootstrapHistory:importedHistory?.revision,bootstrapRecordedAt:importedHistory?.recordedAt,contextWindowTokens:await compactionModelWindow(model,proxy.snapshot().models,connections.paths.codex),scope:codexContextScope,threadId:typeof sessionId==='string'?sessionId:undefined,normalize:portableCodexItem,recover:async item=>codexContext.recover(item,await codexContextScopes())}:undefined,{signal:abort.signal,onCancel:()=>abort.abort(),onInitialCompaction:active=>{initialCompaction=active;},onCompaction:report=>{compaction=report;},onBillingUsage:usage=>{billingUsage=providerUsage(usage);},onError:error=>{contextFailureStatus=error.statusCode;callError={code:error.code,message:error.message};},onUsageIncomplete:()=>{contextUsageIncomplete=true;if(compaction)compaction={...compaction,unmetered:true};}}):await dispatch(path,req.body);
       if(!response.ok){
         if(response.status===401){const failedSource=client?.modelSources?.[model!]??client?.sourceId;if(failedSource)refreshFailedSource(failedSource);}
-        await settle({inputTokens:null,outputTokens:null},response.status>=500);
+        await settle(billingUsage??{inputTokens:null,outputTokens:null},contextUsageIncomplete||!!compaction?.unmetered||response.status>=500);
         const error=upstreamError(response.status,await readUpstreamError(response));
         if(path.startsWith('responses')&&error.code==='upstream_context_length')error.code='context_length_exceeded';
-        callError={code:error.type==='source_policy_blocked'?'source_policy_blocked':error.code??error.type,message:error.message};record(response.status);
+        callError={code:error.type==='source_policy_blocked'?'source_policy_blocked':error.code??error.type,message:error.message};record(response.status,billingUsage);
         await response.body?.cancel().catch(()=>{});
         return reply.code(response.status).send({...(path==='messages'?{type:'error'}:{}),error});
       }
@@ -1237,6 +1238,7 @@ export async function createDesktopService(options:ServiceOptions) {
       if(!response.body){record(response.status);await settle({inputTokens:null,outputTokens:null},true);return '';}
       const source=Readable.fromWeb(response.body as never);
       const stream=observeUsage((response.headers.get('content-type')??'').includes('text/event-stream'),async usage=>{
+        if(billingUsage)usage={...usage,...billingUsage,cacheWriteTokens:billingUsage.cacheWriteTokens??undefined,reasoningTokens:billingUsage.reasoningTokens??undefined};
         if(usage.failed&&compaction)usage={...usage,inputTokens:usage.inputTokens??compaction.inputTokens,outputTokens:usage.outputTokens??compaction.outputTokens,cachedTokens:usage.cachedTokens??compaction.cachedTokens};
         if(!callError){
           if(traceResponse.error)callError=traceResponse.error;

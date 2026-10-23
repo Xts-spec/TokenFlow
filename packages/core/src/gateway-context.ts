@@ -11,10 +11,10 @@ type Item = Record<string, unknown>;
 type RequestBody = Item & {model:string};
 export type ContextScope = {owner:string; model:string; source:string};
 export type CompactionReport={inputBytes:number;outputBytes:number;calls:number;reused:number;durationMs:number;inputTokens:number|null;outputTokens:number|null;cachedTokens:number|null;cacheWriteTokens:number|null;reasoningTokens:number|null;failed:boolean;unmetered:boolean;cacheWriteFailed?:boolean};
-export type ContextOptions={onCompaction?:(report:CompactionReport)=>void;onUsageIncomplete?:()=>void;onCompactionStart?:()=>void;onError?:(error:GatewayContextError)=>void;onInitialCompaction?:(active:boolean)=>void;onCancel?:()=>void;signal?:AbortSignal};
-export type ContextMigration = {bootstrapOnFirstRequest?:boolean;contextWindowTokens?:number;scope:ContextScope;threadId?:string;connectionId?:string;recover:(item:Item)=>Promise<Item[]>;normalize?:(item:Item)=>Item[]};
+export type ContextOptions={onCompaction?:(report:CompactionReport)=>void;onBillingUsage?:(usage:unknown)=>void;onUsageIncomplete?:()=>void;onCompactionStart?:()=>void;onError?:(error:GatewayContextError)=>void;onInitialCompaction?:(active:boolean)=>void;onCancel?:()=>void;signal?:AbortSignal};
+export type ContextMigration = {bootstrapHistory?:string;bootstrapRecordedAt?:number;contextWindowTokens?:number;scope:ContextScope;threadId?:string;recover:(item:Item)=>Promise<Item[]>;normalize?:(item:Item)=>Item[]};
 type ManagedWindow={hash:string;input:Item[];coveredUsers:string[]};
-type ManagedSession={initialized:boolean;connectionId?:string;foreign:string[];windows:ManagedWindow[]};
+type ManagedSession={initialized:boolean;bootstrapHistory?:string;foreign:string[];windows:ManagedWindow[]};
 type Send = (path:string, body:Item) => Promise<Response>;
 const PREFIX = 'tfctx1.';
 // Existing first-contact history organization target, independent of Codex's
@@ -232,12 +232,12 @@ export class GatewayContext {
  private async managedSession(migration:ContextMigration){
   if(!migration.threadId)return;
   const key=createHmac('sha256',this.secret).update(JSON.stringify([migration.scope,migration.threadId])).digest('hex');
-  const path=join(this.directory,'managed-'+key);let state:ManagedSession={initialized:false,foreign:[],windows:[]};
-  try{const saved=this.unseal(await readFile(path,'utf8'),migration.scope)[0];if(saved?.format==='managed-session-v1')state=saved.state as ManagedSession;}catch{/* Derived continuity state can be rebuilt from the client's retained history. */}
+  const path=join(this.directory,'managed-'+key);let state:ManagedSession={initialized:false,foreign:[],windows:[]},legacy=false,modifiedAt=0;
+  try{const [text,info]=await Promise.all([readFile(path,'utf8'),stat(path)]);const saved=this.unseal(text,migration.scope)[0];if(['managed-session-v1','managed-session-v2'].includes(String(saved?.format))){state=saved!.state as ManagedSession;legacy=saved!.format==='managed-session-v1';modifiedAt=info.mtimeMs;}}catch{/* Derived continuity state can be rebuilt from the client's retained history. */}
   const persist=async()=>{
-   const temp=path+'.'+randomUUID();try{await writeFile(temp,this.seal([{format:'managed-session-v1',state}],migration.scope),{mode:0o600,flag:'wx'});await rename(temp,path);}finally{await rm(temp,{force:true});}
+   const temp=path+'.'+randomUUID();try{await writeFile(temp,this.seal([{format:'managed-session-v2',state}],migration.scope),{mode:0o600,flag:'wx'});await rename(temp,path);}finally{await rm(temp,{force:true});}
   };
-  return {state,persist};
+  return {state,persist,legacy,modifiedAt};
  }
  private async expand(body:RequestBody,scope:ContextScope,migration?:ContextMigration) {
   let input=items(body.input);const coveredUsers=new Set<string>();let managed=false;const foreign:string[]=[];
@@ -261,7 +261,7 @@ export class GatewayContext {
   return {input:portable,coveredUsers,managed,foreign};
  }
  async response(path:string,body:RequestBody,owner:string,source:string,send:Send,migration?:ContextMigration,options:ContextOptions={}):Promise<Response> {
-  if(!body.stream||!migration?.bootstrapOnFirstRequest)return this.respond(path,body,owner,source,send,migration,options);
+  if(!body.stream||!migration)return this.respond(path,body,owner,source,send,migration,options);
   let begin!:(response:Response)=>void;const started=new Promise<Response>(resolve=>{begin=resolve;});
   // Codex hides the body of a retried HTTP 429. Once its remote compaction
   // starts, keep the Responses stream open and deliver a typed terminal
@@ -284,11 +284,16 @@ export class GatewayContext {
    }
   }
   const remember=async()=>{
-   if(!session)return;session.state.initialized=true;session.state.connectionId=migration?.connectionId;
+   if(!session)return;session.state.initialized=true;if(migration?.bootstrapHistory)session.state.bootstrapHistory=migration.bootstrapHistory;
    session.state.foreign=[...new Set([...session.state.foreign,...expanded.foreign])];
    await session.persist().catch(()=>{});
   };
-  const firstRequest=migration?.bootstrapOnFirstRequest&&migration.connectionId&&session&&(!session.state.initialized||session.state.connectionId!==migration.connectionId);
+  // Only a recorded import of existing official history may bootstrap. A new
+  // key, model selection, gateway restart or gateway-born chat is not an import.
+  // Old sessions tracked only a key. Adopt an import that predates their last
+  // saved work without running bootstrap again merely because of this upgrade.
+  const alreadyHandledLegacy=session?.legacy&&session.state.initialized&&migration?.bootstrapRecordedAt!==undefined&&migration.bootstrapRecordedAt<=session.modifiedAt;
+  const firstRequest=!!(migration?.bootstrapHistory&&session&&session.state.bootstrapHistory!==migration.bootstrapHistory&&!alreadyHandledLegacy);
   const compact=async(history:Item[],initial=false,reuseSummaries=false)=>{
    const started=Date.now();const report:CompactionReport={inputBytes:size(history),outputBytes:0,calls:0,reused:0,durationMs:0,inputTokens:0,outputTokens:0,cachedTokens:0,cacheWriteTokens:0,reasoningTokens:0,failed:true,unmetered:false};
    options.onCompactionStart?.();
@@ -318,8 +323,8 @@ export class GatewayContext {
    return new Response(events.map((event,sequence_number)=>'event: '+event.type+'\ndata: '+JSON.stringify({...event,sequence_number})+'\n\n').join(''),{headers:{'content-type':'text/event-stream','x-token-flow-compaction':'model-summary-v1'}});
   }
   let checkpoint:Item|undefined;let summaryUsage:unknown;
-  // Bootstrap only the current managed conversation at its first request for
-  // this connection. Reuse saved prefixes before measuring the remaining work.
+  // Bootstrap only the current conversation's unprocessed imported revision.
+  // Reuse saved prefixes before measuring the remaining historical work.
   // Later tool turns always wait for Codex's explicit compaction request.
   if(body.context_management!=null||firstRequest){
    const rules=body.context_management??[{type:'compaction',compact_threshold:INITIAL_CONTEXT_BYTES}];
@@ -328,8 +333,10 @@ export class GatewayContext {
    // Fixed instructions and a first user message are not old conversation
    // history. A bootstrap checkpoint containing only those would change no
    // context while falsely showing compaction in a brand new Codex chat.
-   const hasHistory=input.some(item=>!instruction(item)&&item.role!=='user')||input.filter(item=>item.role==='user').length>1;
-   if(hasHistory&&size(input)>=Number(rules[0].compact_threshold)){
+   const latestUser=input.filter(item=>item.role==='user').at(-1);
+   const oldHistory=input.filter(item=>!instruction(item)&&!historicalSummary(item)&&item!==latestUser);
+   const hasHistory=oldHistory.length>0;
+   if(hasHistory&&size(firstRequest?oldHistory:input)>=Number(rules[0].compact_threshold)){
     const compacted=await compact(input,!!firstRequest,!!firstRequest);if(!compacted.ok)return compacted;
     const result=await json(compacted);checkpoint=items(result.output).at(-1);summaryUsage=result.usage;
     const saved=this.unsealHistory(checkpoint?.encrypted_content,scope);const restored=saved.input;for(const hash of saved.coveredUsers)coveredUsers.add(hash);
@@ -344,7 +351,7 @@ export class GatewayContext {
   }
   if(!response.ok){
    const original=await response.clone().json().catch(()=>undefined),contextError=contextLengthError(original);
-   if(contextError){const headers=new Headers(response.headers);headers.delete('content-length');headers.set('content-type','application/json');return new Response(JSON.stringify({error:contextError,...(checkpoint?{usage:combinedUsage(summaryUsage,object(original)?original.usage:undefined)}:{})}),{status:400,headers});}
+   if(contextError){if(checkpoint)options.onBillingUsage?.(combinedUsage(summaryUsage,object(original)?original.usage:undefined));const headers=new Headers(response.headers);headers.delete('content-length');headers.set('content-type','application/json');return new Response(JSON.stringify({error:contextError}),{status:400,headers});}
    if(!checkpoint)return response;
    const error=upstreamError(response.status,await readUpstreamError(response));
    throw new GatewayContextError('历史摘要已保存，但续聊失败：'+error.message,response.status,summaryUsage,'compaction_continuation_failed',response.status>=500);
@@ -355,9 +362,12 @@ export class GatewayContext {
    if(body.store!==false)await this.save(id,[...input,...value.output],scope,coveredUsers);
    await remember();
    const output=checkpoint?[checkpoint,...value.output]:value.output;
-   const usage=checkpoint?combinedUsage(summaryUsage,value.usage):wireUsage(value.usage);
-   if(object(usage)&&usage.token_flow_unmetered)options.onUsageIncomplete?.();
-   return {...value,id,model:body.model,output,usage,previous_response_id:body.previous_response_id??null};
+   // Codex uses this response's input usage to track its live context. Hidden
+   // summary calls are real charges, but are not part of that input window.
+   const billed=checkpoint?combinedUsage(summaryUsage,value.usage):value.usage;
+   if(checkpoint)options.onBillingUsage?.(billed);
+   if(object(billed)&&billed.token_flow_unmetered)options.onUsageIncomplete?.();
+   return {...value,id,model:body.model,output,usage:wireUsage(value.usage),previous_response_id:body.previous_response_id??null};
   };
   if(!(response.headers.get('content-type')??'').includes('text/event-stream')){
    let result:Response;
@@ -381,7 +391,7 @@ export class GatewayContext {
     else {
      if(checkpoint&&event.type==='response.failed'){
       const failedUsage=combinedUsage(summaryUsage,event.response.usage);
-      event.response.usage=failedUsage;
+      options.onBillingUsage?.(failedUsage);
       if(failedUsage.token_flow_unmetered)options.onUsageIncomplete?.();
      }
      event.response={...event.response,id,model:body.model};

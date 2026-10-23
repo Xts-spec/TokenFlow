@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
+import {zstdDecompressSync} from 'node:zlib';
 import {mkdtemp,writeFile,readFile,rm,realpath} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir,homedir} from 'node:os';
@@ -18,8 +19,8 @@ if(liveOfficial){const config=YAML.parse(await readFile(join(homedir(),'Library/
 const context=await GatewayContext.open(root);
 const migration=new CodexContext(root,join(root,'config.toml'),context);
 const server=createServer(async(req,res)=>{
- let text='';for await(const chunk of req)text+=chunk;
- const body=JSON.parse(text||'{}');
+ const chunks=[];for await(const chunk of req)chunks.push(chunk);let raw=Buffer.concat(chunks);if(req.headers['content-encoding']==='zstd')raw=zstdDecompressSync(raw);
+ const body=JSON.parse(raw.toString()||'{}');
  if(!req.url.endsWith('/responses')){res.writeHead(404);res.end('{}');return;}
  const threadId=req.headers.session_id??req.headers['session-id'];
  calls.push({path:req.url,body,threadId});
@@ -45,12 +46,12 @@ const server=createServer(async(req,res)=>{
  const item=trigger?{type:'compaction',encrypted_content:'official-fixture-checkpoint'}:tool?{id:`fc_${n}`,type:'function_call',call_id:`call_${n}`,name:'exec_command',arguments:JSON.stringify({cmd:phase===0&&process.argv.includes('--long-recovery')?"python3 -c \"print('fixture-long-output ' * 2000)\"":'pwd',max_output_tokens:phase===0&&process.argv.includes('--long-recovery')?16000:64})}:{id:`msg_${n}`,type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:answer,annotations:[]}]};
  if(trigger)compactions++;
  const output=phase===1&&!summary&&!trigger&&!tool?[{id:`rs_chatcmpl_fixture_${n}`,type:'reasoning',encrypted_content:'',summary:[{type:'summary_text',text:'GATEWAY_REASONING_MARKER'}]},item]:[item];
- const response={id:`resp_${n}`,object:'response',created_at:Math.floor(Date.now()/1000),model:request.model,status:'completed',output,usage:{input_tokens:tool&&tools===toolLimit?(phase===1?70000:12000):100,output_tokens:1,total_tokens:tool&&tools===toolLimit?(phase===1?70001:12001):101}};
+ const response={id:`resp_${n}`,object:'response',created_at:Math.floor(Date.now()/1000),model:request.model,status:'completed',output,usage:{input_tokens:tool&&tools===toolLimit?(phase===1?140000:12000):100,output_tokens:1,total_tokens:tool&&tools===toolLimit?(phase===1?140001:12001):101}};
  if(!request.stream)return Response.json(response);
  const events=[{type:'response.created',response:{...response,status:'in_progress',output:[]}},...output.flatMap((item,output_index)=>[{type:'response.output_item.added',output_index,item},{type:'response.output_item.done',output_index,item}]),{type:'response.completed',response}];
  return new Response(events.map((e,i)=>`event: ${e.type}\ndata: ${JSON.stringify({...e,sequence_number:i})}\n\n`).join(''),{headers:{'content-type':'text/event-stream'}});
  };
- const response=req.url.startsWith('/original')?await send('responses',body):await context.response('responses',body,'fixture-key','fixture-source',send,{bootstrapOnFirstRequest:true,scope:codexContextScope,threadId,connectionId:phase>=4?'gateway-return':'gateway-first',recover:item=>migration.recover(item,[])});
+ const response=req.url.startsWith('/original')?await send('responses',body):await context.response('responses',body,'fixture-key','fixture-source',send,{scope:codexContextScope,threadId,bootstrapHistory:phase>=4?'official-return-history':'official-first-history',recover:item=>migration.recover(item,[])});
  if(!req.url.startsWith('/original')&&calls.filter(call=>!call.path.startsWith('/original')&&call.threadId===threadId).length>1&&phase<4&&!body.input?.some(item=>item.type==='compaction_trigger'))assert.equal(upstream.slice(previousCalls).filter(call=>call.body.instructions?.startsWith('Summarize the supplied')).length,0,'ordinary continuation must wait for Codex to request compaction');
  res.writeHead(response.status,Object.fromEntries(response.headers));for await(const chunk of response.body)res.write(chunk);res.end();
  }catch(error){console.error(error);res.writeHead(500,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:error.message}}));}
@@ -97,6 +98,7 @@ try{
  assert.ok(requests.length);
  for(const {body} of requests){assert.ok(JSON.stringify(body.input).includes('TURN_ONE_MARKER'));assert.ok(!body.previous_response_id);assert.ok(!body.input.some(i=>i.type==='compaction'),'opaque state leaked to new upstream');}
  }
+ for(const [p,marker] of [[3,'REPLY_2_MARKER'],[4,'TURN_FOUR_MARKER'],[5,'REPLY_4_MARKER']])assert.ok(JSON.stringify(upstream.filter(c=>c.phase===p)).includes(marker),'Latest cross-provider progress lost: '+marker);
  assert.ok(upstream.some(c=>c.phase===1&&c.body.input.some(i=>i.type==='function_call_output')),'tool results lost');
  assert.ok(JSON.stringify(upstream.filter(c=>c.phase===3)).includes(process.argv.includes('--local-compaction')?'REPLY_1_MARKER':'CHECKPOINT'),'gateway summary lost on native resume');
  const migrationSummaries=upstream.filter(c=>c.phase===1&&c.body.instructions?.startsWith('Summarize the supplied'));

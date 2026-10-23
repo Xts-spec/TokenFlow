@@ -122,17 +122,17 @@ it('compacts a long single-user agent loop without splitting tool pairs or losin
  for(const item of resumed.filter(item=>item.type==='function_call_output'))expect(resumed.some(call=>call.type==='function_call'&&call.call_id===item.call_id)).toBe(true);
 });
 it.each([false,true])('supports automatic compaction with stream=%s and bills both model calls',async stream=>{
- const {context}=await setup();const sent:Record<string,unknown>[]=[];
+ const {context}=await setup();const sent:Record<string,unknown>[]=[];let billed:unknown;
  const response=await context.response('responses',{model:'qoder/m',input:longInput,store:false,stream,context_management:[{type:'compaction',compact_threshold:100}]},'a','s',async(_p,body)=>{
   sent.push(body);
   if(sent.length===1||!stream)return Response.json(answer('Checkpoint: tests passed. Continue inspection.'));
   const events=[{type:'response.created',response:{...answer(),status:'in_progress',output:[]}},{type:'response.output_item.added',output_index:0,item:{id:'msg',...answer().output[0]}},{type:'response.output_text.delta',output_index:0,content_index:0,delta:'done'},{type:'response.output_item.done',output_index:0,item:{id:'msg',...answer().output[0]}},{type:'response.completed',response:answer()}];
   return new Response(events.map(event=>'event: '+event.type+'\ndata: '+JSON.stringify(event)+'\n\n').join(''),{headers:{'content-type':'text/event-stream'}});
- });
+ },undefined,{onBillingUsage:value=>{billed=value;}});
  let result;
  if(stream){const events=(await response.text()).split('\n').filter(line=>line.startsWith('data:')).map(line=>JSON.parse(line.slice(5)));expect(events.map(e=>e.sequence_number)).toEqual(events.map((_,i)=>i));expect(events.filter(e=>e.type==='response.output_item.added').map(e=>[e.output_index,e.item.type])).toEqual([[0,'compaction'],[1,'message']]);result=events.at(-1).response;}
  else result=await response.json();
- expect(sent).toHaveLength(2);expect(sent[1]).not.toHaveProperty('context_management');expect(result.usage).toMatchObject({input_tokens:60,output_tokens:20,total_tokens:80});expect(result.output[0].type).toBe('compaction');
+ expect(sent).toHaveLength(2);expect(sent[1]).not.toHaveProperty('context_management');expect(result.usage).toMatchObject({input_tokens:30,output_tokens:10,total_tokens:40});expect(billed).toMatchObject({input_tokens:60,output_tokens:20,total_tokens:80});expect(result.output[0].type).toBe('compaction');
  let resumed:unknown;
  await context.response('responses',{model:'qoder/m',store:false,input:[...longInput,...result.output,{type:'function_call_output',call_id:'pending',output:'okay'}]},'a','s',async(_p,body)=>{resumed=body.input;return Response.json(answer());});
  expect(JSON.stringify(resumed)).not.toContain('historical file content');expect(JSON.stringify(resumed)).toContain('okay');

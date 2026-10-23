@@ -15,6 +15,25 @@ async function fixture(){
  const migration=new CodexThreadMigration(root,join(home,'config.toml'),async()=>running?[99]:[],client);
  return {root,home,db,migration,compacted,setCompactionFailure:(v:boolean)=>compactionFailure=v,reopen:()=>new CodexThreadMigration(root,join(home,'config.toml'),async()=>running?[99]:[],client),setArchiveFailure:(v:boolean)=>archiveFailure=v,setRunning:(v:boolean)=>running=v,setFailure:(v:string)=>failOn=v,calls:()=>calls,close:async()=>{db.close();await rm(root,{recursive:true,force:true});}};
 }
+it('identifies imported official history without treating new gateway threads or key changes as new imports',async()=>{
+ const f=await fixture();try{
+  expect(await f.migration.bootstrapHistory('old')).toBeUndefined();
+  await f.migration.prepare('gateway');await f.migration.migrate('gateway');
+  const initial=await f.migration.bootstrapHistory('old');expect(initial?.revision).toMatch(/^[a-f0-9]{64}$/);
+  expect(await f.reopen().bootstrapHistory('old')).toEqual(initial);
+  const born=join(f.home,'born.jsonl');await writeFile(born,'New gateway conversation');
+  f.db.prepare('insert into threads values (?,?,?,?,?,?)').run('born','token_flow','gateway',born,'vscode',0);
+  await f.migration.prepare('gateway',['gateway','other-model']);await f.migration.migrate('gateway',['gateway','other-model']);
+  expect(await f.migration.bootstrapHistory('born')).toBeUndefined();expect(await f.migration.bootstrapHistory('old')).toEqual(initial);
+  await writeFile(join(f.home,'old.jsonl'),'Official A; gateway completed B.');
+  await f.migration.restore('native');expect(await f.migration.bootstrapHistory('old')).toBeUndefined();
+  expect(await readFile(join(f.home,'old.jsonl'),'utf8')).toBe('Official A; gateway completed B.');
+  await writeFile(join(f.home,'old.jsonl'),'Official A; gateway completed B; official continued C.');
+  await f.migration.prepare('gateway');await f.migration.migrate('gateway');
+  const latest=await f.migration.bootstrapHistory('old');expect(latest?.revision).toMatch(/^[a-f0-9]{64}$/);expect(latest?.revision).not.toBe(initial?.revision);
+  expect(await readFile(join(f.home,'old.jsonl'),'utf8')).toBe('Official A; gateway completed B; official continued C.');
+ }finally{await f.close();}
+});
 describe('Codex old thread migration',()=>{
  it('requires exit before backup or configuration writes',async()=>{const f=await fixture();try{f.setRunning(true);await expect(f.migration.prepare('gateway')).rejects.toMatchObject({code:'codex_exit_required'});expect(f.calls()).toBe(0);expect((await f.migration.status()).backups).toBe(0);}finally{await f.close();}});
  it('backs up routes and history, migrates only local official threads, restores without losing later turns',async()=>{const f=await fixture();try{

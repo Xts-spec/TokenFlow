@@ -44,6 +44,25 @@ it('gateway authenticates and pins compaction, charges summary usage, resumes hi
  }
  const native=await service.app.inject({method:'POST',url:'/v1/responses/compact',headers:admin,payload:{model:'codex/model',input:transcript}});expect(native.statusCode).toBe(200);expect(calls.at(-1)?.path).toBe('/v1/responses/compact');
 });
+it.each([false,true])('separates live context usage from summary charges through the service (stream=%s)',async stream=>{
+ const {root,port,service,admin}=await setup();const realFetch=globalThis.fetch;
+ vi.spyOn(globalThis,'fetch').mockImplementation(async(url,init)=>{
+  const parsed=new URL(String(url));if(parsed.port!==String(port)||parsed.pathname!=='/v1/responses')return realFetch(url,init);
+  const body=JSON.parse(String(init?.body)),summary=body.instructions?.startsWith('Summarize the supplied');
+  const value={status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:summary?'Summary: retain decisions.':'Continue B.'}]}],usage:summary?{input_tokens:100,output_tokens:10,input_tokens_details:{cached_tokens:80},output_tokens_details:{reasoning_tokens:4}}:{input_tokens:7,output_tokens:3,input_tokens_details:{cached_tokens:5},output_tokens_details:{reasoning_tokens:1}}};
+  return !summary&&stream?new Response('data: '+JSON.stringify({type:'response.completed',response:value})+'\n\n',{headers:{'content-type':'text/event-stream'}}):Response.json(value);
+ });
+ const account=service.proxy.snapshot().accounts.find(a=>a.provider==='qoder')!;
+ const created=await service.app.inject({method:'POST',url:'/api/gateway-keys',headers:admin,payload:{name:'separate-context-billing',sourceId:account.id,models:['qoder/model'],agents:['codex'],tokenLimit:1000}});
+ const {apiKey,key}=created.json();
+ const response=await service.app.inject({method:'POST',url:'/v1/responses',headers:{host:admin.host,authorization:'Bearer '+apiKey},payload:{model:'qoder/model',stream,input:transcript,context_management:[{type:'compaction',compact_threshold:100}]}});
+ expect(response.statusCode,response.body).toBe(200);
+ const wire=stream?response.body.split('\n').filter(line=>line.startsWith('data:')).map(line=>JSON.parse(line.slice(5))).find(event=>event.type==='response.completed').response:response.json();
+ expect(wire.usage).toMatchObject({input_tokens:7,output_tokens:3,input_tokens_details:{cached_tokens:5},output_tokens_details:{reasoning_tokens:1}});
+ expect((await GatewayKeys.open(root)).authenticate(apiKey)).toMatchObject({usedTokens:120,pendingRequests:0,unmeteredRequests:0});
+ const row=(await service.app.inject({url:'/api/gateway/traces',headers:admin})).json().records.find((row:any)=>row.keyId===key.id);
+ expect(row).toMatchObject({inputTokens:107,outputTokens:13,cachedTokens:85,reasoningTokens:5,compaction:{inputTokens:100,outputTokens:10,cachedTokens:80,reasoningTokens:4}});
+});
 it('records paid summary details and settles them when continuation is rejected',async()=>{
  const {root,port,service,admin}=await setup();const realFetch=globalThis.fetch;
  vi.spyOn(globalThis,'fetch').mockImplementation(async(url,init)=>{

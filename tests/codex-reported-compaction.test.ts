@@ -29,7 +29,7 @@ it('merges previous checkpoints into the next summary instead of accumulating th
 
 it('does not emit a bootstrap checkpoint for a new chat containing only fixed instructions and its first user request',async()=>{
  const context=await setup();const input=[{role:'developer',content:'Static instructions. '.repeat(16000)},{role:'user',content:'Hello'}];let calls=0,compactions=0;
- const response=await context.response('responses',{model:scope.model,input,store:false},scope.owner,scope.source,async(_route,body)=>{calls++;expect(body.input).toEqual(input);return completed('Hello');},{scope,threadId:'fresh',connectionId:'connection',bootstrapOnFirstRequest:true,recover:async()=>[]},{onCompaction:()=>compactions++});
+ const response=await context.response('responses',{model:scope.model,input,store:false},scope.owner,scope.source,async(_route,body)=>{calls++;expect(body.input).toEqual(input);return completed('Hello');},{scope,threadId:'fresh',recover:async()=>[]},{onCompaction:()=>compactions++});
  const result=await response.json();expect(calls).toBe(1);expect(compactions).toBe(0);expect(result.output.some((item:any)=>item.type==='compaction')).toBe(false);
 });
 

@@ -9,7 +9,7 @@ import {upstreamRequest,finishUpstream} from '../packages/core/src/upstream-requ
 const roots:string[]=[];afterEach(async()=>{vi.useRealTimers();await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})));});
 async function setup(){const root=await mkdtemp(join(tmpdir(),'initial-compaction-'));roots.push(root);return {root,context:await GatewayContext.open(root)};}
 const answer=(text='SAVED_SUMMARY')=>Response.json({status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text}]}],usage:{input_tokens:100,output_tokens:20,total_tokens:120}});
-const migration:ContextMigration={bootstrapOnFirstRequest:true,contextWindowTokens:32768,threadId:'thread-a',connectionId:'connection-a',scope:{owner:'managed',source:'managed',model:'managed'},recover:async()=>{throw Error('unused');}};
+const migration:ContextMigration={bootstrapHistory:'imported-history-A',contextWindowTokens:32768,threadId:'thread-a',scope:{owner:'managed',source:'managed',model:'managed'},recover:async()=>{throw Error('unused');}};
 const history=[{role:'user',content:'EARLIEST_REQUIREMENT'},...Array.from({length:30},(_,i)=>({role:'assistant',content:(`Historical batch ${i} start `+'数据🙂'.repeat(800)+' middle '+i+' '+ 'x'.repeat(5000))})),{role:'user',content:'LATEST_REQUIREMENT'}];
 it('preserves every codepoint, increases recent detail and scales chunk size with declared capacity',()=>{
  const text='首🙂'+('abc中文\n'.repeat(100000))+'尾';const small=initialParts(text,16384),large=initialParts(text,131072);

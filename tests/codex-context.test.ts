@@ -142,7 +142,7 @@ it('continues across two gateway compactions and materializes the latest checkpo
  const between=[{role:'user',content:'NEW_CONSTRAINT: never change billing.ts.'},...work('second-'),{role:'user',content:'Continue second round.'}];
  const firstSummaryCount=summaries.length;round=2;const restarted=await GatewayContext.open(f.root);
  const second=await(await restarted.response('responses',{model:'qoder/m',input:[...original,...first.output,...between],context_management:[{type:'compaction',compact_threshold:100}]},'key','source',send,migration)).json();
- expect(firstSummaryCount).toBeGreaterThan(0);const secondSummaries=summaries.slice(firstSummaryCount).join('');expect(secondSummaries).not.toContain('ROUND_1_SUMMARY');expect(secondSummaries).toContain('NEW_CONSTRAINT');
+ expect(firstSummaryCount).toBeGreaterThan(0);const secondSummaries=summaries.slice(firstSummaryCount).join('');expect(secondSummaries).toContain('ROUND_1_SUMMARY');expect(secondSummaries).toContain('NEW_CONSTRAINT');
  const after={type:'message',role:'user',content:[{type:'input_text',text:'AFTER_SECOND_COMPACTION'}]};
  const saved=[{type:'session_meta',payload:{model_provider:'token_flow'}},...[...original,...first.output,...between,...second.output,after].map(payload=>({type:'response_item',payload:payload.type?payload:{type:'message',...payload}}))].map(row=>JSON.stringify(row)).join('\n')+'\n';
  await writeFile(f.file,saved);const restored=new CodexContext(f.root,join(f.root,'codex/config.toml'),restarted);
@@ -150,7 +150,7 @@ it('continues across two gateway compactions and materializes the latest checkpo
  expect(await restored.prepareOfficial([],async()=>[])).toEqual({migrated:1});
  const rows=(await readFile(f.file,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
  const latest=rows.filter(row=>row.type==='compacted').at(-1).payload.replacement_history;
- expect(JSON.stringify(latest)).toContain('ROUND_2_SUMMARY');expect(JSON.stringify(latest)).toContain('NEW_CONSTRAINT');
+ expect(JSON.stringify(latest)).toContain('ROUND_2_SUMMARY');expect(JSON.stringify(latest)).not.toContain('ROUND_1_SUMMARY');expect(JSON.stringify(latest)).toContain('NEW_CONSTRAINT');
  expect(latest.some((item:any)=>item.type==='compaction')).toBe(false);expect(rows.at(-1).payload).toEqual(after);
  for(const item of latest.filter((item:any)=>item.type==='function_call_output'))expect(latest.some((call:any)=>call.type==='function_call'&&call.call_id===item.call_id)).toBe(true);
  const batch=(await readdir(join(f.root,'codex-context-backups')))[0]!;const manifest=JSON.parse(await readFile(join(f.root,'codex-context-backups',batch,'manifest.json'),'utf8'));expect((await new CodexHistoryBackups(f.root).read(manifest.files[0].historySnapshot)).toString()).toBe(saved);
