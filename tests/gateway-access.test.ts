@@ -4,7 +4,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { GatewayAccess, gatewayAccessInput, normalizeGatewayIP } from '../packages/core/src/gateway-access.js';
+import { GatewayAccess, gatewayAccessInput, normalizeGatewayIP, gatewayAddresses } from '../packages/core/src/gateway-access.js';
 import { GatewayKeys, gatewayKeyInput } from '../packages/core/src/gateway-keys.js';
 
 const cleanup: Array<() => Promise<unknown>> = [];
@@ -65,6 +65,16 @@ it('checks the socket peer rather than forwarded headers and normalizes mapped a
     expect((await access.app.inject({ url: '/v1/models', headers, remoteAddress })).statusCode).toBe(200);
   }
   expect((await access.app.inject({ url: '/v1/models', remoteAddress: '192.168.1.24', headers: { ...headers, 'x-forwarded-for': '192.168.1.23', forwarded: 'for=192.168.1.23' } })).statusCode).toBe(403);
+});
+
+it('keeps source IP restrictions separate for each exported key',async()=>{
+ const {access,keys,save}=await setup();await save(true,await freePort());
+ const a=await keys.create(gatewayKeyInput.parse({name:'a',access:'lan',models:['codex/test'],allowedIPs:['192.168.1.23']}),true);
+ const b=await keys.create(gatewayKeyInput.parse({name:'b',access:'lan',models:['codex/test']}),true);
+ const call=(apiKey:string,remoteAddress:string)=>access.app.inject({url:'/v1/models',remoteAddress,headers:{authorization:`Bearer ${apiKey}`,'x-forwarded-for':'192.168.1.23'}});
+ expect((await call(a.apiKey,'::ffff:192.168.1.23')).statusCode).toBe(200);
+ expect((await call(a.apiKey,'192.168.1.24')).statusCode).toBe(403);
+ expect((await call(b.apiKey,'192.168.1.24')).statusCode).toBe(200);
 });
 
 it('persists explicit settings, supports port changes and re-enable, and starts the saved entrance on restart', async () => {
@@ -154,4 +164,11 @@ it('returns validation failures as 400 and hides unexpected server error details
   expect((await access.app.inject({ method: 'POST', url: '/v1/responses', headers, payload: {} })).statusCode).toBe(400);
   const failed = await access.app.inject({ url: '/v1/failure', headers });
   expect(failed.statusCode).toBe(500); expect(failed.body).not.toContain('upstream-secret');
+});
+
+it('excludes tunnels and discards disappeared addresses',()=>{
+ const entry=(address:string)=>({address,netmask:'255.255.255.0',family:'IPv4' as const,mac:'00:00:00:00:00:00',internal:false,cidr:`${address}/24`});
+ expect(gatewayAddresses({utun2:[entry('198.18.0.1')],en0:[entry('10.2.6.48')]},9555)).toEqual(['http://10.2.6.48:9555']);
+ expect(gatewayAddresses({en0:[entry('10.15.11.5')]},9555)).toEqual(['http://10.15.11.5:9555']);
+ expect(gatewayAddresses({en0:[entry('10.2.6.48')]},9555)).not.toContain('http://10.15.11.5:9555');
 });

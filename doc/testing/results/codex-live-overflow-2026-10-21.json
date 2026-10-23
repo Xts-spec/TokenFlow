@@ -1,0 +1,1160 @@
+{
+  "date": "2026-10-21",
+  "runtime": "codex-cli 0.163.0-alpha.11",
+  "model": "codex/gpt-6-luna",
+  "scope": "Installed Codex app-server + isolated HTTP listener + production GatewayContext + existing authorized sidecar + real upstream. Synthetic persisted history, not real user conversations. No production configuration changes.",
+  "seedUsageNote": "Prior input usage 100 or 150000 is synthetic metadata to test compaction decisions, not a measured token count for the 12 MiB history. Seed-only high compaction threshold is removed before every valid gateway test. Earlier runs retaining it were discarded for client-policy conclusions.",
+  "sourceHashes": {
+    "packages/core/src/gateway-context.ts": "d614e526393d47f98c23b9633e08560d1487653cc5b35b31a618956292f78aa5",
+    "packages/core/src/agent-connections.ts": "d522b23622bcf904248833d63bcb5a45cbe16e913dca6b3095393a0dc3bebe64",
+    "packages/core/src/codex-model-catalog.ts": "eaaa0115dc622184f68fe24071a546036dde885c5b9dbcc3941bfcf545fdfbaa",
+    "scripts/codex-first-long-history-smoke.mjs": "349d9f3371a9d5eeb9bdefd95389a32334ba6050f37484eac90d8c60bc7a2825"
+  },
+  "cases": [
+    {
+      "case": "current_configuration_default_retries",
+      "result": {
+        "passed": false,
+        "clientOnly": true,
+        "live": true,
+        "largeHistory": true,
+        "normalizeContextError": false,
+        "totalScope": false,
+        "persistedCompactions": 0,
+        "resumed": [],
+        "firstTurnStatus": "failed",
+        "firstError": {
+          "message": "stream disconnected before completion: stream closed before response.completed",
+          "codexErrorInfo": "other",
+          "additionalDetails": null,
+          "misalignment": null
+        },
+        "retryTurn": false,
+        "singleAttempt": false,
+        "knownUsage": true,
+        "model": "codex/gpt-6-luna",
+        "turnStatus": "failed",
+        "errorCode": "other",
+        "historyBytes": 12666527,
+        "clientCompactions": 0,
+        "gatewayCompactions": 0,
+        "sourceContextErrors": 6,
+        "earliestRequirementPreserved": false,
+        "requests": [
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 12703497,
+            "items": 29,
+            "trigger": false,
+            "localCompact": false,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 12703497,
+            "items": 29,
+            "trigger": false,
+            "localCompact": false,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 12703497,
+            "items": 29,
+            "trigger": false,
+            "localCompact": false,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 12703497,
+            "items": 29,
+            "trigger": false,
+            "localCompact": false,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 12703497,
+            "items": 29,
+            "trigger": false,
+            "localCompact": false,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 12703497,
+            "items": 29,
+            "trigger": false,
+            "localCompact": false,
+            "model": "codex/gpt-6-luna"
+          }
+        ],
+        "upstream": [
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 12702522,
+            "hasAnchor": true,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            }
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 12702522,
+            "hasAnchor": true,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            }
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 12702522,
+            "hasAnchor": true,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            }
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 12702522,
+            "hasAnchor": true,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            }
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 12702522,
+            "hasAnchor": true,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            }
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 12702522,
+            "hasAnchor": true,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            }
+          }
+        ],
+        "seedThresholdCleared": true,
+        "seedReportedInputTokens": 150000,
+        "gatewaySummaryCalls": 0,
+        "clientLocalCompactionRequests": 0,
+        "confirmedUsage": null,
+        "requestsWithoutReportedUsage": 6
+      }
+    },
+    {
+      "case": "current_configuration_stale_usage_retry",
+      "result": {
+        "passed": false,
+        "clientOnly": true,
+        "live": true,
+        "largeHistory": true,
+        "normalizeContextError": false,
+        "totalScope": false,
+        "persistedCompactions": 0,
+        "resumed": [],
+        "firstTurnStatus": "failed",
+        "firstError": {
+          "message": "stream disconnected before completion: stream closed before response.completed",
+          "codexErrorInfo": "other",
+          "additionalDetails": null,
+          "misalignment": null
+        },
+        "retryTurn": true,
+        "singleAttempt": true,
+        "knownUsage": false,
+        "model": "codex/gpt-6-luna",
+        "turnStatus": "failed",
+        "errorCode": "other",
+        "historyBytes": 12666524,
+        "clientCompactions": 0,
+        "gatewayCompactions": 0,
+        "sourceContextErrors": 2,
+        "earliestRequirementPreserved": false,
+        "requests": [
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 12703497,
+            "items": 29,
+            "trigger": false,
+            "localCompact": false,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 12703757,
+            "items": 30,
+            "trigger": false,
+            "localCompact": false,
+            "model": "codex/gpt-6-luna"
+          }
+        ],
+        "upstream": [
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 12702522,
+            "hasAnchor": true,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            }
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 12702734,
+            "hasAnchor": true,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            }
+          }
+        ],
+        "seedThresholdCleared": true,
+        "seedReportedInputTokens": 100,
+        "gatewaySummaryCalls": 0,
+        "clientLocalCompactionRequests": 0,
+        "confirmedUsage": null,
+        "requestsWithoutReportedUsage": 2
+      }
+    },
+    {
+      "case": "experimental_native_compaction",
+      "result": {
+        "passed": true,
+        "clientOnly": true,
+        "live": true,
+        "largeHistory": true,
+        "normalizeContextError": true,
+        "totalScope": true,
+        "persistedCompactions": 1,
+        "resumed": [
+          {
+            "status": "completed",
+            "earliestRequirementPreserved": true
+          }
+        ],
+        "firstTurnStatus": "completed",
+        "firstError": null,
+        "retryTurn": false,
+        "singleAttempt": true,
+        "knownUsage": true,
+        "model": "codex/gpt-6-luna",
+        "turnStatus": "completed",
+        "errorCode": null,
+        "historyBytes": 12666525,
+        "clientCompactions": 1,
+        "gatewayCompactions": 0,
+        "sourceContextErrors": 22,
+        "earliestRequirementPreserved": true,
+        "requests": [
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 12686032,
+            "items": 28,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 12683489,
+            "items": 27,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 12682796,
+            "items": 26,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 12682520,
+            "items": 25,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 11627778,
+            "items": 24,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 11627577,
+            "items": 23,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 10572835,
+            "items": 22,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 10572634,
+            "items": 21,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 9517892,
+            "items": 20,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 9517691,
+            "items": 19,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 8462949,
+            "items": 18,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 8462748,
+            "items": 17,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 7408006,
+            "items": 16,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 7407805,
+            "items": 15,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 6353063,
+            "items": 14,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 6352862,
+            "items": 13,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 5298120,
+            "items": 12,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 5297919,
+            "items": 11,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 4243177,
+            "items": 10,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 4242976,
+            "items": 9,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 3188234,
+            "items": 8,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 3188033,
+            "items": 7,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 2133290,
+            "items": 6,
+            "trigger": false,
+            "localCompact": true,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 47976,
+            "items": 17,
+            "trigger": false,
+            "localCompact": false,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 48508,
+            "items": 19,
+            "trigger": false,
+            "localCompact": false,
+            "model": "codex/gpt-6-luna"
+          }
+        ],
+        "upstream": [
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 12685153,
+            "hasAnchor": true,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 12682658,
+            "hasAnchor": true,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 12682013,
+            "hasAnchor": true,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 12681785,
+            "hasAnchor": false,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 11627056,
+            "hasAnchor": false,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 11626903,
+            "hasAnchor": false,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 10572174,
+            "hasAnchor": false,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 10572021,
+            "hasAnchor": false,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 9517292,
+            "hasAnchor": false,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 9517139,
+            "hasAnchor": false,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 8462410,
+            "hasAnchor": false,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 8462257,
+            "hasAnchor": false,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 7407528,
+            "hasAnchor": false,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 7407375,
+            "hasAnchor": false,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 6352646,
+            "hasAnchor": false,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 6352493,
+            "hasAnchor": false,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 5297764,
+            "hasAnchor": false,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 5297611,
+            "hasAnchor": false,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 4242882,
+            "hasAnchor": false,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 4242729,
+            "hasAnchor": false,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 3188000,
+            "hasAnchor": false,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 3187847,
+            "hasAnchor": false,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 2133118,
+            "hasAnchor": false,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "usage": {
+              "input_tokens": 785946,
+              "output_tokens": 261,
+              "total_tokens": 786207,
+              "input_tokens_details": {
+                "cache_write_tokens": 0,
+                "cached_tokens": 0
+              },
+              "output_tokens_details": {
+                "reasoning_tokens": 84
+              }
+            }
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 47160,
+            "hasAnchor": true,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "usage": {
+              "input_tokens": 13353,
+              "output_tokens": 28,
+              "total_tokens": 13381,
+              "input_tokens_details": {
+                "cache_write_tokens": 0,
+                "cached_tokens": 3712
+              },
+              "output_tokens_details": {
+                "reasoning_tokens": 0
+              }
+            }
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 47582,
+            "hasAnchor": true,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "usage": {
+              "input_tokens": 13413,
+              "output_tokens": 28,
+              "total_tokens": 13441,
+              "input_tokens_details": {
+                "cache_write_tokens": 0,
+                "cached_tokens": 13184
+              },
+              "output_tokens_details": {
+                "reasoning_tokens": 0
+              }
+            }
+          }
+        ],
+        "seedThresholdCleared": true,
+        "seedReportedInputTokens": 150000,
+        "gatewaySummaryCalls": 0,
+        "clientLocalCompactionRequests": 23,
+        "confirmedUsage": {
+          "input_tokens": 812712,
+          "output_tokens": 317
+        },
+        "requestsWithoutReportedUsage": 22
+      }
+    },
+    {
+      "case": "experimental_remote_compaction",
+      "result": {
+        "passed": true,
+        "clientOnly": true,
+        "live": true,
+        "largeHistory": true,
+        "normalizeContextError": false,
+        "remoteCompaction": true,
+        "seedThresholdCleared": true,
+        "totalScope": true,
+        "persistedCompactions": 2,
+        "resumed": [
+          {
+            "status": "completed",
+            "earliestRequirementPreserved": true
+          }
+        ],
+        "firstTurnStatus": "completed",
+        "firstError": null,
+        "retryTurn": false,
+        "singleAttempt": true,
+        "knownUsage": true,
+        "model": "codex/gpt-6-luna",
+        "turnStatus": "completed",
+        "errorCode": null,
+        "historyBytes": 12666527,
+        "clientCompactions": 2,
+        "gatewayCompactions": 2,
+        "sourceContextErrors": 0,
+        "earliestRequirementPreserved": true,
+        "requests": [
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 12707003,
+            "items": 28,
+            "trigger": true,
+            "localCompact": false,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 1490743,
+            "items": 17,
+            "trigger": false,
+            "localCompact": false,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 1491310,
+            "items": 19,
+            "trigger": true,
+            "localCompact": false,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 90342,
+            "items": 18,
+            "trigger": false,
+            "localCompact": false,
+            "model": "codex/gpt-6-luna"
+          }
+        ],
+        "upstream": [
+          {
+            "phase": 1,
+            "summary": true,
+            "bytes": 21033,
+            "hasAnchor": true,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "usage": {
+              "input_tokens": 7148,
+              "output_tokens": 199,
+              "total_tokens": 7347,
+              "input_tokens_details": {
+                "cache_write_tokens": 0,
+                "cached_tokens": 0
+              },
+              "output_tokens_details": {
+                "reasoning_tokens": 0
+              }
+            }
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 1102546,
+            "hasAnchor": true,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "usage": {
+              "input_tokens": 403927,
+              "output_tokens": 28,
+              "total_tokens": 403955,
+              "input_tokens_details": {
+                "cache_write_tokens": 0,
+                "cached_tokens": 3712
+              },
+              "output_tokens_details": {
+                "reasoning_tokens": 0
+              }
+            }
+          },
+          {
+            "phase": 1,
+            "summary": true,
+            "bytes": 2410,
+            "hasAnchor": false,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "usage": {
+              "input_tokens": 987,
+              "output_tokens": 169,
+              "total_tokens": 1156,
+              "input_tokens_details": {
+                "cache_write_tokens": 0,
+                "cached_tokens": 0
+              },
+              "output_tokens_details": {
+                "reasoning_tokens": 0
+              }
+            }
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 49121,
+            "hasAnchor": true,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "usage": {
+              "input_tokens": 13699,
+              "output_tokens": 40,
+              "total_tokens": 13739,
+              "input_tokens_details": {
+                "cache_write_tokens": 0,
+                "cached_tokens": 3712
+              },
+              "output_tokens_details": {
+                "reasoning_tokens": 10
+              }
+            }
+          }
+        ],
+        "seedReportedInputTokens": 150000,
+        "gatewaySummaryCalls": 2,
+        "clientLocalCompactionRequests": 0,
+        "confirmedUsage": {
+          "input_tokens": 425761,
+          "output_tokens": 436
+        },
+        "requestsWithoutReportedUsage": 0
+      }
+    },
+    {
+      "case": "experimental_retry_after_real_overflow",
+      "result": {
+        "passed": false,
+        "clientOnly": true,
+        "live": true,
+        "largeHistory": true,
+        "normalizeContextError": true,
+        "remoteCompaction": true,
+        "seedThresholdCleared": true,
+        "seedReportedInputTokens": 100,
+        "totalScope": true,
+        "persistedCompactions": 0,
+        "resumed": [],
+        "firstTurnStatus": "failed",
+        "firstError": {
+          "message": "Codex ran out of room in the model's context window. Start a new thread or clear earlier history before retrying.",
+          "codexErrorInfo": "contextWindowExceeded",
+          "additionalDetails": null,
+          "misalignment": null
+        },
+        "retryTurn": true,
+        "singleAttempt": true,
+        "knownUsage": false,
+        "model": "codex/gpt-6-luna",
+        "turnStatus": "failed",
+        "errorCode": "contextWindowExceeded",
+        "historyBytes": 12666527,
+        "clientCompactions": 0,
+        "gatewayCompactions": 0,
+        "sourceContextErrors": 2,
+        "earliestRequirementPreserved": false,
+        "requests": [
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 12707829,
+            "items": 29,
+            "trigger": false,
+            "localCompact": false,
+            "model": "codex/gpt-6-luna"
+          },
+          {
+            "phase": 1,
+            "path": "/v1/responses",
+            "bytes": 12708252,
+            "items": 30,
+            "trigger": false,
+            "localCompact": false,
+            "model": "codex/gpt-6-luna"
+          }
+        ],
+        "upstream": [
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 12706854,
+            "hasAnchor": true,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          },
+          {
+            "phase": 1,
+            "summary": false,
+            "bytes": 12707229,
+            "hasAnchor": true,
+            "model": "codex/gpt-6-luna",
+            "status": 200,
+            "streamError": {
+              "code": "context_too_large",
+              "type": "error",
+              "message": "Your input exceeds the context window of this model. Please adjust your input and try again."
+            },
+            "normalizedContextError": true
+          }
+        ],
+        "gatewaySummaryCalls": 0,
+        "clientLocalCompactionRequests": 0,
+        "confirmedUsage": null,
+        "requestsWithoutReportedUsage": 2
+      }
+    }
+  ],
+  "usageNote": "Only confirmed reported usage is summed. Null means no request reported usage; failed requests without usage are not assumed free."
+}

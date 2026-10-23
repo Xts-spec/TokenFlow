@@ -72,3 +72,12 @@ it('splits cache writes from uncached input without adding reasoning again, and 
  const result=totalsOf([row({inputTokens:35,cachedTokens:20,cacheWriteTokens:5,cacheBaseTokens:35,outputTokens:8,reasoningTokens:3,toolCalls:1,toolResults:1,generationMs:2000,timedOutputTokens:8})]);
  expect(result).toMatchObject({uncachedTokens:10,cachedTokens:20,cacheWriteTokens:5,outputTokens:8,totalTokens:43,reasoningTokens:3,toolCalls:1,toolResults:1,tokensPerSecond:4});
 });
+
+
+it('combines Qoder and Qoder IDE official usage under the Qoder icon',()=>{
+ const platform={id:'qoder',accounts:[{id:'qoder-one'},{id:'qoder-two'}]};
+ for(const provider of ['qoder','qoder-ide'])expect(spentByPlatform(row({origin:'native',provider,channel:'official'}),platform)).toBe(true);
+ expect(spentByPlatform(row({origin:'native',provider:'codex',channel:'official'}),platform)).toBe(false);
+ expect(spentByPlatform(row({origin:'native',provider:'qoder-ide',channel:'api'}),platform)).toBe(false);
+ for(const sourceId of ['qoder-one','qoder-two'])expect(spentByPlatform(row({origin:'gateway',sourceId,channel:'official'}),platform)).toBe(true);
+});

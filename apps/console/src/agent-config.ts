@@ -1,5 +1,4 @@
 import { isProviderVisible } from './provider-visibility';
-import { a2aCapabilities } from '@cua-sample/contracts/a2a';
 export type AgentKind='codex'|'claude'|'openai'|'qoder'|'cursor'|'pi'|'deepseek';
 export const agentCatalog=[
  {id:'pi' as const,name:'Pi Agent',protocol:'Chat Completions',path:'/v1/chat/completions',description:'将配置保存到 ~/.pi/agent/models.json，打开 /model 选择 TokenFlow 模型。',docs:'https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/models.md'},
@@ -22,7 +21,7 @@ export function agentConfig(kind:AgentKind,origin:string,model:string,powershell
  const quote=powershell?ps:shell;const baseURL=`${url.origin}/v1`;
  const assign=(key:string,value:string)=>powershell?`$env:${key} = ${quote(value)}`:`export ${key}=${quote(value)}`;
  if(kind==='codex')return [assign('TOKEN_FLOW_KEY','替换为此 Agent 的客户端 Key'),'codex '+[
-  ...(a2aCapabilities(model)?.serverTools===false?['web_search="disabled"']:[]),'model_auto_compact_token_limit_scope="body_after_prefix"','model_provider="token_flow"','model_providers.token_flow.name="TokenFlow"',`model_providers.token_flow.base_url=${JSON.stringify(baseURL)}`,
+  'model_auto_compact_token_limit=65536','model_auto_compact_token_limit_scope="total"','model_provider="token_flow"','model_providers.token_flow.name="OpenAI"',`model_providers.token_flow.base_url=${JSON.stringify(baseURL)}`,
   'model_providers.token_flow.env_key="TOKEN_FLOW_KEY"','model_providers.token_flow.wire_api="responses"','model_providers.token_flow.requires_openai_auth=false','model_providers.token_flow.supports_websockets=false',
  ].map(value=>`-c ${quote(value)}`).join(' ')+` --model ${quote(model)}`].join('\n\n');
  if(kind==='claude')return [

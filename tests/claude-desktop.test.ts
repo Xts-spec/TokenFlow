@@ -4,7 +4,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {randomUUID} from 'node:crypto';
 import {ClaudeDesktopConnections,claudeDesktopDirectory} from '../packages/core/src/claude-desktop.js';
-import {claudeDesktopModel,claudeDesktopPlan} from '../apps/shared/claude-desktop-models.js';
+import {claudeDesktopModel,claudeDesktopPlan,claudeBuiltInFamily} from '../apps/shared/claude-desktop-models.js';
 const roots:string[]=[];
 afterEach(async()=>{await Promise.all(roots.splice(0).map(r=>rm(r,{recursive:true,force:true})));});
 const sourceId='a'.repeat(24),secretName='native-login-claude-desktop';
@@ -28,7 +28,7 @@ it('writes the official gateway profile, preserves original login files, and res
  await writeFile(f.meta,JSON.stringify({appliedId:originalId,hybridPointer:hybrid,entries:[{id:originalId,name:'Original'}]}));await writeFile(f.mode,JSON.stringify({deploymentMode:'1p',theme:'light'}));
  const cookie=join(f.root,'Claude','Cookies');await mkdir(join(f.root,'Claude'));await writeFile(cookie,'untouched login fixture');
  await f.connect();const first=f.journal(),profilePath=join(f.directory,'configLibrary',`${first.id}.json`);const profile=JSON.parse(await readFile(profilePath,'utf8'));
- expect(profile).toEqual({inferenceGatewayApiKey:'fixture-scoped-key',inferenceGatewayAuthScheme:'bearer',inferenceGatewayBaseUrl:'http://127.0.0.1:9527',inferenceProvider:'gateway',inferenceModels:[{name:'claude-sonnet-5',labelOverride:'claude/claude-sonnet-4-6',anthropicFamilyTier:'sonnet',isFamilyDefault:true}],coworkEgressAllowedHosts:['*'],disableDeploymentModeChooser:true});expect(first.modelAliases).toEqual({'claude-sonnet-5':'claude/claude-sonnet-4-6','claude-opus-5':'claude/claude-sonnet-4-6','claude-haiku-4-5':'claude/claude-sonnet-4-6','claude-fable-5':'claude/claude-sonnet-4-6'});expect((await stat(profilePath)).mode&0o777).toBe(0o600);
+ expect(profile).toEqual({inferenceGatewayApiKey:'fixture-scoped-key',inferenceGatewayAuthScheme:'bearer',inferenceGatewayBaseUrl:'http://127.0.0.1:9527',inferenceProvider:'gateway',inferenceModels:[{name:'claude-sonnet-5',labelOverride:'claude/claude-sonnet-4-6',anthropicFamilyTier:'sonnet',isFamilyDefault:true}],coworkEgressAllowedHosts:['*'],disableDeploymentModeChooser:true});expect(first.modelAliases).toMatchObject({'claude-sonnet-5':'claude/claude-sonnet-4-6','claude-opus-5':'claude/claude-sonnet-4-6','claude-haiku-4-5':'claude/claude-sonnet-4-6','claude-fable-5':'claude/claude-sonnet-4-6'});expect((await stat(profilePath)).mode&0o777).toBe(0o600);
  expect(JSON.stringify(await f.connections.status())).not.toContain('fixture-scoped-key');expect(JSON.parse(await readFile(f.meta,'utf8')).hybridPointer).toBeUndefined();
  await f.connect('qoder/claude-opus-4-6');expect(f.journal().id).toBe(first.id);expect(f.journal().before).toEqual(first.before);
  const meta=JSON.parse(await readFile(f.meta,'utf8'));meta.entries.push({id:'later',name:'New user profile'});await writeFile(f.meta,JSON.stringify(meta));await writeFile(f.mode,JSON.stringify({deploymentMode:'3p',theme:'dark',keep:true}));
@@ -37,10 +37,12 @@ it('writes the official gateway profile, preserves original login files, and res
 });
 it('maps any selected model onto the desktop slots and keeps unlisted built-in requests on the default',()=>{
  expect(claudeDesktopModel('deepseek/deepseek-chat')).toBe(false);
- expect(claudeDesktopPlan([{model:'deepseek/deepseek-v4-pro'},{model:'gpt-5.6-sol'}],{'deepseek/deepseek-v4-pro':'DeepSeek Pro','gpt-5.6-sol':'Sol'})).toEqual({visible:[{name:'claude-sonnet-5',model:'deepseek/deepseek-v4-pro',label:'DeepSeek Pro',familyDefault:true},{name:'claude-sonnet-4-6',model:'gpt-5.6-sol',label:'Sol',familyDefault:false}],aliases:{'claude-sonnet-5':'deepseek/deepseek-v4-pro','claude-sonnet-4-6':'gpt-5.6-sol','claude-opus-5':'deepseek/deepseek-v4-pro','claude-haiku-4-5':'deepseek/deepseek-v4-pro','claude-fable-5':'deepseek/deepseek-v4-pro'}});
- expect(claudeDesktopPlan([{model:'deepseek/deepseek-v4-pro'},{model:'gpt-5.6-sol'}],{'deepseek/deepseek-v4-pro':'DeepSeek Pro','gpt-5.6-sol':'Sol'},'gpt-5.6-sol').aliases).toMatchObject({'claude-opus-5':'deepseek/deepseek-v4-pro','claude-fable-5':'deepseek/deepseek-v4-pro','claude-haiku-4-5':'gpt-5.6-sol','claude-sonnet-4-6':'gpt-5.6-sol'});
+ const plan=claudeDesktopPlan([{model:'deepseek/deepseek-v4-pro'},{model:'gpt-5.6-sol'}],{'deepseek/deepseek-v4-pro':'DeepSeek Pro','gpt-5.6-sol':'Sol'});
+ expect(plan).toMatchObject({visible:[{name:'claude-sonnet-5',model:'deepseek/deepseek-v4-pro',label:'DeepSeek Pro',familyDefault:true},{name:expect.stringMatching(/^claude-sonnet-5-tokenflow-/),model:'gpt-5.6-sol',label:'Sol',familyDefault:false}],aliases:{'claude-sonnet-5':'deepseek/deepseek-v4-pro','claude-opus-5':'deepseek/deepseek-v4-pro','claude-haiku-4-5':'deepseek/deepseek-v4-pro','claude-fable-5':'deepseek/deepseek-v4-pro'}});
+ expect(plan.aliases[plan.visible[1].name]).toBe('gpt-5.6-sol');
+ expect(claudeDesktopPlan([{model:'deepseek/deepseek-v4-pro'},{model:'gpt-5.6-sol'}],{},'gpt-5.6-sol').aliases).toMatchObject({'claude-opus-5':'deepseek/deepseek-v4-pro','claude-fable-5':'deepseek/deepseek-v4-pro','claude-haiku-4-5':'gpt-5.6-sol',[plan.visible[1].name]:'gpt-5.6-sol'});
  expect(()=>claudeDesktopPlan([{model:'deepseek/deepseek-v4-pro'}],{},'missing')).toThrow('快速模型必须在已选模型中');
- const many=claudeDesktopPlan([1,2,3,4,5].map(n=>({model:`m${n}`})));expect(many.visible.map(item=>item.name)).toEqual(['claude-sonnet-5','claude-sonnet-4-6','claude-opus-4-6','claude-haiku-4-6','claude-fable-4-6']);expect(many.aliases['claude-sonnet-4-6']).toBe('m2');expect(many.aliases['claude-haiku-4-5']).toBe('m1');
+ const many=claudeDesktopPlan([1,2,3,4,5].map(n=>({model:`m${n}`})));expect(new Set(many.visible.map(item=>item.name)).size).toBe(5);expect(many.visible.slice(1).every(item=>!claudeBuiltInFamily(item.name))).toBe(true);expect(many.aliases[many.visible[1].name]).toBe('m2');expect(many.aliases['claude-haiku-4-5']).toBe('m1');
  expect(()=>claudeDesktopPlan(Array.from({length:201},(_,n)=>({model:`m${n}` })))).toThrow('最多接入 200');
 });
 it('keeps Opus and Fable on the default model and sends Haiku requests to the fast model',async()=>{
@@ -48,6 +50,42 @@ it('keeps Opus and Fable on the default model and sends Haiku requests to the fa
  await f.connections.connect({revision:(await f.connections.status()).revision,selections:[{sourceId,model:'deepseek/deepseek-v4-pro'},{sourceId:fast,model:'deepseek/deepseek-v4-flash'}],fastModel:'deepseek/deepseek-v4-flash',keyId:randomUUID(),key:'fixture-scoped-key',origin:'http://127.0.0.1:9527',labels:{'deepseek/deepseek-v4-pro':'Pro','deepseek/deepseek-v4-flash':'Flash'}});
  expect(f.journal().fastModel).toBe('deepseek/deepseek-v4-flash');expect(f.journal().modelAliases['claude-haiku-4-5']).toBe('deepseek/deepseek-v4-flash');expect(f.journal().modelAliases['claude-opus-5']).toBe('deepseek/deepseek-v4-pro');expect(f.journal().modelAliases['claude-fable-5']).toBe('deepseek/deepseek-v4-pro');
  expect((await f.connections.status()).fastModel).toBe('deepseek/deepseek-v4-flash');
+});
+it('does not assign an internal Opus subagent name to the eleventh gateway menu model',()=>{
+ const selections=Array.from({length:11},(_,i)=>({model:i===0?'qoder/dfmodel':i===10?'cursor/grok-4.7':`qoder/model-${i}`}));
+ const plan=claudeDesktopPlan(selections);
+ expect(plan.aliases['claude-opus-4-8']).toBe('qoder/dfmodel');
+ expect(plan.visible[10].name).not.toBe('claude-opus-4-8');
+ expect(plan.aliases[plan.visible[10].name]).toBe('cursor/grok-4.7');
+});
+it('reserves internal family names at the 200-model limit and preserves every menu route',()=>{
+ const plan=claudeDesktopPlan(Array.from({length:200},(_,i)=>({model:`qoder/model-${i}`})));
+ expect(new Set(plan.visible.map(item=>item.name)).size).toBe(200);
+ for(const [i,item] of plan.visible.entries()){expect(plan.aliases[item.name]).toBe(`qoder/model-${i}`);if(i)expect(claudeBuiltInFamily(item.name)).toBeUndefined();}
+ for(const model of ['claude-opus-4-8','claude-opus-5-5','claude-3-7-sonnet-20250219','sonnet[1m]','opusplan','claude-mythos-5'])expect(claudeBuiltInFamily(model)).toBe('default');
+ for(const model of ['claude-haiku-5-5[1m]','claude-3-5-haiku-20241022','haiku'])expect(claudeBuiltInFamily(model)).toBe('fast');
+ for(const model of ['cursor/grok-4.7','claude/claude-opus-4-8','claude-sonnet-5-tokenflow-1','claude-opus-arbitrary','random'])expect(claudeBuiltInFamily(model)).toBeUndefined();
+});
+it('keeps existing menu route identities when models are reordered, promoted or removed',()=>{
+ const first=claudeDesktopPlan([{model:'qoder/default'},{model:'cursor/other'},{model:'codex/third'}]),route=first.visible[1].name;
+ const reordered=claudeDesktopPlan([{model:'qoder/default'},{model:'codex/third'},{model:'cursor/other'}]);expect(reordered.visible[2].name).toBe(route);expect(reordered.aliases[route]).toBe('cursor/other');
+ const promoted=claudeDesktopPlan([{model:'cursor/other'},{model:'qoder/default'}]);expect(promoted.aliases[route]).toBe('cursor/other');
+ const removed=claudeDesktopPlan([{model:'qoder/default'},{model:'codex/third'}]);expect(removed.aliases[route]).toBeUndefined();
+});
+it('flags legacy ambiguous menu mappings for reapplication without changing the saved profile',async()=>{
+ const f=await fixture();await f.connections.connect({revision:(await f.connections.status()).revision,selections:[{sourceId,model:'qoder/dfmodel'},{sourceId,model:'cursor/grok-4.7'}],keyId:randomUUID(),key:'fixture-key',origin:'http://127.0.0.1:9527'});
+ expect((await f.connections.status()).mappingUpdateRequired).toBe(false);
+ const journal=f.journal();journal.modelAliases={'claude-sonnet-5':'qoder/dfmodel','claude-opus-4-8':'cursor/grok-4.7'};f.vault.set(secretName,JSON.stringify(journal));
+ const path=join(f.directory,'configLibrary',`${journal.id}.json`),before=await readFile(path,'utf8');
+ expect((await f.connections.status()).mappingUpdateRequired).toBe(true);expect(await readFile(path,'utf8')).toBe(before);
+});
+it('detects external gateway edits even when the active profile id and deployment flag are unchanged',async()=>{
+ const f=await fixture();await f.connect();const journal=f.journal(),path=join(f.directory,'configLibrary',`${journal.id}.json`),profile=JSON.parse(await readFile(path,'utf8'));
+ await writeFile(path,JSON.stringify(Object.fromEntries(Object.entries(profile).reverse())));expect(await f.connections.status()).toMatchObject({connected:true,configurationChanged:false});
+ await writeFile(path,JSON.stringify({...profile,inferenceGatewayBaseUrl:'http://127.0.0.1:15721/claude-desktop'}));
+ const state=await f.connections.status();expect(state).toMatchObject({connected:false,configurationChanged:true});expect(JSON.stringify(state)).not.toContain('fixture-scoped-key');
+ await writeFile(path,'invalid external JSON');expect(await f.connections.status()).toMatchObject({connected:false,configurationChanged:true});
+ await f.connect();expect(await f.connections.status()).toMatchObject({connected:true,configurationChanged:false});
 });
 it('rejects running apps, managed policy, and stale revisions before changing files',async()=>{
  const f=await fixture();

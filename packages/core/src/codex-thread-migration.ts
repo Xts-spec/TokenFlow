@@ -5,17 +5,18 @@ import {dirname,join,isAbsolute} from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
 import {RunnerCoreError} from './errors.js';
 import {safePath} from './agent-connections.js';
+import {CodexHistoryBackups,type HistorySnapshot} from './codex-history-backups.js';
 
 const active=(entry:Entry)=>entry.state!=='restored'&&entry.state!=='deleted'&&entry.state!=='unavailable';
 const fail=(message:string,code='codex_migration_failed')=>new RunnerCoreError(message,{statusCode:409,code});
 type Route={id:string;provider:string;model:string;rollout:string;archived:boolean;source:string};
 type HistoryBackup={journalId:string;file:string};
-type Entry=Route&{historyBackup?:HistoryBackup;nextModel:string;returnModel?:string;rearchive?:boolean;state:'pending'|'migrated'|'restored'|'deleted'|'unavailable'};
+type Entry=Route&{bootstrapHistory?:string;historyBackup?:HistoryBackup;historySnapshots?:{snapshot:HistorySnapshot;provider:string;model:string;recordedAt:string}[];observedRoute?:{provider:string;model:string};nextModel:string;returnModel?:string;rearchive?:boolean;state:'pending'|'migrated'|'restored'|'deleted'|'unavailable'};
 type Journal={version:1;id:string;createdAt:string;databaseBackup?:string;state:'prepared'|'migrated'|'restored';entries:Entry[]};
 export type MigrationStatus={lifecyclePhase?:'idle'|'stopping'|'changing'|'opening';backups:number;remaining:number;restorable:number;unavailable?:number;phase:'idle'|'backup'|'migrating'|'restoring';done:number;total:number};
 export interface MigrationClient {pid?:number;resume(id:string,provider:string,model:string):Promise<void>;setArchived(id:string,archived:boolean):Promise<void>;close():Promise<void>}
 
-/** Resume only: no turn or tool is started. */
+/** Resume routing only. Switching never starts a turn, tool, or compaction. */
 export async function codexMigrationClient(home:string,binary?:string):Promise<MigrationClient>{
  const client=await codexRuntimeClient(home,binary);
  return {pid:client.pid,close:client.close,setArchived:async(id,archived)=>{await client.rpc(archived?'thread/archive':'thread/unarchive',{threadId:id});},resume:async(id,provider,model)=>{
@@ -26,9 +27,10 @@ export async function codexMigrationClient(home:string,binary?:string):Promise<M
 }
 
 export class CodexThreadMigration {
- private home:string;private directory:string;
+ private home:string;private directory:string;private history:CodexHistoryBackups;
+ private bootstrapRevisions?:Map<string,{revision:string;recordedAt:number}>;
  private progress:Pick<MigrationStatus,'phase'|'done'|'total'>={phase:'idle',done:0,total:0};
- constructor(root:string,configPath:string,private processes:()=>Promise<number[]>,private clientFactory:(home:string)=>Promise<MigrationClient>=codexMigrationClient){this.home=dirname(configPath);this.directory=join(root,'codex-thread-backups');}
+ constructor(root:string,configPath:string,private processes:()=>Promise<number[]>,private clientFactory:(home:string)=>Promise<MigrationClient>=codexMigrationClient){this.home=dirname(configPath);this.directory=join(root,'codex-thread-backups');this.history=new CodexHistoryBackups(root);}
  private async database(){
   await safePath(this.home);let files:string[];try{files=await readdir(this.home);}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return;throw error;}
   const name=files.filter(name=>/^state_\d+\.sqlite$/.test(name)).sort((a,b)=>Number(b.match(/\d+/)![0])-Number(a.match(/\d+/)![0]))[0];
@@ -44,7 +46,24 @@ export class CodexThreadMigration {
   const result:Journal[]=[];for(const id of files.filter(id=>/^[a-f0-9-]{36}$/.test(id))){const path=join(this.directory,id,'manifest.json');await safePath(path);try{const value=JSON.parse(await readFile(path,'utf8'));if(value.version!==1||value.id!==id||!Array.isArray(value.entries))throw fail('旧对话备份索引损坏，请保留备份后联系维修。');result.push(value);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
   return result.sort((a,b)=>a.createdAt.localeCompare(b.createdAt));
  }
- private async save(journal:Journal){const path=join(this.directory,journal.id,'manifest.json');await safePath(path);const temp=path+'.tmp';await writeFile(temp,JSON.stringify(journal),{mode:0o600});await rename(temp,path);}
+ private async save(journal:Journal){const path=join(this.directory,journal.id,'manifest.json');await safePath(path);const temp=path+'.tmp';await writeFile(temp,JSON.stringify(journal),{mode:0o600});await rename(temp,path);this.bootstrapRevisions=undefined;}
+ /** The switch backup identifies a particular thread/branch history revision.
+  * Read metadata once; normal inference never scans rollouts or starts a model. */
+ async bootstrapHistory(threadId:string|undefined){
+  if(!threadId)return;
+  if(!this.bootstrapRevisions){
+   const revisions=new Map<string,{revision:string;recordedAt:number}>(),seen=new Set<string>();
+   try{for(const journal of (await this.journals()).reverse())for(const entry of journal.entries){
+    if(seen.has(entry.id))continue;seen.add(entry.id);
+    if(!active(entry))continue;
+    const saved=entry.historySnapshots?.filter(saved=>saved.provider==='openai').at(-1);
+    const revision=entry.bootstrapHistory??saved?.snapshot.revision;
+    if(revision)revisions.set(entry.id,{revision,recordedAt:Date.parse(saved?.recordedAt??journal.createdAt)});
+   }}catch{return; /* Missing migration evidence leaves compaction to Codex. */}
+   this.bootstrapRevisions=revisions;
+  }
+  return this.bootstrapRevisions.get(threadId);
+ }
  private async hasHistory(row:Route){
   if(!row.rollout)return false;
   if(!isAbsolute(row.rollout))throw fail('旧对话记录路径异常，未迁移。');
@@ -63,6 +82,27 @@ export class CodexThreadMigration {
    const saved=entry.historyBackup??{journalId:journal.id,file:`${index}.jsonl`};
    if(!/^[a-f0-9-]{36}$/.test(saved.journalId)||!/^\d+\.jsonl$/.test(saved.file))continue;
    if(await this.backupFile(join(this.directory,saved.journalId,saved.file)))return saved;
+  }
+ }
+ private async captureHistory(row:Route,entry:Entry,journal:Journal,index:number){
+  if(!await this.hasHistory(row))return false;
+  const baseline=entry.historyBackup??{journalId:journal.id,file:`${index}.jsonl`};
+  const file=join(this.directory,baseline.journalId,baseline.file);
+  const snapshot=await this.history.capture(row.rollout,await readFile(row.rollout),await this.backupFile(file)?file:undefined);
+  if(row.provider==='openai')entry.bootstrapHistory=snapshot.revision;
+  const versions=entry.historySnapshots??=[];const latest=versions.at(-1);
+  if(latest?.snapshot.revision===snapshot.revision&&latest.provider===row.provider&&latest.model===row.model)return false;
+  versions.push({snapshot,provider:row.provider,model:row.model,recordedAt:new Date().toISOString()});return true;
+ }
+ private async captureKnown(journals:Journal[],rows:Route[]){
+  const seen=new Set<string>(),current=new Map(rows.map(row=>[row.id,row]));
+  for(const journal of [...journals].reverse()){
+   let changed=false;
+   for(const [index,entry] of journal.entries.entries()){
+    if(seen.has(entry.id)||entry.state==='deleted')continue;seen.add(entry.id);
+    const row=current.get(entry.id);if(row&&row.source===entry.source)changed=await this.captureHistory(row,entry,journal,index)||changed;
+   }
+   if(changed)await this.save(journal);
   }
  }
  // Retain missing records, without replaying deleted history from an old backup.
@@ -97,6 +137,7 @@ export class CodexThreadMigration {
   const rows=current.filter(row=>(row.provider==='openai'&&!row.archived&&['vscode','cli'].includes(row.source)||row.provider==='token_flow')&&!!row.model&&!owned.has(row.id));
   if(!rows.length&&!journals.some(j=>j.entries.some(active)))return;
   await this.idle();
+  await this.captureKnown(journals,current);
   for(const journal of journals){
    let changed=false;
    for(const entry of journal.entries){const row=current.find(row=>row.id===entry.id);if(active(entry)&&row?.provider==='token_flow'&&!allowedModels.includes(row.model)){entry.state='pending';entry.nextModel=model;changed=true;}}
@@ -106,8 +147,10 @@ export class CodexThreadMigration {
  }
  /** Also retain conversations created while the gateway was active. */
  async prepareOfficial(model:string){
-  const owned=new Set((await this.journals()).flatMap(j=>j.entries.filter(e=>active(e)||e.state==='unavailable').map(e=>e.id)));
-  const rows=(await this.rows()).filter(row=>row.provider==='token_flow'&&!!row.model&&!owned.has(row.id));
+  const journals=await this.journals(),current=await this.rows();
+  const owned=new Set(journals.flatMap(j=>j.entries.filter(e=>active(e)||e.state==='unavailable').map(e=>e.id)));
+  const rows=current.filter(row=>row.provider==='token_flow'&&!!row.model&&!owned.has(row.id));
+  if(journals.some(j=>j.entries.some(active))){await this.idle();await this.captureKnown(journals,current);}
   if(!rows.length)return;
   if(!model||model.includes('/'))throw fail('请先选择一个官方 Codex 模型，再还原这些对话。');
   await this.idle();await this.backup(rows,model,true);
@@ -117,7 +160,7 @@ export class CodexThreadMigration {
   if(this.clientFactory===codexMigrationClient)await migrationBinary();
   // Empty drafts have no saved model or completed turn; leave them untouched.
   this.progress={phase:'backup',done:0,total:rows.length};
-  const journal:Journal={version:1,id:randomUUID(),createdAt:new Date().toISOString(),state:'prepared',entries:rows.map(row=>({...row,provider:official?'openai':row.provider,model:official?model:row.model,nextModel:official?row.model:model,state:official?'migrated':'pending'}))};
+  const journal:Journal={version:1,id:randomUUID(),createdAt:new Date().toISOString(),state:'prepared',entries:rows.map(row=>({...row,observedRoute:{provider:row.provider,model:row.model},provider:official?'openai':row.provider,model:official?model:row.model,nextModel:official?row.model:model,state:official?'migrated':'pending'}))};
   const directory=join(this.directory,journal.id);await mkdir(directory,{recursive:true,mode:0o700});
   try{
    const {DatabaseSync,backup}=await import('node:sqlite');
@@ -139,6 +182,7 @@ export class CodexThreadMigration {
     const saved=await this.historyBackup(row,previous);
     if(saved)journal.entries[i]!.historyBackup=saved;
     else if(row.rollout){if(!isAbsolute(row.rollout))throw fail('旧对话记录路径异常，未迁移。');await safePath(row.rollout);try{await copyFile(row.rollout,join(directory,`${i}.jsonl`),constants.COPYFILE_FICLONE);await chmod(join(directory,`${i}.jsonl`),0o600);}catch(error){const code=(error as NodeJS.ErrnoException).code;if(code!=='ENOENT')throw fail(`旧对话记录无法备份${code?`（${code}）`:''}，登录配置未修改。`);}}
+    await this.captureHistory(row,journal.entries[i]!,journal,i);
     this.progress.done=i+1;
    }
    await this.idle();await this.save(journal);
@@ -197,6 +241,7 @@ export class CodexThreadMigration {
     }
     const persisted=(await this.rows()).find(row=>row.id===entry.id);
     if(persisted?.provider!==(restore?restoredProvider:'token_flow')||persisted?.model!==(restore?restoredModel:entry.nextModel)||persisted?.archived!==row.archived)throw fail('旧对话来源未持久保存，迁移已停止，备份保留。');
+    await this.captureHistory(persisted,entry,journal,journal.entries.indexOf(entry));
     entry.state=restore?'restored':'migrated';await this.save(journal);this.progress.done++;
    }journal.state=journal.entries.every(e=>!active(e))?'restored':journal.entries.every(e=>!active(e)||e.state==='migrated')?'migrated':'prepared';await this.save(journal);}
    return {migrated:this.progress.done};

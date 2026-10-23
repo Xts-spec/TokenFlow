@@ -70,11 +70,18 @@ const server = createServer(async(req,res) => {
   return send(200,path==='/messages'?message:path==='/chat/completions'?chat:response);
  }
  if(path==='/auth-files'){
-  if(req.method==='POST'){let body='';for await(const c of req)body+=c;const value=JSON.parse(body);const name=url.searchParams.get('name');mkdirSync(join(directory,'auth'),{recursive:true});writeFileSync(join(directory,'auth',name),JSON.stringify(value),{mode:0o600});accounts=[...accounts.filter(a=>a.name!==name),{...value,name,provider:value.type,status:'active',models:['imported-model']}];writeFileSync(file,JSON.stringify(accounts));return send(200,{status:'ok'});}
+  if(req.method==='POST'){let body='';for await(const c of req)body+=c;const value=JSON.parse(body);const name=url.searchParams.get('name');mkdirSync(join(directory,'auth'),{recursive:true});writeFileSync(join(directory,'auth',name),JSON.stringify(value),{mode:0o600});const prior=accounts.find(a=>a.name===name);accounts=[...accounts.filter(a=>a.name!==name),{...prior,...value,name,auth_index:prior?.auth_index??name,provider:value.type,status:'active',models:prior?.models??['imported-model']}];writeFileSync(file,JSON.stringify(accounts));return send(200,{status:'ok'});}
   if(req.method==='DELETE'){rmSync(join(directory,'auth',url.searchParams.get('name')),{force:true});accounts=accounts.filter(a=>a.name!==url.searchParams.get('name'));writeFileSync(file,JSON.stringify(accounts));return send(200,{status:'ok'});}
   return send(200,{files:accounts.map(a=>({...a,id:a.name,id_token:typeof a.id_token==='string'?undefined:a.id_token}))});
  }
  if(path==='/auth-files/status'){let body='';for await(const c of req)body+=c;const input=JSON.parse(body);accounts.find(a=>a.name===input.name).disabled=input.disabled;writeFileSync(file,JSON.stringify(accounts));return send(200,{status:'ok'});}
+ if(path.endsWith('-local-credential')){
+  const provider=path.slice(1,-'-local-credential'.length),target=provider==='workbuddy'&&url.searchParams.get('region')==='overseas'?'workbuddy-ai':provider;
+  const credential=fixtureOptions.localCredentials?.[target];
+  if(!credential)return send(404,{error:'No local credentials'});
+  if(req.method==='GET')return send(200,{credential});
+  return send(500,{error:'Fixture forbids native imports that bypass grant deduplication'});
+ }
  if(path.endsWith('-auth-url')) {
   const provider={'/codex-auth-url':'codex','/anthropic-auth-url':'claude','/antigravity-auth-url':'antigravity','/kimi-auth-url':'kimi','/xai-auth-url':'xai','/qoder-auth-url':'qoder','/workbuddy-auth-url':'workbuddy','/zcode-auth-url':'zcode','/doubao-auth-url':'doubao','/trae-auth-url':'trae'}[path];
   if(!provider)return send(404,{error:'unknown provider'});
@@ -113,10 +120,11 @@ const server = createServer(async(req,res) => {
   function replyEmpty(){return send(200,{status_code:200,header:{},body:'{}'});}
   if(input.url.includes('openapi.qoder.sh/api/v2/quota/usage'))return send(200,{status_code:200,header:{},body:JSON.stringify({userQuota:{total:3000,used:1512,remaining:1488},orgResourcePackage:{cap:6000,used:0,remaining:6000,available:true}})});
   if(fixtureMode==='quota-401')return send(200,{status_code:401,header:{},body:'{}'});
+  if(fixtureMode==='quota-token-revoked')return send(200,{status_code:401,header:{},body:JSON.stringify({error:{code:'token_revoked',message:'Encountered invalidated oauth token for user, upstream-secret-never-expose'}})});
   if(!accounts.some(a=>a.auth_index===input.auth_index))return send(200,{status_code:401,header:{},body:'{"error":"upstream-secret-never-expose"}'});
   if(fixtureMode==='quota-error')return send(200,{status_code:429,header:{},body:'{"error":"rate limited upstream-secret-never-expose"}'});
   const u=input.url;const reply=(obj)=>send(200,{status_code:200,header:{'Content-Type':['application/json']},body:JSON.stringify(obj)});
-  if(u==='https://openapi.qoder.sh/api/v1/userinfo')return reply(accounts.find(a=>a.auth_index===input.auth_index)?.profile??{});
+  if(u==='https://openapi.qoder.sh/api/v1/userinfo'){const account=accounts.find(a=>a.auth_index===input.auth_index);if(account?.refreshOnProfile){writeFileSync(join(directory,'auth',account.name),JSON.stringify({...JSON.parse(readFileSync(join(directory,'auth',account.name),'utf8')),access_token:'fixture-refreshed'}));account.refreshOnProfile=false;}return send(200,{status_code:account?.profileStatus??200,header:{},body:JSON.stringify(account?.profile??{})});}
   if(u.startsWith('https://api.kimi.com/coding/v1/usages'))return reply({usage:{used:120,limit:1000,resetAt:'2026-09-14T00:00:00Z'},limits:[{name:'5h window',window:{duration:5,timeUnit:'hour'},detail:{used:30,limit:100,reset_in:3600}},{window:{duration:1,timeUnit:'week'},detail:{remaining:700,limit:1000,reset_at:'2026-09-14T00:00:00Z'}}]});
   if(u.startsWith('https://cli-chat-proxy.grok.com/v1/billing?format=credits'))return reply({config:{currentPeriod:{type:'WEEKLY',start:'2026-09-07T00:00:00Z',end:'2026-09-14T00:00:00Z'},creditUsagePercent:42.5,productUsage:[{product:'grok-build',usagePercent:10}]}});
   if(u.startsWith('https://cli-chat-proxy.grok.com/v1/billing'))return reply({config:{monthlyLimit:{val:3000},used:{val:1250},onDemandCap:{val:5000},billingPeriodEnd:'2026-10-01T00:00:00Z'}});

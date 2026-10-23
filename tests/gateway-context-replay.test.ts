@@ -5,6 +5,38 @@ import {join} from 'node:path';
 import {GatewayContext} from '../packages/core/src/gateway-context.js';
 const roots:string[]=[];
 afterEach(async()=>{await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})));});
+it('continues with summary, recent exchanges and current instructions/tools without resurrecting short old user turns',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'context-window-'));roots.push(root);
+ const context=await GatewayContext.open(root);
+ const rule={role:'developer',content:'Current workspace rules.'};
+ const oldUser={role:'user',content:'Earlier task: keep the public API compatible.'};
+ const latest={role:'user',content:'Now finish testing.'};
+ const tools=[{type:'function',name:'read',parameters:{type:'object',properties:{}}}];
+ const tail=[latest,{type:'function_call',call_id:'pending',name:'read',arguments:'{}'}];
+ const history=[rule,oldUser,...Array.from({length:24},(_,i)=>({role:'assistant',content:`Completed work ${i}. `.repeat(500)})),...tail];
+ const original=structuredClone(history);const requests:Record<string,any>[]=[];
+ const summary='API compatibility retained; implementation complete; testing pending.';
+ const send=async(_path:string,body:Record<string,any>)=>{requests.push(body);return Response.json({id:'test',status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:summary}]}],usage:{input_tokens:100,output_tokens:10,total_tokens:110}});};
+ const compact=await (await context.response('responses/compact',{model:'m',input:history,instructions:'Current instructions.',tools},'a','s',send)).json();
+ const checkpoint=compact.output.at(-1);
+ expect(JSON.stringify(requests[0].input)).toContain(oldUser.content);
+ const restarted=await GatewayContext.open(root);
+ const result={type:'function_call_output',call_id:'pending',output:'Tests passed.'};
+ // A client may replay the original window along with its replacement.
+ await restarted.response('responses',{model:'m',input:[...history,checkpoint,result],instructions:'Current instructions.',tools,store:false},'a','s',send);
+ const sent=requests.at(-1)!;
+ expect(sent.instructions).toBe('Current instructions.');expect(sent.tools).toEqual(tools);
+ expect(sent.input).toContainEqual(rule);expect(sent.input).not.toContainEqual(oldUser);
+ expect(sent.input.slice(-3)).toEqual([...tail,result]);
+ expect(sent.input.filter((item:Record<string,unknown>)=>item.role==='user')).toEqual([latest]);
+ expect(JSON.stringify(sent.input)).toContain(summary);
+ expect(JSON.stringify(sent.input)).not.toContain('Completed work 0.');
+ expect(sent.input.some((item:Record<string,unknown>)=>item.type==='compaction')).toBe(false);
+ expect(history).toEqual(original);
+ // Resending the same text after the checkpoint is an intentional new turn.
+ await restarted.response('responses',{model:'m',input:[checkpoint,result,oldUser],store:false},'a','s',send);
+ expect(requests.at(-1)!.input.at(-1)).toEqual(oldUser);
+});
 it('does not resurrect covered user attachments, but keeps fresh messages and explicitly resent images',async()=>{
  const root=await mkdtemp(join(tmpdir(),'context-replay-'));roots.push(root);
  const context=await GatewayContext.open(root),scope={owner:'a',model:'m',source:'s'};

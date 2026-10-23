@@ -1,0 +1,70 @@
+{
+  "date": "2026-10-22",
+  "baselineCommit": "a6ea3c5",
+  "installedBuildObserved": "10.15.26.52",
+  "deployed": false,
+  "paidUpstreamCallsInThisRun": 0,
+  "observed": {
+    "reportCompactions": 160,
+    "oldSummaryCount": 159,
+    "oldSummaryBytes": 631039,
+    "posterFirstInputTokens": 109708,
+    "posterFirstRequestCompacted": false,
+    "posterFirstCompactionMs": 24457,
+    "posterCompactions": 9,
+    "originalDeepSeek400Cause": "unavailable: old relay discarded failure details"
+  },
+  "regression": {
+    "newTestsBeforeFix": {
+      "passed": 1,
+      "failed": 6
+    },
+    "focusedSuites": 12,
+    "focusedTestsPassed": 185,
+    "newApiIntegrationTestsPassed": 3,
+    "apiFullRun": {
+      "passed": 51,
+      "failed": 3,
+      "category": "existing model catalog synchronization waits"
+    },
+    "apiBaselineFullRun": {
+      "passed": 50,
+      "failed": 1,
+      "category": "same model catalog synchronization wait"
+    },
+    "apiFailedCasesIsolatedRerun": {
+      "passed": 3,
+      "failed": 0
+    },
+    "typecheck": "passed",
+    "build": "passed"
+  },
+  "nativeCodex": {
+    "passed": true,
+    "normalCalls": 24,
+    "summaryCalls": 7,
+    "checkpoints": [
+      {
+        "summaryCount": 1,
+        "bytes": 35546
+      },
+      {
+        "summaryCount": 1,
+        "bytes": 35546
+      },
+      {
+        "summaryCount": 1,
+        "bytes": 35545
+      }
+    ],
+    "qoderAdviceReachedCodex": true,
+    "error": "Error running remote compact task: stream disconnected before completion: 摘要上游请求失败（HTTP 429）：Qoder 当前模型容量不足，本次自动等待重试已结束，或上游要求的等待时间超过本次等待预算。请稍后重试或选择其他模型；原账号和模型配置保留。 原会话未修改。",
+    "scope": "installed Codex, real GatewayContext, synthetic sources, isolated HOME"
+  },
+  "limitations": [
+    "Synthetic upstream only for new native-client verification",
+    "Original HTTP 400 was not replayed",
+    "Large fixed instructions and tools still occupy the model context",
+    "Runtime installation has not been replaced"
+  ]
+}

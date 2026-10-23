@@ -1,6 +1,5 @@
-import {macAppIdentity} from './agent-lifecycle.js';
+import {macAppIdentity,macQoderIdeProcesses} from './agent-lifecycle.js';
 import {codexDefaultModel} from './codex-runtime.js';
-import { a2aCapabilities } from '@cua-sample/contracts/a2a';
 import { readFile, writeFile, mkdir, rename, lstat, unlink, open, rm, mkdtemp, copyFile, chmod, realpath } from 'node:fs/promises';
 import { basename, dirname, join, resolve, parse as parsePath, win32 } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
@@ -11,7 +10,7 @@ import { parse, stringify } from 'smol-toml';
 import { z } from 'zod';
 import { parseDocument as parseYAMLDocument, stringify as stringifyYAML } from 'yaml';
 import { detectAgent } from './agent-installation.js';
-import { codexModelCatalog } from './codex-model-catalog.js';
+import { codexModelCatalog, codexContextMetadata } from './codex-model-catalog.js';
 import { apiModelDisplayName } from '../../../apps/shared/api-endpoint.js';
 import { deepseekConfigPath,deepseekHome } from './deepseek-config.js';
 import {WindowsAgentLifecycle} from './windows-agent-lifecycle.js';
@@ -106,10 +105,7 @@ export async function agentProcesses(target:Target|'antigravity'|'workbuddy-ai'|
     if(process.platform==='darwin'&&(target==='workbuddy'||target==='workbuddy-ai'||target==='qoder'||target==='qoder-ide')){
       const bundle=target==='workbuddy'?'com.tencent.workbuddy.mac':target==='workbuddy-ai'?'com.workbuddy.workbuddy-ai':target==='qoder-ide'?'com.qoder.ide':'com.qoder.app';
       if(target==='qoder-ide'){
-       const rows=stdout.split('\n').flatMap(line=>{const m=line.trim().match(/^(\d+)\s+(\/.*?\.app)\/Contents\//);return m?[{pid:Number(m[1]),path:m[2]}]:[];});
-       const identities=new Map<string,Awaited<ReturnType<typeof macAppIdentity>>>();
-       for(const row of rows)if(!identities.has(row.path))identities.set(row.path,await macAppIdentity(row.path));
-       return rows.filter(row=>identities.get(row.path)?.bundle===bundle).map(row=>row.pid);
+       return (await macQoderIdeProcesses(stdout)).map(row=>row.pid);
       }
       const candidates=stdout.split('\n').flatMap(line=>{const m=line.trim().match(/^(\d+)\s+(\/.*\.app)\/Contents\/MacOS\/([^/]+)$/);return m?[{pid:Number(m[1]),path:m[2],executable:m[3]}]:[];});
       const verified=await Promise.all(candidates.map(async candidate=>{const identity=await macAppIdentity(candidate.path);return identity?.bundle===bundle&&identity.executable===candidate.executable?candidate.pid:null;}));
@@ -324,7 +320,14 @@ function nativeConfig(target:Target,current:string|null,record:Record):string|nu
    if(config.agents){const agents={...object(config.agents)};delete agents.default_subagent_model;delete agents.default_subagent_reasoning_effort;if(Object.keys(agents).length)config.agents=agents;else delete config.agents;}
    if(config.model_providers){const providers={...object(config.model_providers)};delete providers.token_flow;delete providers.openai;if(Object.keys(providers).length)config.model_providers=providers;else delete config.model_providers;}
   };
-  clean(doc);const profile=codexProfile(doc);if(profile)clean(profile);
+  const profile=codexProfile(doc);
+  // A user can change profiles while connected. Earlier gateway profiles must
+  // also stop selecting TokenFlow after its provider and client key are removed.
+  clean(doc);
+  if(profile)clean(profile);
+  if(isObject(doc.profiles))for(const candidate of Object.values(doc.profiles)){
+   if(isObject(candidate)&&candidate.model_provider==='token_flow')clean(candidate);
+  }
  }else if(target==='claude'){
   for(const key of ['model','availableModels','modelPicker','apiKeyHelper','forceLoginMethod','forceLoginOrgUUID','forceLoginGatewayUrl'])delete doc[key];
   if(doc.env){const env={...object(doc.env)};
@@ -335,7 +338,7 @@ function nativeConfig(target:Target,current:string|null,record:Record):string|nu
   if(doc.providers){const providers={...object(doc.providers)};delete providers['token-flow'];doc.providers=providers;}
  }else if(target==='deepseek'){
   const entry=doc['llm-pi-ai'];if(entry?.config?.providers){const providers={...object(entry.config.providers)};delete providers['token-flow'];entry.config.providers=providers;}
-  const defaults=doc['agent-default-model'];if(defaults?.config){delete defaults.config.provider;delete defaults.config.model;}
+  const defaults=doc['agent-default-model'];if(defaults?.config?.provider==='token-flow'){delete defaults.config.provider;delete defaults.config.model;}
  }
  return encodeConfig(target,doc);
 }
@@ -388,16 +391,16 @@ export function connectedConfig(target:Target,original:string|null,origin:string
   const doc=original===null?{}:parse(original);
   // Full original bytes remain in the backup; TOML serialization preserves semantic settings.
   const providers=doc.model_providers===undefined?{}:object(doc.model_providers);
-  // Upstream usage includes the caller's fixed instructions and tool schemas.
-  // Compact growth after the carried prefix, otherwise that fixed cost alone
-  // can exceed the catalog threshold again after every small tool result.
-  const routing={model,model_provider:'token_flow',model_auto_compact_token_limit_scope:'body_after_prefix',...(catalogPath?{model_catalog_json:catalogPath}:{}),...(chosen.some(model=>a2aCapabilities(model)?.serverTools===false)?{web_search:'disabled'}:{})};
-  delete doc.openai_base_url;delete doc.review_model;
+  // Use Codex's custom-provider compaction: the client owns the summary prompt,
+  // history selection and replacement. The gateway forwards that normal model
+  // request; only imported oversized history needs our initial organization.
+  const routing={model,model_provider:'token_flow',model_auto_compact_token_limit_scope:'total',...(catalogPath?{model_catalog_json:catalogPath}:{})};
+  delete doc.openai_base_url;delete doc.review_model;delete doc.model_auto_compact_token_limit;delete doc.model_context_window;
   const next:{[key:string]:any}={...doc,...routing,model_providers:{...providers,token_flow:{name:'TokenFlow',base_url:`${url.origin}/v1`,wire_api:'responses',experimental_bearer_token:key,requires_openai_auth:false,supports_websockets:false}}};
   // Legacy clients overlay the selected profile. Keep its policy and selection;
   // update only model routing. Newer CLI-selected profile files stay user-owned.
   const profile=codexProfile(doc);
-  if(profile){const selected:{[key:string]:any}={...profile,...routing};delete selected.openai_base_url;delete selected.review_model;next.profiles={...object(doc.profiles),[doc.profile as string]:selected};}
+  if(profile){const selected:{[key:string]:any}={...profile,...routing};delete selected.openai_base_url;delete selected.review_model;delete selected.model_auto_compact_token_limit;delete selected.model_context_window;next.profiles={...object(doc.profiles),[doc.profile as string]:selected};}
   // Remove only explicit subagent model defaults while connected. Codex then
   // inherits the current parent's model/effort, including in-app model changes.
   // The connection journal restores these defaults with the official config.
@@ -424,6 +427,44 @@ export class AgentConnections {
   }
   private dir(){return join(this.root,'agent-backups');}
   private catalogPath(model:string){return join(this.dir(),`codex-models-${hash(model)}.json`);}
+  /** Update only app-generated model metadata. Routing, credentials, history and
+   * the user's config bytes stay intact; Codex reads the catalog on startup. */
+  async refreshCodexCompactionLimits(window:(model:string)=>Promise<number|undefined>){
+    const {readdir}=await import('node:fs/promises');
+    const files=await readdir(this.dir()).catch(error=>{if(error.code==='ENOENT')return [];throw error;});
+    const capacities=new Map<string,number|undefined>();let updated=0,failed=0;
+    const positive=(value:unknown):value is number=>typeof value==='number'&&Number.isSafeInteger(value)&&value>0;
+    for(const name of files.filter(name=>/^codex-models-[a-f0-9]+\.json$/.test(name))){
+      const path=join(this.dir(),name),temp=`${path}.${randomUUID()}.tmp`;
+      try{
+        await safePath(path);const catalog=JSON.parse(await readFile(path,'utf8'));
+        if(!Array.isArray(catalog.models)||!catalog.models.every((model:any)=>model&&typeof model.slug==='string')){failed++;continue;}
+        const legacy=catalog.tokenflow_context_windows===undefined;
+        const windows={...object(catalog.tokenflow_context_windows??{})};let changed=legacy;
+        for(const model of catalog.models){
+          if(!capacities.has(model.slug))capacities.set(model.slug,await window(model.slug));
+          const discovered=capacities.get(model.slug);
+          if(positive(discovered)&&windows[model.slug]!==discovered){windows[model.slug]=discovered;changed=true;}
+          const known=windows[model.slug];
+          // Preserve existing metadata when discovery is unavailable. Older
+          // catalogs did not store provenance; migrate their known hardcoded
+          // defaults, while retaining other declared windows or trigger values.
+          const oldDefault=legacy&&model.context_window===131072&&model.auto_compact_token_limit===65536;
+          const declared=!oldDefault&&positive(model.context_window)?model.context_window:undefined;
+          const limit=positive(model.auto_compact_token_limit)?model.auto_compact_token_limit:undefined;
+          const capacity=positive(known)?known:declared;
+          const next:ReturnType<typeof codexContextMetadata>=capacity!==undefined?codexContextMetadata(capacity):limit!==undefined&&!(legacy&&[65536,128000,217600].includes(limit))?{auto_compact_token_limit:limit}:codexContextMetadata();
+          for(const field of ['context_window','max_context_window','auto_compact_token_limit'] as const){
+            const value=field==='max_context_window'?undefined:next[field];
+            if(value===undefined){if(field in model){delete model[field];changed=true;}}
+            else if(model[field]!==value){model[field]=value;changed=true;}
+          }
+        }
+        if(changed){catalog.tokenflow_context_windows=windows;await writeFile(temp,JSON.stringify(catalog),{mode:0o600,flag:'wx'});await rename(temp,path);updated++;}
+      }catch{failed++;}finally{await rm(temp,{force:true}).catch(()=>{});}
+    }
+    return {updated,failed};
+  }
   private async records():Promise<Record[]> {
     const {readdir}=await import('node:fs/promises');await mkdir(this.dir(),{recursive:true,mode:0o700});
     const files=await readdir(this.dir());const records:Record[]=[];
@@ -523,7 +564,6 @@ export class AgentConnections {
         const effective={...actual,...codexProfile(actual)};
         checks.push({name:'模型与配置层级正确',ok:(record.selections??[record]).some(item=>item.model===effective.model)&&effective.model_provider==='token_flow'&&actual.profile===expected.profile},{name:'接口与协议正确',ok:provider?.base_url===original.base_url&&provider?.wire_api==='responses'},{name:'客户端 Key 未被覆盖',ok:provider?.experimental_bearer_token===original.experimental_bearer_token});
         checks.push({name:'本地配置档案选择保留',ok:actual.profile===parse(record.before??'').profile});
-        if((record.selections??[record]).some(item=>a2aCapabilities(item.model)?.serverTools===false))checks.push({name:'来源不支持的内置网页搜索已关闭',ok:effective.web_search==='disabled'});
       }
       if(record.selections){
         const ids=record.selections.map(item=>item.model);
@@ -534,7 +574,7 @@ export class AgentConnections {
     }catch{checks.push({name:'配置格式可解析',ok:false});}
     return {id,target:record.target,model:record.model,checks,liveCallVerified:false,...(record.target==='claude'?{compatibility:{autoMode:'unverified' as const,note:'主模型、辅助模型配置一致不代表 Auto Mode 审批可用。审批分类器与 App 的维修审批模型相互独立；Messages 文本和工具检测也不能验证分类器。'}}:{}),note:record.target==='pi'?'在官方 Pi 的 /model 菜单选择 token-flow 模型。':record.target==='deepseek'?'重新打开 DeepSeek Harness 官方桌面应用，在模型菜单选择 token-flow 模型；已有对话从历史继续。':record.target==='qoder'?`重启 Qoder 独立应用，在模型菜单选择 ${record.model}。原登录与内置模型保留；不适用于 Qoder IDE。`:record.target==='workbuddy'?`在 WorkBuddy 新建任务的输入框下方打开模型菜单，选择 ${record.model}。若没有显示，重启 WorkBuddy 后再查看。配置检查不代表已在客户端选用。`:record.target==='workbuddy-ai'?`在 WorkBuddyAI 新建任务的输入框下方打开模型菜单，选择 ${record.model}。若没有显示，重启 WorkBuddyAI 后再查看。配置检查不代表已在客户端选用。官方登录保持不变。`:'重启 Agent 后加载配置；项目级设置或已有终端环境变量仍可能覆盖用户配置。'};
   }
-  async apply(input:{target:Target;revision:string;origin:string;model:string;sourceId:string;keyId:string;key:string;allowRunning?:boolean;replaceId?:string;rewrite?:boolean;selections?:ModelSelection[];fastModel?:string;modelLabels?:{[id:string]:string}}){
+  async apply(input:{target:Target;revision:string;origin:string;model:string;sourceId:string;keyId:string;key:string;allowRunning?:boolean;replaceId?:string;rewrite?:boolean;selections?:ModelSelection[];fastModel?:string;modelLabels?:{[id:string]:string};modelContextWindows?:{[id:string]:number}}){
     return this.run(input.target,async()=>{
       await this.requireEditableProfile(input.target);
       if(!input.allowRunning)await this.idle(input.target);
@@ -547,7 +587,7 @@ export class AgentConnections {
       if(input.selections){modelSelectionsSchema.parse(input.selections);if(!input.selections.some(item=>item.model===input.model&&item.sourceId===input.sourceId))throw conflict('默认模型必须在已选模型中');}
       if(input.fastModel&&!(input.selections??[{model:input.model,sourceId:input.sourceId}]).some(item=>item.model===input.fastModel))throw conflict('快速模型必须在已选模型中');
       // Include display metadata so a renamed menu does not reuse the legacy cached path.
-      const catalog=input.target==='codex'?codexModelCatalog(selectedModels??input.model,input.modelLabels):undefined;
+      const catalog=input.target==='codex'?codexModelCatalog(selectedModels??input.model,input.modelLabels,input.modelContextWindows):undefined;
       const catalogPath=catalog?this.catalogPath(JSON.stringify(catalog)):undefined;
       let after:string;try{after=connectedConfig(input.target,original,input.origin,input.model,input.key,catalogPath,selectedModels,input.modelLabels,input.fastModel);}catch{throw conflict('配置格式无法安全解析，未修改原文件。');}
       if(catalogPath){
@@ -622,8 +662,8 @@ export class AgentConnections {
     const record=(await this.records()).find(r=>r.id===id&&r.state!=='restored');if(!record)throw conflict('接入记录不存在或已还原，请刷新。');
     const current=await readConfig(this.paths[record.target]);
     let reason='';try{if(mode==='native')nativeConfig(record.target,current,record);else this.restoreText(record,current);}catch(error){reason=error instanceof Error?error.message:'无法确认原配置，请检查后重试。';}
-    let destination:{kind:'official'|'custom'|'default';provider:string;model?:string}|undefined;
-    if(mode==='native')destination={kind:'official',provider:record.target==='codex'?'openai':record.target};
+    let destination:{kind:'official'|'custom'|'default'|'disconnect';provider:string;model?:string}|undefined;
+    if(mode==='native')destination={kind:record.target==='codex'||record.target==='claude'?'official':'disconnect',provider:record.target==='codex'?'openai':record.target};
     else if(record.target==='codex'){
       const original=parse(record.before??''),effective={...original,...codexProfile(original)};
       const provider=typeof effective.model_provider==='string'?effective.model_provider:'openai';

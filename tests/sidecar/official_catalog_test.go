@@ -494,3 +494,10 @@ func TestOfficialCatalogRetiredDoubaoMakesNoUpstreamRequest(t *testing.T) {
 		t.Fatal("missing retirement reason")
 	}
 }
+
+func TestOfficialCatalogZcodeProjectUsesFreshPickerWithoutAnUnimplementedModelsEndpoint(t *testing.T) {
+ raw:=[]byte(`{"config":{"providerConfigRules":{"providerRules":[{"providerId":"account:bigmodel-individual-coding-plan","config":{"builtinModelIds":["glm-live"]}},{"providerId":"account:zai-individual-coding-plan","config":{"builtinModelIds":["other-region"]}}]}}}`)
+ allowed,ok:=zcodeCodingPicker(raw,"bigmodel");if !ok{t.Fatal("official picker missing")}
+ models,ok:=zcodeProjectCatalog(allowed,nil);if !ok||len(models)!=1||models[0].ID!="glm-live"{t.Fatal("live scoped catalog lost")}
+ if _,ok:=zcodeProjectCatalog(nil,nil);ok{t.Fatal("missing catalog must not reveal static fallback models")}
+}

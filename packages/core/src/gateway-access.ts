@@ -1,35 +1,20 @@
+import {gatewayDecoding} from './gateway-decoding.js';
+import {gatewayAddresses,readGatewayInterfaceKinds,type InterfaceKinds} from './gateway-network.js';
+export {gatewayAddresses} from './gateway-network.js';
 import { readFile, rename, writeFile } from 'node:fs/promises';
-import { isIP } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import Fastify from 'fastify';
 import { z } from 'zod';
 import type { GatewayKeys } from './gateway-keys.js';
 
-/** Compare socket addresses directly; forwarded headers never establish membership. */
-export function normalizeGatewayIP(value: string): string | undefined {
-  const family = isIP(value);
-  if (family === 4) return value;
-  if (family !== 6) return;
-  // Scoped link-local addresses cannot be represented as an exact portable allowlist entry.
-  if (value.includes('%')) return;
-  const normalized = new URL(`http://[${value}]`).hostname.slice(1, -1);
-  const mapped = /^::ffff:([a-f0-9]{1,4}):([a-f0-9]{1,4})$/.exec(normalized);
-  if (mapped) {
-    const high = Number.parseInt(mapped[1], 16), low = Number.parseInt(mapped[2], 16);
-    return `${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`;
-  }
-  return normalized;
-}
-
-const ipAddress = z.string().trim().refine(value => {
-  try { return normalizeGatewayIP(value) !== undefined; } catch { return false; }
-}, '请输入完整的 IPv4 或 IPv6 地址').transform(value => normalizeGatewayIP(value)!);
+export {normalizeGatewayIP} from './gateway-ip.js';
+import {normalizeGatewayIP,gatewayIPAddress} from './gateway-ip.js';
 
 export const gatewayAccessInput = z.object({
   enabled: z.boolean().default(false),
   port: z.number().int().min(1).max(65535).default(9555),
-  allowedIPs: z.array(ipAddress).max(256).default([]).transform(values => [...new Set(values)]),
+  allowedIPs: z.array(gatewayIPAddress).max(256).default([]).transform(values => [...new Set(values)]),
 }).strict();
 
 export type GatewayAccessConfig = z.infer<typeof gatewayAccessInput>;
@@ -42,7 +27,7 @@ export type GatewayAccessSnapshot = GatewayAccessConfig & {
 const failure = (message: string, statusCode = 409) => Object.assign(new Error(message), { statusCode });
 const bindError = (error: unknown, port: number) => {
   const code = (error as NodeJS.ErrnoException).code;
-  if (code === 'EADDRINUSE') return `局域网访问端口 ${port} 已被占用，请选择其他端口。`;
+  if (code === 'EADDRINUSE') return `局域网访问端口 ${port} 已被占用，请关闭占用该端口的程序后重试。`;
   if (code === 'EACCES') return `无法使用局域网访问端口 ${port}，请选择其他端口。`;
   return `局域网访问启动失败：${error instanceof Error ? error.message : String(error)}`;
 };
@@ -54,8 +39,23 @@ export class GatewayAccess {
   private lastError: string | null = null;
   private pending: Promise<unknown> = Promise.resolve();
   private closed = false;
+  private interfaceKinds:InterfaceKinds|null=null;
+  private interfaceScan:Promise<void>|undefined;
+  private interfaceScannedAt=0;
+  private interfaceNames='';
+
+  private refreshInterfaces(interfaces=networkInterfaces()){
+    if(this.interfaceScan)return this.interfaceScan;
+    this.interfaceScan=(async()=>{
+      this.interfaceKinds=await readGatewayInterfaceKinds(interfaces);
+      this.interfaceNames=Object.keys(interfaces).sort().join('\n');
+      this.interfaceScannedAt=Date.now();
+    })().finally(()=>{this.interfaceScan=undefined;});
+    return this.interfaceScan;
+  }
 
   private constructor(private path: string, private gatewayKeys: Pick<GatewayKeys, 'authenticate'>) {
+    gatewayDecoding(this.app);
     this.app.setErrorHandler((error, _request, reply) => {
       if (error instanceof z.ZodError) return reply.code(400).send({ error: { message: '请求参数无效', type: 'invalid_request_error' } });
       const requestedStatus = error instanceof Error && 'statusCode' in error && typeof error.statusCode === 'number' ? error.statusCode : 500;
@@ -78,6 +78,7 @@ export class GatewayAccess {
       if (bearer && apiKey !== undefined && bearer !== apiKey) return deny('客户端 Key 不一致', 401);
       const key = this.gatewayKeys.authenticate(bearer ?? (typeof apiKey === 'string' ? apiKey : ''));
       if (!key || key.access !== 'lan' || key.exported !== true) return deny('此客户端 Key 未获准局域网访问', 401);
+      if(key.allowedIPs?.length&&!key.allowedIPs.includes(address))return deny('此设备不在该 Key 的来源 IP 允许列表中');
     });
   }
 
@@ -90,14 +91,15 @@ export class GatewayAccess {
         access.lastError = '局域网访问配置读取失败，已暂停此入口。请检查 gateway-access.json，或重新保存访问设置；已有文件未被重置。';
       }
     }
+    if(access.config.enabled)await access.refreshInterfaces();
     return access;
   }
 
   snapshot(): GatewayAccessSnapshot {
     const running = this.app.server.listening;
-    const addresses = running ? [...new Set(Object.values(networkInterfaces()).flatMap(entries => (entries ?? [])
-      .filter(entry => entry.family === 'IPv4' && !entry.internal)
-      .map(entry => `http://${entry.address}:${this.config.port}`)))].sort() : [];
+    const interfaces=networkInterfaces();
+    if(running&&(Date.now()-this.interfaceScannedAt>15000||Object.keys(interfaces).sort().join('\n')!==this.interfaceNames))void this.refreshInterfaces(interfaces);
+    const addresses = running ? gatewayAddresses(interfaces,this.config.port,this.interfaceKinds) : [];
     return { ...structuredClone(this.config), running, lastError: this.lastError, addresses };
   }
 
@@ -108,6 +110,7 @@ export class GatewayAccess {
   }
 
   private async listen(port: number) {
+    await this.refreshInterfaces();
     await this.app.ready();
     // Node servers can listen again after close; Fastify.close() is reserved for final shutdown.
     await new Promise<void>((resolve, reject) => {

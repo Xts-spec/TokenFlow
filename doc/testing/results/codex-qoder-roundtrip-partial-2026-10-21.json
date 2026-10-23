@@ -1,0 +1,270 @@
+{
+  "passed": false,
+  "inProgress": false,
+  "nativeOfficial": true,
+  "decodeZstd": true,
+  "phase": "gateway-model-hop-qoder",
+  "recovery": [
+    {
+      "phase": "initial-recovery",
+      "inputBytes": 90571,
+      "outputBytes": 85426,
+      "calls": 1,
+      "reused": 0,
+      "durationMs": 71257,
+      "inputTokens": 2310,
+      "outputTokens": 1202,
+      "cachedTokens": 0,
+      "cacheWriteTokens": null,
+      "reasoningTokens": 643,
+      "failed": false,
+      "unmetered": false
+    },
+    {
+      "phase": "gateway-model-hop-luna",
+      "inputBytes": 135993,
+      "outputBytes": 128895,
+      "calls": 1,
+      "reused": 0,
+      "durationMs": 8299,
+      "inputTokens": 2729,
+      "outputTokens": 322,
+      "cachedTokens": 0,
+      "cacheWriteTokens": 0,
+      "reasoningTokens": 78,
+      "failed": false,
+      "unmetered": false
+    },
+    {
+      "phase": "gateway-model-hop-qoder",
+      "inputBytes": 134146,
+      "outputBytes": 135270,
+      "calls": 1,
+      "reused": 0,
+      "durationMs": 24535,
+      "inputTokens": 326,
+      "outputTokens": 1328,
+      "cachedTokens": 0,
+      "cacheWriteTokens": null,
+      "reasoningTokens": 948,
+      "failed": false,
+      "unmetered": false
+    }
+  ],
+  "rounds": [
+    {
+      "phase": "initial-recovery",
+      "durationMs": 81352,
+      "markersPreserved": 1
+    },
+    {
+      "phase": "official-1",
+      "durationMs": 17191,
+      "restoredCheckpoint": "2d2d1de5f6651d6c8e3a2ead2b5790d75725536c4a3d6a17ab902092b92ac788",
+      "exactCheckpointTexts": 7,
+      "markersPreserved": 1,
+      "newSummaryCalls": 0
+    },
+    {
+      "phase": "gateway-1",
+      "durationMs": 34081,
+      "markersPreserved": 1,
+      "newSummaryCalls": 0
+    },
+    {
+      "phase": "gateway-model-hop-luna",
+      "durationMs": 18696,
+      "markersPreserved": 1,
+      "newSummaryCalls": 1
+    },
+    {
+      "phase": "gateway-model-hop-qoder",
+      "durationMs": 47795,
+      "markersPreserved": 1,
+      "newSummaryCalls": 2
+    }
+  ],
+  "checkpoints": [
+    {
+      "phase": "initial-full-history",
+      "hash": "2d2d1de5f6651d6c8e3a2ead2b5790d75725536c4a3d6a17ab902092b92ac788"
+    }
+  ],
+  "summaryCalls": 3,
+  "requests": [
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": false,
+      "requestEncoding": "identity",
+      "model": "qoder/gfmodel",
+      "bytes": 108963,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200,
+      "durationMs": 9922
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "identity",
+      "model": "qoder/gfmodel",
+      "bytes": 8981,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "gateway-1",
+      "official": false,
+      "summary": false,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 703206,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200,
+      "durationMs": 31802
+    },
+    {
+      "phase": "gateway-model-hop-luna",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "codex/gpt-6-luna",
+      "bytes": 9697,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "gateway-model-hop-luna",
+      "official": false,
+      "summary": false,
+      "requestEncoding": "zstd",
+      "model": "codex/gpt-6-luna",
+      "bytes": 711894,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200,
+      "durationMs": 8008
+    },
+    {
+      "phase": "gateway-model-hop-qoder",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 1442,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "gateway-model-hop-qoder",
+      "official": false,
+      "summary": false,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 713678,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200,
+      "durationMs": 21154
+    }
+  ],
+  "interruptedAt": "gateway-1 explicit compaction; upstream response incomplete",
+  "subsequentReports": [
+    {
+      "phase": "initial-recovery",
+      "inputBytes": 90571,
+      "outputBytes": 85426,
+      "calls": 1,
+      "reused": 0,
+      "durationMs": 71257,
+      "inputTokens": 2310,
+      "outputTokens": 1202,
+      "cachedTokens": 0,
+      "cacheWriteTokens": null,
+      "reasoningTokens": 643,
+      "failed": false,
+      "unmetered": false
+    },
+    {
+      "phase": "gateway-model-hop-luna",
+      "inputBytes": 135993,
+      "outputBytes": 128895,
+      "calls": 1,
+      "reused": 0,
+      "durationMs": 8299,
+      "inputTokens": 2729,
+      "outputTokens": 322,
+      "cachedTokens": 0,
+      "cacheWriteTokens": 0,
+      "reasoningTokens": 78,
+      "failed": false,
+      "unmetered": false
+    },
+    {
+      "phase": "gateway-model-hop-qoder",
+      "inputBytes": 134146,
+      "outputBytes": 135270,
+      "calls": 1,
+      "reused": 0,
+      "durationMs": 24535,
+      "inputTokens": 326,
+      "outputTokens": 1328,
+      "cachedTokens": 0,
+      "cacheWriteTokens": null,
+      "reasoningTokens": 948,
+      "failed": false,
+      "unmetered": false
+    },
+    {
+      "phase": "gateway-1",
+      "inputBytes": 136063,
+      "outputBytes": 137015,
+      "calls": 1,
+      "reused": 0,
+      "durationMs": 92131,
+      "inputTokens": 359,
+      "outputTokens": 1530,
+      "cachedTokens": 0,
+      "cacheWriteTokens": null,
+      "reasoningTokens": 1124,
+      "failed": false,
+      "unmetered": false
+    },
+    {
+      "phase": "gateway-1",
+      "inputBytes": 149546,
+      "outputBytes": 150251,
+      "calls": 1,
+      "reused": 0,
+      "durationMs": 29559,
+      "inputTokens": 491,
+      "outputTokens": 1545,
+      "cachedTokens": 0,
+      "cacheWriteTokens": null,
+      "reasoningTokens": 1091,
+      "failed": false,
+      "unmetered": false
+    },
+    {
+      "phase": "gateway-1",
+      "inputBytes": 151229,
+      "outputBytes": 0,
+      "calls": 1,
+      "reused": 0,
+      "durationMs": 8925,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "cachedTokens": 0,
+      "cacheWriteTokens": 0,
+      "reasoningTokens": 0,
+      "failed": true,
+      "unmetered": true
+    }
+  ]
+}

@@ -7,7 +7,8 @@ import { Readable } from 'node:stream';
 import { z } from 'zod';
 import { providerSchema, type ProviderConfig } from './providers.js';
 import { RunnerCoreError } from './errors.js';
-import { upstreamIdle } from './upstream-idle.js';
+import { upstreamRequest, inferenceFetch } from './upstream-request.js';
+import {readUpstreamError,upstreamError} from './upstream-errors.js';
 import type { Secrets } from './service.js';
 
 const modelID=z.string().trim().min(1).max(200).refine(v=>!/[\x00-\x1f\x7f]/.test(v));
@@ -26,18 +27,20 @@ type StoredSource=z.infer<typeof storedSource>;
 export type ApiSource=Omit<StoredSource,'credentialRef'> & {hasKey:boolean};
 export const apiModelID=(sourceId:string,upstream:string)=>`api-${sourceId}/${upstream}`;
 const conflict=(message:string)=>new RunnerCoreError(message,{statusCode:409,code:'api_source_conflict'});
-const LIMIT=16*1024*1024;
+const MODEL_LIST_BYTES=16*1024*1024;
 const nativeHeader='x-token-flow-native';
 function safeSourceStream(body:ReadableStream<Uint8Array>){
  const decoder=new TextDecoder(),encoder=new TextEncoder();let buffer='';
  const safe=(frame:string)=>{
   const data=frame.split('\n').filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trimStart()).join('\n');
   if(!data||data==='[DONE]')return frame+'\n\n';
-  let failed=false;try{const value=JSON.parse(data);failed=value?.type==='error'||value?.type==='response.failed'||!!value?.error||!!value?.response?.error;}catch{failed=true;}
-  return failed?'event: error\ndata: '+JSON.stringify({type:'error',code:'api_source_error',message:'API source stream failed',error:{type:'api_error',message:'API source stream failed'}})+'\n\n':frame+'\n\n';
+  let failed=false,detail:ReturnType<typeof upstreamError>|undefined;
+  try{const value=JSON.parse(data);failed=value?.type==='error'||value?.type==='response.failed'||!!value?.error||!!value?.response?.error;if(failed)detail=upstreamError(502,data);}catch{failed=true;}
+  const error=detail?.code?detail:{code:'api_source_error',type:'api_error',message:'API source stream failed'};
+  return failed?'event: error\ndata: '+JSON.stringify({...error,type:'error',error})+'\n\n':frame+'\n\n';
  };
  return body.pipeThrough(new TransformStream<Uint8Array,Uint8Array>({
-  transform(chunk,out){buffer+=decoder.decode(chunk,{stream:true});buffer=buffer.replace(/\r\n/g,'\n');let end:number;while((end=buffer.indexOf('\n\n'))!==-1){const frame=buffer.slice(0,end);if(Buffer.byteLength(frame)>LIMIT)throw new Error('Source event too large');buffer=buffer.slice(end+2);out.enqueue(encoder.encode(safe(frame)));}if(Buffer.byteLength(buffer)>LIMIT)throw new Error('Source event too large');},
+  transform(chunk,out){buffer+=decoder.decode(chunk,{stream:true});buffer=buffer.replace(/\r\n/g,'\n');let end:number;while((end=buffer.indexOf('\n\n'))!==-1){const frame=buffer.slice(0,end);buffer=buffer.slice(end+2);out.enqueue(encoder.encode(safe(frame)));}},
   flush(out){buffer+=decoder.decode();if(buffer.trim())out.enqueue(encoder.encode(safe(buffer)));}
  }));
 }
@@ -75,7 +78,7 @@ export class ApiSources {
  private server?:Server;
  private relayURL='';
  private relayKey=randomBytes(32).toString('hex');
- private requests=new Set<ReturnType<typeof upstreamIdle>>();
+ private requests=new Set<ReturnType<typeof upstreamRequest>>();
  private migration?:string;
  private migrationWarning?:string;
  warnings(){return this.migrationWarning?[this.migrationWarning]:[];}
@@ -107,7 +110,7 @@ export class ApiSources {
  /** Keep native API fields (including output limits) when no translation is needed. */
  async response(id:string,path:string,body:{model:string},signal:AbortSignal,headers:Record<string,string>={}){
   const s=this.assert(id,body.model);const model=s.models.find(m=>apiModelID(id,m)===body.model)!;
-  return fetch(`${this.relayURL}/${id}/v1/${path}`,{method:'POST',headers:{...headers,authorization:`Bearer ${this.relayKey}`,'content-type':'application/json',[nativeHeader]:'1'},body:JSON.stringify({...body,model}),signal,redirect:'error'});
+  return inferenceFetch(`${this.relayURL}/${id}/v1/${path}`,{method:'POST',headers:{...headers,authorization:`Bearer ${this.relayKey}`,'content-type':'application/json',[nativeHeader]:'1'},body:JSON.stringify({...body,model}),signal,redirect:'error'});
  }
  async save(input:z.input<typeof apiSourceInput>,id?:string){
   const value=parseApiSourceInput(input);const old=id?this.entries.find(s=>s.id===id):undefined;if(id&&!old)throw conflict('API 来源已变更，请刷新。');
@@ -142,7 +145,7 @@ export class ApiSources {
    throw failure('api_models_unavailable','无法连接模型列表接口，请检查网络和 API 地址后重试，或手动添加模型 ID。');
   }
  }
- private async boundedJSON(r:Response){let bytes=0;const chunks:Uint8Array[]=[];for await(const c of Readable.fromWeb(r.body as never)){bytes+=c.length;if(bytes>LIMIT)throw new Error('Response too large');chunks.push(c);}return JSON.parse(Buffer.concat(chunks).toString());}
+ private async boundedJSON(r:Response){let bytes=0;const chunks:Uint8Array[]=[];for await(const c of Readable.fromWeb(r.body as never)){bytes+=c.length;if(bytes>MODEL_LIST_BYTES)throw new Error('Response too large');chunks.push(c);}return JSON.parse(Buffer.concat(chunks).toString());}
  sidecarModelIDs(){return this.entries.filter(s=>s.enabled).flatMap(s=>s.models.map(model=>apiModelID(s.id,model)));}
  sidecarConfig(){
   const chat:unknown[]=[],responses:unknown[]=[],messages:unknown[]=[];
@@ -157,7 +160,7 @@ export class ApiSources {
  }
  private async listen(){
   this.server=createServer(async(req,res)=>{
-   const idle=upstreamIdle();this.requests.add(idle);res.once('close',()=>{idle.abort();this.requests.delete(idle);});
+   const idle=upstreamRequest();this.requests.add(idle);res.once('close',()=>{idle.abort();this.requests.delete(idle);});
    const fail=(status:number,message:string)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify({error:{message,type:'api_source_error'}}));};
    try{
     const token=req.headers.authorization?.replace(/^Bearer /,'')??(typeof req.headers['x-api-key']==='string'?req.headers['x-api-key']:'');
@@ -168,7 +171,7 @@ export class ApiSources {
     const match=/^\/([a-f0-9]{24})\/(?:v1\/)?(chat\/completions|responses(?:\/compact)?|messages(?:\/count_tokens)?)$/.exec(requestURL.pathname);
     const s=match&&this.entries.find(s=>s.id===match[1]);
     if(!s?.enabled||req.method!=='POST'){fail(503,'Source unavailable');return;}
-    let bytes=0;const chunks:Buffer[]=[];for await(const c of req){bytes+=c.length;if(bytes>LIMIT){fail(413,'Source request too large');return;}chunks.push(c);}
+    const chunks:Buffer[]=[];for await(const c of req)chunks.push(c);
     const body=JSON.parse(Buffer.concat(chunks).toString());if(!s.models.includes(body.model)){fail(403,'Source model mismatch');return;}
     const {protocol,baseURL}=apiModelRoute(s,body.model);
     // Chat streaming APIs commonly omit token usage unless explicitly requested.
@@ -184,17 +187,20 @@ export class ApiSources {
     const bodies=protocol==='messages'?[genericMessagesBody(body)]:protocol==='responses'&&req.headers[nativeHeader]!=='1'?genericResponsesBodies(body):[body];
     let r!:Response;
     for(const [index,attempt] of bodies.entries()){
-     r=idle.watch(await fetch(`${baseURL.replace(/\/$/,'')}/${match![2]}${protocol==='messages'?requestURL.search:''}`,{method:'POST',headers,body:JSON.stringify(attempt),redirect:'error',signal:idle.signal}));
+     r=idle.watch(await inferenceFetch(`${baseURL.replace(/\/$/,'')}/${match![2]}${protocol==='messages'?requestURL.search:''}`,{method:'POST',headers,body:JSON.stringify(attempt),redirect:'error',signal:idle.signal}));
      if(r.ok||r.status!==400||index===bodies.length-1)break;
      await r.body?.cancel();
     }
-    if(!r.ok){await r.body?.cancel();fail(r.status,'API source request failed');return;}
+    if(!r.ok){
+     const error=upstreamError(r.status,await readUpstreamError(r));
+     res.writeHead(r.status,{'content-type':'application/json'});res.end(JSON.stringify({error}));return;
+    }
     res.writeHead(r.status,{'content-type':r.headers.get('content-type')??'application/json','cache-control':'no-store'});
     if(!r.body){res.end();return;}
     const stream=Readable.fromWeb(((r.headers.get('content-type')??'').includes('text/event-stream')?safeSourceStream(r.body):r.body) as never);stream.once('error',()=>res.destroy());stream.pipe(res);
-   }catch{if(res.headersSent)res.destroy();else fail(502,'API source unavailable or timed out');}finally{if(res.writableEnded)idle.close();}
+   }catch{if(res.headersSent)res.destroy();else fail(502,'API source unavailable or timed out');}
   });
-  this.server.requestTimeout=30000;this.server.headersTimeout=15000;
+  this.server.requestTimeout=0;this.server.headersTimeout=15000;
   await new Promise<void>((ok,bad)=>{this.server!.once('error',bad);this.server!.listen(0,'127.0.0.1',ok);});
   this.relayURL=`http://127.0.0.1:${(this.server.address() as {port:number}).port}`;
  }

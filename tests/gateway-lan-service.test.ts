@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest';
-import {mkdtemp,mkdir,readFile,rm,writeFile} from 'node:fs/promises';
+import {mkdtemp,mkdir,readFile,rm,writeFile,realpath} from 'node:fs/promises';
 import {createServer} from 'node:net';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
@@ -13,7 +13,8 @@ async function freePort(){
  const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));return port;
 }
 async function setup(){
- const root=await mkdtemp(join(tmpdir(),'gateway-lan-'));cleanup.push(()=>rm(root,{recursive:true,force:true,maxRetries:3,retryDelay:50}));
+ const root=await realpath(await mkdtemp(join(tmpdir(),'gateway-lan-')));cleanup.push(()=>rm(root,{recursive:true,force:true,maxRetries:3,retryDelay:50}));
+ await writeFile(join(root,'gateway-access.json'),JSON.stringify({enabled:false,port:await freePort(),allowedIPs:[]}));
  await mkdir(join(root,'cliproxy'));
  await writeFile(join(root,'cliproxy','fixture-accounts.json'),JSON.stringify([{name:'codex.json',provider:'codex',status:'active',models:['first','second']}]));
  const store=await GatewayKeys.open(root);
@@ -32,7 +33,7 @@ async function setup(){
 }
 it('offers an opt-in API-only LAN entrance while keeping local management and old keys local',async()=>{
  const {service,admin,save,create,internal}=await setup();
- expect((await service.app.inject({url:'/api/gateway/access',headers:admin})).json()).toMatchObject({enabled:false,running:false,port:9555});
+ expect((await service.app.inject({url:'/api/gateway/access',headers:admin})).json()).toMatchObject({enabled:false,running:false});
  const local=await create('local'),lan=await create('lan');const port=await freePort();
  const enabled=await save({enabled:true,port,allowedIPs:[]});expect(enabled.statusCode,enabled.body).toBe(200);expect(enabled.json().running).toBe(true);
  expect(service.access.app.server.address()).toMatchObject({address:'0.0.0.0',port});
@@ -65,7 +66,8 @@ it('shares protocol scopes, streaming, usage and immediate access revocation acr
  const renamed=await service.app.inject({method:'PUT',url:`/api/gateway-keys/${key.id}`,headers:admin,payload:{name:'Renamed',models:key.models}});expect(renamed.json().access).toBe('lan');
  const sourceId=service.proxy.snapshot().accounts[0].id;
  const changed=await service.app.inject({method:'PUT',url:`/api/gateway-keys/${key.id}/models`,headers:admin,payload:{access:'local',selections:[{sourceId,model:'codex/first'}]}});expect(changed.statusCode,changed.body).toBe(200);
- expect((await fetch(`${origin}/v1/models`,{headers})).status).toBe(401);
+ expect(service.access.snapshot()).toMatchObject({enabled:false,running:false});
+ await expect(fetch(`${origin}/v1/models`,{headers})).rejects.toThrow();
  expect((await service.app.inject({url:'/v1/models',headers:{...headers,host:admin.host}})).statusCode).toBe(200);
  expect(await readFile(join(root,'gateway-keys.json'),'utf8')).not.toContain(apiKey);
 });
@@ -74,8 +76,25 @@ it('lets legacy exported keys opt into LAN when their model permissions are expl
  const result=await service.app.inject({method:'PUT',url:`/api/gateway-keys/${legacy.key.id}/models`,headers:admin,payload:{access:'lan',selections:[{model:'codex/first',sourceId:service.proxy.snapshot().accounts[0].id}]}});
  expect(result.statusCode,result.body).toBe(200);expect(result.json()).toMatchObject({access:'lan',exported:true});
 });
+it('keeps old IP restrictions on their keys without silently restricting newly created LAN keys',async()=>{
+ const {service,admin,save,create}=await setup();const existing=await create('lan');
+ const port=service.access.snapshot().port;
+ await save({enabled:true,port,allowedIPs:['192.0.2.10']});
+ const renamed=await service.app.inject({method:'PUT',url:`/api/gateway-keys/${existing.key.id}`,headers:admin,payload:{name:'Existing device',models:['codex/first']}});
+ expect(renamed.statusCode,renamed.body).toBe(200);
+ const created=await service.app.inject({method:'POST',url:'/api/gateway-keys',headers:admin,payload:{name:'New device',access:'lan',allowedIPs:[],models:['codex/first']}});
+ expect(created.statusCode,created.body).toBe(200);
+ const origin=`http://127.0.0.1:${port}`;
+ const fresh=await fetch(`${origin}/v1/models`,{headers:{authorization:`Bearer ${created.json().apiKey}`}});
+ expect(fresh.status).toBe(200);await fresh.text();
+ const restricted=await fetch(`${origin}/v1/models`,{headers:{authorization:`Bearer ${existing.apiKey}`}});
+ expect(restricted.status).toBe(403);await restricted.text();
+ const keys=(await service.app.inject({url:'/api/gateway-keys',headers:admin})).json().keys;
+ expect(keys.find((key:{id:string})=>key.id===existing.key.id).allowedIPs).toEqual(['192.0.2.10']);
+ expect(service.access.snapshot().allowedIPs).toEqual([]);
+});
 it('restores an enabled listener when the desktop starts and closes it with the local service',async()=>{
- const {service,options,save}=await setup();const port=await freePort();
+ const {service,options,save,create}=await setup();const port=await freePort();await create('lan');
  expect((await save({enabled:true,port,allowedIPs:[]})).statusCode).toBe(200);
  await service.app.close();expect(service.access.app.server.listening).toBe(false);
  const restarted=await createDesktopService(options);cleanup.push(()=>restarted.app.close());
@@ -84,6 +103,14 @@ it('restores an enabled listener when the desktop starts and closes it with the 
  expect(restarted.access.snapshot()).toMatchObject({enabled:true,running:true,port});
  expect((await fetch(`http://127.0.0.1:${port}/v1/models`)).status).toBe(401);
  await restarted.app.close();expect(restarted.access.app.server.listening).toBe(false);
+});
+it('keeps LAN closed on startup when old access settings remain but no enabled LAN keys exist',async()=>{
+ const {service,options,save}=await setup();const port=await freePort();
+ expect((await save({enabled:true,port,allowedIPs:[]})).statusCode).toBe(200);
+ await service.app.close();
+ const restarted=await createDesktopService(options);cleanup.push(()=>restarted.app.close());
+ await restarted.app.listen({host:'127.0.0.1',port:0});
+ expect(restarted.access.snapshot()).toMatchObject({enabled:false,running:false});
 });
 it('settles interrupted LAN generations when the entrance is disabled without blocking local calls',async()=>{
  const {root,service,save,create}=await setup();const {apiKey}=await create('lan'),port=await freePort();

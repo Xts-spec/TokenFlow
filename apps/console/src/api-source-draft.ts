@@ -1,4 +1,5 @@
-import { apiModelRoute, isLocalHttpHost, type RoutedApiSource } from '../../shared/api-endpoint';
+import {allowsHttpAPI} from '../../shared/api-url-policy';
+import { apiModelRoute, type RoutedApiSource } from '../../shared/api-endpoint';
 // An API source needs three things from the user. The protocol is found by the server.
 export const protocolNames={responses:'Responses',chat:'Chat Completions',messages:'Anthropic Messages'} as const;
 export type SourceDraft={name:string;baseURL:string;apiKey:string;model:string};
@@ -15,7 +16,7 @@ export function validateDraft(draft:SourceDraft,editing:boolean):DraftErrors{
  try{
   const url=new URL(draft.baseURL.trim());
   if(url.username||url.password||url.search||url.hash)errors.baseURL='地址中不能包含账号、密码、参数或 #。';
-  else if(url.protocol!=='https:'&&!(url.protocol==='http:'&&isLocalHttpHost(url.hostname)))errors.baseURL='请使用 HTTPS 地址（本机或局域网地址可用 HTTP）。';
+  else if(url.protocol!=='https:'&&!(url.protocol==='http:'&&allowsHttpAPI(url.hostname)))errors.baseURL='请使用 HTTPS 地址（本机和局域网 IP 可用 HTTP）。';
  }catch{errors.baseURL='请输入完整地址，例如 https://api.example.com/v1';}
  const key=draft.apiKey.trim();
  if(!key){if(!editing)errors.apiKey='请填写 API Key。';}

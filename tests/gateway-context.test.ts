@@ -24,7 +24,7 @@ const longInput=[
 it('reports Qoder resource limits from summary calls without changing history or hiding them as generic failures',async()=>{
  const {context}=await setup();const input=structuredClone(longInput);
  const failure=await context.response('responses/compact',{model:'qoder/dfmodel',input},'a','s',async()=>Response.json({error:{code:'qoder_resource_limit',message:'PRIVATE_UPSTREAM_BODY'}},{status:429})).catch(error=>error);
- expect(failure).toMatchObject({statusCode:422,code:'compaction_upstream_failed'});
+ expect(failure).toMatchObject({statusCode:429,code:'compaction_upstream_failed'});
  expect(failure.message).toContain('资源限流');expect(failure.message).not.toContain('PRIVATE');expect(input).toEqual(longInput);
 });
 it.each(['flat','nested','failed'])('reports Qoder summary %s SSE errors safely without persisting failed summaries',async shape=>{
@@ -32,7 +32,7 @@ it.each(['flat','nested','failed'])('reports Qoder summary %s SSE errors safely 
  const error={code:'qoder_resource_limit',message:'PRIVATE_UPSTREAM_BODY',type:'rate_limit_error'};
  const event=shape==='flat'?{...error,type:'error'}:shape==='nested'?{type:'error',error}:{type:'response.failed',response:{status:'failed',output:[],error}};
  const failure=await context.response('responses/compact',{model:'qoder/dfmodel',input},'a','s',async()=>new Response('data: '+JSON.stringify(event)+'\n\n',{headers:{'content-type':'text/event-stream'}}),undefined,{onCompaction:value=>{report=value;}}).catch(error=>error);
- expect(failure).toMatchObject({statusCode:422,code:'compaction_upstream_failed',unmetered:true});
+ expect(failure).toMatchObject({statusCode:429,code:'compaction_upstream_failed',unmetered:true});
  expect(failure.message).toContain('资源限流');expect(failure.message).not.toContain('PRIVATE');expect(input).toEqual(longInput);
  expect(report).toMatchObject({failed:true,unmetered:true});
  expect((await readdir(join(root,'gateway-context'))).filter(name=>name.startsWith('summary-'))).toEqual([]);
@@ -51,15 +51,15 @@ it.each(['qoder/model','workbuddy/model'])('compacts %s with the same model and 
  const compact=await context.response('responses/compact',{model,input:longInput},'key-a','account-a',send);
  const result=await compact.json();expect(result.object).toBe('response.compaction');expect(result.usage).toEqual(usage);
  expect(requests[0]).toMatchObject({model,stream:true,store:false});expect(requests[0]).not.toHaveProperty('tools');
- expect(result.output.filter((item:{role?:string})=>item.role==='user')).toHaveLength(3);
+ expect(result.output.filter((item:{role?:string})=>item.role==='user')).toHaveLength(2);
  expect(result.output.at(-1)).toMatchObject({type:'compaction'});expect(result.output.at(-1).encrypted_content).not.toContain('main.ts');
  expect(longInput).toEqual(original);
  const restarted=await GatewayContext.open(root);
  await restarted.response('responses',{model,input:[...result.output,{type:'function_call_output',call_id:'pending',output:'ready'}],store:false},'key-a','account-a',send);
  const forwarded=requests[1]!.input as Record<string,unknown>[];
- expect(forwarded).toContainEqual(original[0]);expect(forwarded).toContainEqual(original[1]);
+ expect(forwarded).toContainEqual(original[0]);expect(forwarded).not.toContainEqual(original[1]);
  expect(forwarded.slice(-5)).toEqual([...original.slice(5),{type:'function_call_output',call_id:'pending',output:'ready'}]);
- expect(forwarded.filter(item=>item.role==='user')).toHaveLength(3);
+ expect(forwarded.filter(item=>item.role==='user')).toHaveLength(2);
  expect(JSON.stringify(forwarded)).not.toContain('historical file content');
  expect((await readdir(join(root,'gateway-context'))).filter(name=>!name.startsWith('summary-'))).toEqual(['key']);
 });
@@ -86,9 +86,9 @@ it('rejects tampered or cross-key compaction tokens without upstream calls',asyn
   await expect(context.response('responses',{model:'qoder/m',input},owner,'s',async()=>{throw new Error('must not invoke upstream');})).rejects.toThrow(/Context is invalid/);
  }
 });
-it('does not turn incomplete, empty, tool-calling or non-reducing summaries into success',async()=>{
+it('does not turn incomplete, empty or tool-calling summaries into success',async()=>{
  const {context}=await setup();
- for(const result of [answer('partial','incomplete'),answer(''),answer('x'.repeat(20000)),{...answer(),output:[{type:'function_call',name:'write',call_id:'bad',arguments:'{}'}]}]){
+ for(const result of [answer('partial','incomplete'),answer(''),{...answer(),output:[{type:'function_call',name:'write',call_id:'bad',arguments:'{}'}]}]){
   const input=structuredClone(longInput);
   await expect(context.response('responses/compact',{model:'workbuddy/m',input},'a','s',async()=>Response.json(result))).rejects.toThrow(/original history is unchanged/);
   expect(input).toEqual(longInput);
@@ -122,17 +122,17 @@ it('compacts a long single-user agent loop without splitting tool pairs or losin
  for(const item of resumed.filter(item=>item.type==='function_call_output'))expect(resumed.some(call=>call.type==='function_call'&&call.call_id===item.call_id)).toBe(true);
 });
 it.each([false,true])('supports automatic compaction with stream=%s and bills both model calls',async stream=>{
- const {context}=await setup();const sent:Record<string,unknown>[]=[];
+ const {context}=await setup();const sent:Record<string,unknown>[]=[];let billed:unknown;
  const response=await context.response('responses',{model:'qoder/m',input:longInput,store:false,stream,context_management:[{type:'compaction',compact_threshold:100}]},'a','s',async(_p,body)=>{
   sent.push(body);
   if(sent.length===1||!stream)return Response.json(answer('Checkpoint: tests passed. Continue inspection.'));
   const events=[{type:'response.created',response:{...answer(),status:'in_progress',output:[]}},{type:'response.output_item.added',output_index:0,item:{id:'msg',...answer().output[0]}},{type:'response.output_text.delta',output_index:0,content_index:0,delta:'done'},{type:'response.output_item.done',output_index:0,item:{id:'msg',...answer().output[0]}},{type:'response.completed',response:answer()}];
   return new Response(events.map(event=>'event: '+event.type+'\ndata: '+JSON.stringify(event)+'\n\n').join(''),{headers:{'content-type':'text/event-stream'}});
- });
+ },undefined,{onBillingUsage:value=>{billed=value;}});
  let result;
  if(stream){const events=(await response.text()).split('\n').filter(line=>line.startsWith('data:')).map(line=>JSON.parse(line.slice(5)));expect(events.map(e=>e.sequence_number)).toEqual(events.map((_,i)=>i));expect(events.filter(e=>e.type==='response.output_item.added').map(e=>[e.output_index,e.item.type])).toEqual([[0,'compaction'],[1,'message']]);result=events.at(-1).response;}
  else result=await response.json();
- expect(sent).toHaveLength(2);expect(sent[1]).not.toHaveProperty('context_management');expect(result.usage).toMatchObject({input_tokens:60,output_tokens:20,total_tokens:80});expect(result.output[0].type).toBe('compaction');
+ expect(sent).toHaveLength(2);expect(sent[1]).not.toHaveProperty('context_management');expect(result.usage).toMatchObject({input_tokens:30,output_tokens:10,total_tokens:40});expect(billed).toMatchObject({input_tokens:60,output_tokens:20,total_tokens:80});expect(result.output[0].type).toBe('compaction');
  let resumed:unknown;
  await context.response('responses',{model:'qoder/m',store:false,input:[...longInput,...result.output,{type:'function_call_output',call_id:'pending',output:'okay'}]},'a','s',async(_p,body)=>{resumed=body.input;return Response.json(answer());});
  expect(JSON.stringify(resumed)).not.toContain('historical file content');expect(JSON.stringify(resumed)).toContain('okay');
@@ -184,10 +184,10 @@ it.each([20,100])('compacts a single tool loop with a %i KiB latest result witho
  const input:Record<string,unknown>[]=[{role:'developer',content:'Project rules '.repeat(10000)},{role:'user',content:'Continue the task, preserve my constraints.'}];
  for(let i=0;i<6;i++)input.push({type:'function_call',call_id:`call-${i}`,name:'read',arguments:'{}'},{type:'function_call_output',call_id:`call-${i}`,output:String(i).repeat(kib*1024)});
  const original=structuredClone(input);let forwarded:Record<string,unknown>[]=[];let summaries=0;
- const response=await context.response('responses',{model,input,tools:[{type:'function',name:'read',parameters:{type:'object'}}]},'a','s',async(_path,body)=>{
+ const response=await context.response('responses',{context_management:[{type:'compaction',compact_threshold:65536}],model,input,tools:[{type:'function',name:'read',parameters:{type:'object'}}]},'a','s',async(_path,body)=>{
   if(!body.tools){summaries++;expect(JSON.stringify(body.input)).not.toContain('Project rules');return Response.json(answer('Completed earlier reads; continue using the latest tool result.'));}
   forwarded=body.input as Record<string,unknown>[];return Response.json(answer());
- },{scope,recover:async()=>[]});
+ },{scope,threadId:'fixture-thread',recover:async()=>[]});
  expect(response.ok).toBe(true);expect(summaries).toBeGreaterThan(0);
  expect(forwarded).toContainEqual(original[0]);expect(forwarded).toContainEqual(original[1]);
  expect(forwarded.slice(-2)).toEqual(original.slice(-2));
@@ -197,4 +197,32 @@ it.each([20,100])('compacts a single tool loop with a %i KiB latest result witho
  const calls=new Set(forwarded.filter(item=>item.type==='function_call').map(item=>item.call_id));
  for(const item of forwarded.filter(item=>item.type==='function_call_output'))expect(calls.has(item.call_id)).toBe(true);
  expect(input).toEqual(original);
+});
+
+it.each(['flat','nested','failed'])('normalizes real context overflow %s SSE into the Codex terminal error without triggering compaction',async shape=>{
+ const {context}=await setup();let calls=0,compactions=0;
+ const error={code:'context_too_large',message:'Too large'};
+ const event=shape==='flat'?{type:'error',...error}:shape==='nested'?{type:'error',error}:{type:'response.failed',response:{error,status:'failed',usage}};
+ const response=await context.response('responses',{model:'codex/m',input:longInput},'a','s',async()=>{calls++;return new Response('event: error\ndata: '+JSON.stringify(event)+'\n\n',{headers:{'content-type':'text/event-stream'}});},{scope:{owner:'codex',source:'portable',model:'portable'},threadId:'thread',recover:async()=>[]},{onCompaction:()=>{compactions++;}});
+ const wire=await response.text(),result=JSON.parse(wire.split('\n').find(line=>line.startsWith('data:'))!.slice(5));
+ expect(wire).toContain('event: response.failed');expect(wire).not.toContain('incomplete_stream');
+ expect(result).toMatchObject({type:'response.failed',response:{status:'failed',error:{code:'context_length_exceeded'}}});
+ if(shape==='failed')expect(result.response.usage).toEqual(usage);
+ expect(calls).toBe(1);expect(compactions).toBe(0);
+});
+it('normalizes an HTTP context overflow but does not relabel unrelated payload or rate errors',async()=>{
+ const {context}=await setup();
+ for(const code of ['context_too_large','invalid_request','rate_limit_exceeded']){
+  const response=await context.response('responses',{model:'codex/m',input:'hello'},'a','s',async()=>Response.json({error:{code,message:'source message'}},{status:413}));
+  expect((await response.json()).error.code).toBe(code==='context_too_large'?'context_length_exceeded':code);
+  expect(response.status).toBe(code==='context_too_large'?400:413);
+ }
+});
+it('forwards long first and later managed histories without gateway-owned automatic compaction',async()=>{
+ const {context}=await setup();const input=[{role:'user',content:'Keep my task'},...Array.from({length:30},()=>({role:'assistant',content:'x'.repeat(40000)}))];let calls=0,compactions=0;
+ const migration={scope:{owner:'codex',source:'portable',model:'portable'},threadId:'thread',recover:async()=>input};
+ for(const history of [input,[{type:'compaction',encrypted_content:'foreign'}],input]){
+  await context.response('responses',{model:'codex/m',input:history,store:false},'a','s',async(_path,body)=>{calls++;expect(body.input).toEqual(input);expect(body.instructions).toBeUndefined();return Response.json(answer());},migration,{onCompaction:()=>{compactions++;}});
+ }
+ expect(calls).toBe(3);expect(compactions).toBe(0);
 });

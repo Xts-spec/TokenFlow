@@ -29,6 +29,21 @@ export async function macAppIdentity(path:string):Promise<AppIdentity|undefined>
   }catch{/* An unavailable or malformed bundle is not a verified restart target. */}
 }
 // Validate the bundle identity and main executable, not the app's display name.
+/** The IDE main process and its renderers must stop before SQLite login writes.
+ * Crash reporters may outlive the IDE; TokenFlow crypto workers are a different bundle. */
+export async function macQoderIdeProcesses(stdout:string,inspect=macAppIdentity){
+ const identities=new Map<string,Promise<AppIdentity|undefined>>();
+ const rows=stdout.split('\n').flatMap(line=>{const m=line.trim().match(/^(?:(\d+)\s+)?(\/.*?\.app)\/Contents\/(.+)$/);return m?[{pid:m[1]?Number(m[1]):0,path:m[2],relative:m[3]}]:[];});
+ const result=[];
+ for(const row of rows){
+  if(/(?:crashpad|crash_reporter)/i.test(row.relative))continue;
+  let identity=identities.get(row.path);if(!identity){identity=inspect(row.path);identities.set(row.path,identity);}
+  const app=await identity;if(app?.bundle!=='com.qoder.ide')continue;
+  const main=row.relative===`MacOS/${app.executable}`;
+  if(main||/^Frameworks\/.+\.app\/Contents\/MacOS\/[^/]+$/.test(row.relative))result.push({...row,main});
+ }
+ return result;
+}
 
 export class AgentLifecycle {
   private busy=false;
@@ -38,9 +53,14 @@ export class AgentLifecycle {
   private identities=new Map<string,Promise<AppIdentity|undefined>>();
   constructor(private run:Run=(file,args)=>exec(file,args,{timeout:file==='/usr/bin/open'?5000:15000,maxBuffer:1024*1024,windowsHide:true}),private platform=process.platform,private wait:()=>Promise<unknown>=()=>delay(250),private inspectApp=macAppIdentity){}
   private identity(path:string){let result=this.identities.get(path);if(!result){result=this.inspectApp(path);this.identities.set(path,result);}return result;}
-  private async running(){
+  private async running(includeIdeHelpers=false){
     const {stdout}=await this.run('/bin/ps',['-axo','comm=']);
     const paths=new Set<string>();
+    if(this.target==='qoder-ide'&&includeIdeHelpers){
+      const processes=await macQoderIdeProcesses(stdout,p=>this.identity(p));
+      for(const process of processes)if(!this.macPath||process.path===this.macPath)paths.add(process.path);
+      return paths.size>0;
+    }
     for(const line of stdout.split('\n')){
       const match=line.trim().match(/^(\/.*\.app)\/Contents\/MacOS\/([^/]+)$/);if(!match)continue;
       if(this.macPath&&match[1]!==this.macPath)continue;
@@ -52,7 +72,7 @@ export class AgentLifecycle {
     return paths.size>0;
   }
   private async until(running:boolean){
-    for(let i=0;i<40;i++){if(await this.running()===running)return;await this.wait();}
+    for(let i=0;i<40;i++){if(await this.running(!running)===running)return;await this.wait();}
     throw failure(running?`${this.app.name} 启动尚未确认，请手动打开后检查模型列表。`:`${this.app.name} 尚未退出，请处理它的保存或退出提示后重试。未强制结束进程。`);
   }
   private async quit(){
@@ -91,6 +111,7 @@ export class AgentLifecycle {
         if(verified.length!==1)throw failure('无法唯一确认客户端安装位置，请手动打开目标应用后重试。');
         this.macPath=verified[0];
       }
+      if(target==='qoder-ide')await this.until(false);
       await this.checkIdeProfile();
       await work();
       // LaunchServices can still consider the old app terminating after its process exits.

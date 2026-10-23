@@ -8,7 +8,7 @@ import YAML from 'yaml';
 import {GatewayContext} from '../packages/core/src/gateway-context.js';
 import {CodexContext,codexContextScope,portableCodexItem} from '../packages/core/src/codex-context.js';
 import {readSummaryResponse,summaryTranscript} from '../packages/core/src/context-summary.js';
-import {upstreamIdle} from '../packages/core/src/upstream-idle.js';
+import {upstreamRequest,inferenceFetch} from '../packages/core/src/upstream-request.js';
 import {CursorProvider} from '../packages/core/src/cursor.js';
 const flag=(name:string)=>process.argv.find(s=>s.startsWith('--'+name+'='))?.slice(name.length+3);
 const rollout=flag('rollout');if(!rollout)throw Error('Provide --rollout=/absolute/path/to/rollout.jsonl');
@@ -16,7 +16,7 @@ const live=process.argv.includes('--live'),model=flag('model')??'qoder/dfmodel';
 const maxCalls=Number(flag('max-calls')??(live?'12':'32'));
 if(!Number.isSafeInteger(maxCalls)||maxCalls<1||maxCalls>33)throw Error('Provide --max-calls as an integer from 1 to 33 (including the final answer).');
 const root=await mkdtemp(join(await realpath(tmpdir()),'tokenflow-long-replay-'));let calls=0;
-const idle=upstreamIdle();
+const idle=upstreamRequest();
 let cursor:CursorProvider|undefined;let cursorSource:string|undefined;
 const started=Date.now(),requests:unknown[]=[];
 const scrub=(text:string)=>text.replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi,'Bearer [REDACTED]').replace(/\b(?:sk-|tfl_)[A-Za-z0-9_-]{12,}/g,'[REDACTED]').replace(/((?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|authorization)["']?\s*[=:]\s*["']?)[^\s"',;}]+/gi,'$1[REDACTED]');
@@ -58,7 +58,7 @@ try{
   console.log(JSON.stringify({call:calls,summary,bytes,live}));
   if(!live)return Response.json({status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'Checkpoint: preserve task constraints and original files; verify outstanding work before merging.'}]}],usage:{input_tokens:100,output_tokens:20}});
   if(cursor)return idle.watch(await cursor.response('responses',body,idle.signal,cursorSource));
-  return idle.watch(await fetch(endpoint,{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify(body),signal:idle.signal}));
+  return idle.watch(await inferenceFetch(endpoint,{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify(body),signal:idle.signal}));
  };
  let report:unknown;
  const response=await context.response('responses',{model,input,store:false,stream:true,max_output_tokens:512},'replay-only','selected-source',send,{scope:codexContextScope,normalize:portableCodexItem,recover:async item=>sanitize(await migration.recover(item,[]))},{onCompaction:r=>{report=r;console.log(JSON.stringify({compaction:r}));}});
@@ -67,4 +67,4 @@ try{
  if(result.status!=='completed'||!answer?.trim())throw Error('Replay did not produce a completed answer');
  if(hash!==createHash('sha256').update(await readFile(rollout)).digest('hex'))throw Error('Original rollout changed during replay');
  console.log(JSON.stringify({passed:true,live,model,historyWindow:firstCheckpoint?'first-official-checkpoint':'latest-window',originalRolloutUnchanged:true,rolloutBytes:(await stat(rollout)).size,calls,elapsedMs:Date.now()-started,report,usage:result.usage,answer:scrub(answer).slice(0,1500),requests}));
-}finally{idle.abort();idle.close();await cursor?.close();await rm(root,{recursive:true,force:true});}
+}finally{idle.abort();await cursor?.close();await rm(root,{recursive:true,force:true});}

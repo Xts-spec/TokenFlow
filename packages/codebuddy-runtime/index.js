@@ -44,29 +44,10 @@ function streamUsage(previous,next){
  return usage;
 }
 
-class SDKIdleError extends Error {
- constructor(retryable){super('SDK model stream made no progress for 60000ms');this.name='SDKIdleError';this.retryable=retryable;}
-}
-
 export async function runOfficialSDK(input){
- const started=Date.now();
- for(let attempt=0;;attempt++){
-  try{return await runSDKAttempt(input);}
-  catch(error){
-   // Only internal thinking may be discarded. Never replay visible text, any
-   // tool proposal, an upstream error, or caller cancellation. Cleanup of the
-   // previous CLI completes before another attempt uses the same input.
-   if(attempt||!(error instanceof SDKIdleError)||!error.retryable||input.signal.aborted)throw error;
-   input.onDiagnostic?.({event:'idle_retry',elapsedMs:Date.now()-started});
-  }
- }
-}
-
-async function runSDKAttempt(input){
  const started=Date.now();
  const diagnostic=(event,details={})=>input.onDiagnostic?.({event,elapsedMs:Date.now()-started,...details});
  if(input.signal.aborted){diagnostic('closed');throw new Error('SDK request cancelled');}
- let idleTimer,stalled=false,exposed=false;
  const calls=[];const names=new Map();const schemas=new Map();let accepting=true;
  const definitions=input.tools.map((t,i)=>{
   const name=`client_${i}`;names.set(`mcp__token_flow__${name}`,t);
@@ -75,7 +56,7 @@ async function runSDKAttempt(input){
    // These callbacks only propose client work. Reject additional proposals
    // before recording them when the caller requires sequential execution.
    if(!accepting||input.parallelToolCalls===false&&calls.length)return {isError:true,content:[{type:'text',text:'Only one client tool call is permitted this turn. This tool did not execute; wait for the client result before requesting it again.'}]};
-   exposed=true;calls.push({name:t.name,arguments:JSON.stringify(args),custom:t.custom});
+   calls.push({name:t.name,arguments:JSON.stringify(args),custom:t.custom});
    // Never execute caller tools here. maxTurns=1 is a fallback limit;
    // the actual tool result arrives in the caller's next request.
    return {content:[{type:'text',text:'Deferred to the client. The tool has not executed yet.'}]};
@@ -92,10 +73,6 @@ async function runSDKAttempt(input){
  Object.assign(env,{ACC_PRODUCT_CONFIG_V3:JSON.stringify({endpoint:input.endpoint??(input.region==='china'?'https://copilot.tencent.com':'https://www.codebuddy.ai')}),CODEBUDDY_AUTH_TOKEN:input.token,CODEBUDDY_INTERNET_ENVIRONMENT:input.region==='china'?'internal':'public',CODEBUDDY_CONFIG_DIR:input.configDir,SERVER__PORT:'0',SERVER__HOST:'127.0.0.1',...(process.versions.electron?{ELECTRON_RUN_AS_NODE:'1'}:{})});
  let q,child;
  const abortController=new AbortController();const cancel=()=>{abortController.abort();child??=q?.transport?.process;q?.transport?.close();};input.signal.addEventListener('abort',cancel,{once:true});if(input.signal.aborted)cancel();
- // Model events, not CLI status/keepalive traffic, reset this watchdog.
- // SDK 0.3.276 otherwise allows 20 minutes of stream silence, beyond the
- // gateway's unchanged 240-second total budget (including this retry).
- const progress=()=>{clearTimeout(idleTimer);idleTimer=setTimeout(()=>{stalled=true;diagnostic('model_idle',{toolCalls:calls.length});cancel();},60000);idleTimer.unref?.();};
  let text='',usage,result,actualModel=input.model;let streamed=false;let streamModel;let partial='';const blockTypes=new Map(),toolBlocks=new Map();let turnUsage={},handedOff=false,turnTruncated=false;
  const prompt=input.images?.length?(async function*(){yield {type:'user',session_id:'',parent_tool_use_id:null,message:{role:'user',content:[{type:'text',text:input.prompt},...input.images]}};})():input.prompt;
  try{
@@ -131,12 +108,9 @@ async function runSDKAttempt(input){
    if(message.type==='error')throw new Error(`SDK CLI error: ${typeof message.error==='string'?message.error:JSON.stringify(message.error??message)}`);
    if(message.type==='stream_event'){
     const event=message.event;
-    if(event.type==='message_start'&&!idleTimer)progress();
-    if(event.type==='content_block_delta'&&['text','thinking','partial_json'].some(key=>typeof event.delta?.[key]==='string'&&event.delta[key].length>0))progress();
     if(event.type==='message_start'){streamModel=event.message.model;partial='';blockTypes.clear();toolBlocks.clear();turnUsage=streamUsage({},event.message.usage);turnTruncated=false;}
     if(event.type==='content_block_start'){
      blockTypes.set(event.index,event.content_block.type);
-     if(event.content_block.type==='tool_use')exposed=true;
      if(event.content_block.type==='tool_use')toolBlocks.set(event.index,{name:event.content_block.name,input:event.content_block.input,json:'',complete:false});
     }
     if(event.type==='content_block_delta'&&event.delta.type==='input_json_delta'){
@@ -165,7 +139,7 @@ async function runSDKAttempt(input){
     }
     if(event.type==='content_block_delta'&&event.delta.type==='text_delta'&&blockTypes.get(event.index)==='text'){
      if(input.model!=='auto'&&streamModel!==input.model)throw new Error('SDK streaming model mismatch');
-     const delta=event.delta.text;if(delta)exposed=true;partial+=delta;streamed=true;input.onText?.(delta);
+     const delta=event.delta.text;partial+=delta;streamed=true;input.onText?.(delta);
     }
    }
    if(message.type==='assistant'){
@@ -173,14 +147,12 @@ async function runSDKAttempt(input){
     const complete=message.message.content.filter(c=>c.type==='text').map(c=>c.text).join('');
     if(!message.message.content.some(c=>c.type==='text'))continue;
     if(partial&&complete!==partial)throw new Error(`SDK text stream mismatch: partial=${partial.length}, complete=${complete.length}, blocks=${message.message.content.map(c=>c.type).join(',')}`);
-    if(complete)exposed=true;
     if(!partial&&complete){if(input.model!=='auto'&&actualModel!==input.model)throw new Error('SDK model mismatch');input.onText?.(complete);}
     text+=complete;partial='';
    }
    if(message.type==='result'){result=message;usage=message.usage??usage;if(!text&&message.result){text=message.result;if(!streamed)input.onText?.(text);}}
   }
   if(input.signal.aborted)throw new Error('SDK request cancelled');
-  if(stalled)throw new SDKIdleError(!exposed&&!calls.length);
   // A deferred tool call intentionally reaches the one-turn limit.
   const failed=!handedOff&&(!result||result.is_error&&!(calls.length&&reachedTurnLimit(result)));
   const errors=JSON.stringify(result?.errors??[]);
@@ -188,7 +160,6 @@ async function runSDKAttempt(input){
   if(failed)diagnostic('failure',result?failureDiagnostic(result,'result'):{origin:'result',reason:'missing_result'});
   return {text,calls,usage,model:actualModel,failed,errorCode};
  }catch(error){
-  if(stalled&&!input.signal.aborted)throw new SDKIdleError(!exposed&&!calls.length);
   const detail=String(error?.message??'');
   const failure=failureDiagnostic(error,error?.sdkCause?'stream':'exception');
   diagnostic('exception',{toolCalls:calls.length,kind:['ExecutionError','CLIStartupError','AbortError','Error'].includes(error?.name)?error.name:'other',subtype:['error_max_turns','error_during_execution'].includes(error?.subtype)?error.subtype:undefined,status:failure.status,category:/text stream mismatch/.test(detail)?'text_mismatch':/model mismatch/.test(detail)?'model_mismatch':/EOF|socket|ECONN|fetch failed/i.test(detail)?'transport':/timeout|timed out/i.test(detail)?'timeout':'other'});
@@ -200,7 +171,7 @@ async function runSDKAttempt(input){
   if(!errorCode||input.signal.aborted)throw error;
   return {text,calls:[],usage,model:actualModel,failed:true,errorCode};
  }finally{
-  clearTimeout(idleTimer);accepting=false;input.signal.removeEventListener('abort',cancel);child??=q?.transport?.process;
+  accepting=false;input.signal.removeEventListener('abort',cancel);child??=q?.transport?.process;
   // Iteration already closes the SDK transport. return() means interrupt in
   // SDK 0.3.276 and can wait for a control reply after shutdown.
   q?.transport?.close();

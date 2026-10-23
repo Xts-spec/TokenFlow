@@ -110,3 +110,7 @@ release*/
 
 # 复盘语料（本地分析用，不入库）
 analysis-corpus/
+
+# Local dynamic-poster experiments and browser verification
+/poster-lab/
+.playwright-cli/

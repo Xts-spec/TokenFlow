@@ -1,0 +1,59 @@
+{
+  "passed": true,
+  "scope": "installed Codex native-provider resume; saved gateway plaintext accepted by real authorized Luna through local credential bridge",
+  "liveOfficial": true,
+  "officialDurationMs": 4387,
+  "officialReplyPreservedEarliestMarker": true,
+  "localCompaction": false,
+  "longRecovery": true,
+  "repeatedGateway": true,
+  "originalCompactions": 1,
+  "migrationSummaryCalls": 7,
+  "migrated": 1,
+  "requests": 50,
+  "toolHistoryPreserved": true,
+  "summaryResumed": true,
+  "foreignReasoningRepaired": true,
+  "compactionProgress": [
+    {
+      "phase": 0,
+      "method": "item/started",
+      "itemType": "contextCompaction"
+    },
+    {
+      "phase": 0,
+      "method": "item/completed",
+      "itemType": "contextCompaction"
+    },
+    {
+      "phase": 1,
+      "method": "item/started",
+      "itemType": "contextCompaction"
+    },
+    {
+      "phase": 1,
+      "method": "item/completed",
+      "itemType": "contextCompaction"
+    },
+    {
+      "phase": 1,
+      "method": "item/started",
+      "itemType": "contextCompaction"
+    },
+    {
+      "phase": 1,
+      "method": "item/completed",
+      "itemType": "contextCompaction"
+    },
+    {
+      "phase": 1,
+      "method": "item/started",
+      "itemType": "contextCompaction"
+    },
+    {
+      "phase": 1,
+      "method": "item/completed",
+      "itemType": "contextCompaction"
+    }
+  ]
+}

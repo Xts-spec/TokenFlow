@@ -1,0 +1,40 @@
+{
+  "build": {
+    "version": "10.15.26.45",
+    "sourceCommit": "e6266fc",
+    "distFilesVerified": 40,
+    "appAsarSHA256": "bb0e6964ec0116c77964ab3a4f586b9cd62f2e9b35898705fe973194d3675be7",
+    "installed": false,
+    "installationDeferredReason": "Real full-history Luna compaction did not complete within the existing diagnostic 900 second timeout; production request total timeout remains 600 seconds.",
+    "packagedRuntimeCheckPassed": true,
+    "typecheckPassed": true,
+    "targetedTestsPassed": 400,
+    "installedVersionRetained": "10.15.26.44",
+    "installedHealth": "ok"
+  },
+  "runtime": {
+    "passed": true,
+    "electron": "40.10.6",
+    "platform": "darwin",
+    "arch": "arm64",
+    "checks": [
+      "no switch-time summary; current-thread lazy bootstrap and explicit later compaction",
+      "valid expanding summaries, immediate failed-summary retry and cached continuation",
+      "production dependencies",
+      "bundled licenses",
+      "Cursor native SDK",
+      "WorkBuddy SDK import",
+      "static UI",
+      "Responses gateway",
+      "Pi repair conversation",
+      "selected usage evidence",
+      "local usage worker",
+      "Claude native account attribution",
+      "existing Qoder and both WorkBuddy edition identities",
+      "Qoder IDE switch, restore and standalone isolation",
+      "automatic LAN listener, per-key source IPs and isolated model routes",
+      "Claude Desktop subagent roles and independent menu routes",
+      "Claude Desktop external gateway drift detection"
+    ]
+  }
+}

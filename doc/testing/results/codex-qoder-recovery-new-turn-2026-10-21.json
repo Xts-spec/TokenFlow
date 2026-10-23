@@ -1,0 +1,307 @@
+{
+  "passed": false,
+  "error": "Error: Turn timeout",
+  "phase": "initial-recovery",
+  "recovery": [
+    {
+      "phase": "initial-recovery",
+      "inputBytes": 12688807,
+      "outputBytes": 0,
+      "calls": 15,
+      "reused": 12,
+      "durationMs": 301112,
+      "inputTokens": 1522521,
+      "outputTokens": 18503,
+      "cachedTokens": 0,
+      "cacheWriteTokens": null,
+      "reasoningTokens": null,
+      "failed": true,
+      "unmetered": true
+    }
+  ],
+  "rounds": [],
+  "checkpoints": [],
+  "summaryCalls": 28,
+  "requests": [
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 41236,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 396250,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 396183,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 396249,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 396184,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 396183,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 396250,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 396184,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 396183,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 396250,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 262289,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 264395,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 264459,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 264397,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 264395,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 396250,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 264459,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 264397,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 264395,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 264394,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 264460,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 264397,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 264395,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 264394,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 175172,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 38941,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 23658,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 16042,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    }
+  ]
+}

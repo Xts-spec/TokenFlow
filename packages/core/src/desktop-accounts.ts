@@ -1,3 +1,4 @@
+import {nativeQoderCredential,verifyNativeQoder} from './qoder-credentials.js';
 import {workbuddyLoginDomain,workbuddyLoginTarget} from './workbuddy-region.js';
 import {readFile,writeFile,rename,rm,mkdir,open,lstat,rmdir,utimes} from 'node:fs/promises';
 import {dirname,basename,join,win32,posix} from 'node:path';
@@ -21,9 +22,6 @@ const snapshotSchema=z.object({data:z.string().max(3_000_000).nullable(),logout:
 const journalSchema=z.object({path:z.string().min(1),before:snapshotSchema,after:snapshotSchema,identity:z.object({accountId:z.string().min(1),email:z.string().optional(),displayName:z.string().optional(),domain:z.string().optional(),enterpriseId:z.string().optional()}),state:z.enum(['prepared','applied','restored']),createdAt:z.string()});
 type Journal=z.infer<typeof journalSchema>;
 export type DesktopAccountOptions={paths?:Partial<Record<DesktopProvider,string>>;crypto?:QoderCrypto;fetch?:typeof fetch;platform?:NodeJS.Platform};
-const qoderNativeStateSchema=z.object({token:z.string().min(1).max(30000),expiresAt:z.string().min(1).max(60),user:z.object({id:z.union([z.string().min(1),z.number()]),email:z.string().max(200).optional()}).optional()}).passthrough();
-const qoderGatewayCredentialSchema=z.object({access_token:z.string().min(1).max(30000),uid:z.union([z.string().min(1),z.number()]).transform(String),expired:z.string().refine(v=>Number.isFinite(Date.parse(v))&&Date.parse(v)>Date.now()+60000),email:z.string().max(200).optional()});
-export type QoderGatewayCredential=z.infer<typeof qoderGatewayCredentialSchema>;
 export function desktopLoginPaths(platform:NodeJS.Platform=process.platform,home=homedir(),env:NodeJS.ProcessEnv=process.env){
  const p=platform==='win32'?win32:posix;
  const base=platform==='win32'?(env.APPDATA||p.join(home,'AppData','Roaming')):platform==='darwin'?p.join(home,'Library','Application Support'):(env.XDG_CONFIG_HOME||p.join(home,'.config'));
@@ -60,9 +58,28 @@ export class DesktopAccounts {
    if(this.provider!=='qoder'){const s=json(state.data);if(!s.account?.uid)return null;const text=(v:unknown)=>typeof v==='string'&&v.trim()?v.trim():undefined;return {accountId:String(s.account.uid),displayName:text(s.account.nickname)??text(s.account.displayName),email:text(s.account.email),domain:workbuddyLoginDomain(s.auth?.domain),enterpriseId:s.account.enterpriseId??''};}
    if(!decrypt||!this.options.crypto)return null;
    const s=JSON.parse(await this.options.crypto('decrypt',state.data));
-   if(s.schemaVersion!==1||!s.user?.id)throw Error();
+   if(s.schemaVersion!==1)throw Error();
+   if(!s.user?.id){if(!s.user&&!s.token&&!s.refreshToken)return null;throw Error();}
    return {accountId:String(s.user.id),email:typeof s.user.email==='string'?s.user.email:undefined,displayName:typeof s.user.name==='string'?s.user.name:undefined};
   }catch{if(decrypt)throw conflict('无法确认客户端现有登录，未覆盖原文件。请检查客户端版本或系统钥匙串。');return null;}
+ }
+ async importCredential(){
+  if(this.provider!=='qoder'){
+   const state=await this.snapshot(await this.path());if(!state.data||state.logout!==null)throw conflict('未找到 WorkBuddy 本机登录，请先在对应客户端登录。');
+   let raw:any;try{raw=json(state.data);}catch{throw conflict('WorkBuddy 本机登录文件无法读取。');}
+   const identity=await this.identity(state),auth=raw.auth;
+   if(!identity||!auth||workbuddyLoginTarget(auth.domain)!==this.provider)throw conflict('WorkBuddy 本机账号身份或区域不完整，请在客户端确认登录。');
+   if(typeof auth.accessToken!=='string'||auth.refreshToken&&typeof auth.refreshToken!=='string')throw Object.assign(conflict('此版本 WorkBuddy 使用客户端专属加密，无法直接读取令牌；若账号池没有同一账号的可用授权，请在 TokenFlow 添加账号授权。'),{code:'NATIVE_PROTECTED'});
+   if(!auth.accessToken.trim())throw conflict('WorkBuddy 本机令牌为空，请在客户端确认登录。');
+   const expires=typeof auth.expiresAt==='number'?new Date(auth.expiresAt>1e11?auth.expiresAt:auth.expiresAt*1000):new Date(auth.expiresAt??NaN);
+   return {access_token:auth.accessToken,refresh_token:auth.refreshToken??'',uid:identity.accountId,email:identity.email??'',enterprise_id:identity.enterpriseId??'',domain:identity.domain,token_type:'Bearer',...(Number.isFinite(expires.getTime())?{expired:expires.toISOString()}:{})};
+  }
+  if(!this.options.crypto)throw conflict('请使用 TokenFlow 桌面版读取 Qoder 本机授权。');
+  if(process.env.QODER_PERSONAL_ACCESS_TOKEN||process.env.QODER_PRODUCT_CATALOG_PATH)throw conflict('检测到 Qoder 环境覆盖，请移除后再导入本机登录。');
+  const state=await this.snapshot(await this.path());if(!state.data)throw conflict('未找到 Qoder 本机登录。');
+  let value:Record<string,unknown>;try{value=JSON.parse(await this.options.crypto('decrypt',state.data));}catch{throw conflict('无法读取 Qoder 本机登录，请检查系统安全存储后重试。');}
+  if(value.schemaVersion!==1)throw conflict('Qoder 本机登录格式不受支持，请在账号授权页连接账号。');
+  return verifyNativeQoder(nativeQoderCredential(value),this.options.fetch);
  }
  private support(){
   if(!['darwin','win32'].includes(this.options.platform??process.platform))return '此系统暂不支持自动切换官方登录，请在客户端内登录。';
@@ -80,21 +97,6 @@ export class DesktopAccounts {
   if(!identity||this.provider!=='qoder'&&workbuddyLoginTarget(identity.domain)!==this.provider)return null;
   return {provider:this.provider,accountId:identity.accountId,email:identity.email??null,displayName:identity.displayName,...(identity.enterpriseId?{organizationId:identity.enterpriseId}:{})};
  }
- /** Exports the native grant for the gateway pool. The refresh token stays out:
-  * a gateway-side refresh would rotate it away from the official client. */
- async localCredential():Promise<QoderGatewayCredential>{
-  if(this.provider!=='qoder')throw conflict('该客户端暂不支持导入本机登录。');
-  const reason=this.support();if(reason)throw conflict(reason);
-  const state=await this.snapshot(await this.path());
-  if(!state.data||state.logout!==null)throw conflict('未检测到 Qoder 客户端登录，请先在官方客户端完成登录。');
-  if(!this.options.crypto)throw conflict('请使用 TokenFlow 桌面版导入 Qoder 登录。');
-  let native:z.infer<typeof qoderNativeStateSchema>;
-  try{native=qoderNativeStateSchema.parse(JSON.parse(await this.options.crypto('decrypt',state.data)));}
-  catch{throw conflict('无法读取 Qoder 本机登录，请检查系统安全存储。');}
-  const credential=qoderGatewayCredentialSchema.safeParse({access_token:native.token,uid:native.user?.id,expired:native.expiresAt,email:typeof native.user?.email==='string'?native.user.email:undefined});
-  if(!credential.success)throw conflict('Qoder 登录缺少令牌、账号或有效期，请先在官方客户端完成登录。');
-  return credential.data;
- }
  async status(refresh=false){const path=await this.path(),state=await this.snapshot(path),journal=await this.journal();
   let identity=await this.identity(state)??(journal&&journal.state!=='restored'&&journal.path===path&&digest(state)===digest(journal.after)?journal.identity:null),readError='';
   if(!identity&&state.data&&state.logout===null&&this.provider==='qoder'){
@@ -102,7 +104,7 @@ export class DesktopAccounts {
    else{const revision=digest(state);if(refresh||this.identityCache?.revision!==revision)this.identityCache={revision,value:this.identity(state,true)};
     try{identity=await this.identityCache.value;}catch{readError='现有登录暂不可读取，请检查客户端版本与系统安全存储后刷新。';}}
   }
-  if(!identity&&state.data&&state.logout===null&&!readError)readError='检测到登录文件，但暂时无法确认账号。';
+  if(!identity&&state.data&&state.logout===null&&!readError&&this.provider!=='qoder')readError='检测到登录文件，但暂时无法确认账号。';
   return {revision:digest(state),...identity,loginState:identity?'signed-in' as const:readError?'unreadable' as const:'signed-out' as const,readError,pids:await this.processes(),backup:journal&&journal.state!=='restored'?{state:journal.state,createdAt:journal.createdAt}:null,unavailableReason:this.support()};
  }
  private async request(url:string,token:string,headers:Record<string,string>={}){
@@ -135,6 +137,9 @@ export class DesktopAccounts {
   if(restore&&(!journal||journal.state==='restored'||journal.path!==path))throw conflict('没有可恢复的原登录备份。');
   if(journal&&journal.state!=='restored'){
    if(journal.path!==path)throw conflict('官方登录目录已变化，请保留原备份并检查安装版本。');
+   // A new explicit Qoder switch may replace any readable current login or logout.
+   // Restoring the original backup still requires ownership of the current state.
+   if(this.provider==='qoder'&&!restore){if(state.data)await this.identity(state,true);return;}
    if(!(restore&&(state.data===null||state.logout!==null))&&!(journal.state==='prepared'&&digest(state)===digest(journal.before))&&digest(state)!==digest(journal.after)&&!equalIdentity(await this.identity(state,true),journal.identity))throw conflict('客户端已登录其他账号或退出登录，未覆盖当前状态。请先在客户端恢复上次切换的账号。');
   }else if(this.provider==='qoder'&&state.data)await this.identity(state,true);
  }

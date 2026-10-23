@@ -26,18 +26,6 @@ it('resolves roaming, macOS and Linux XDG paths without assuming path separators
 it('identifies an existing Qoder login before any TokenFlow switch without writing a journal',async()=>{
  const f=await setup('qoder');expect(await f.manager.status()).toMatchObject({accountId:'original',email:'original@example.test',backup:null});expect(f.secrets.set).not.toHaveBeenCalled();expect(await readFile(f.path)).toEqual(f.original);
 });
-it('exports a Qoder local grant for the gateway without its refresh token',async()=>{
- const f=await setup('qoder');
- await writeFile(f.path,Buffer.from(await crypt('encrypt',JSON.stringify({schemaVersion:1,user:{id:'original',email:'original@example.test'},token:'native-pat',refreshToken:'native-refresh',expiresAt:'2035-01-01T00:00:00Z'})),'base64'));
- expect(await f.manager.localCredential()).toEqual({access_token:'native-pat',uid:'original',expired:'2035-01-01T00:00:00Z',email:'original@example.test'});
- const plain=new DesktopAccounts('qoder',f.secrets,async()=>[],{paths:{qoder:f.path},platform:'darwin'});
- await expect(plain.localCredential()).rejects.toThrow('TokenFlow 桌面版');
- const missing=new DesktopAccounts('qoder',f.secrets,async()=>[],{paths:{qoder:join(f.root,'absent.dat')},crypto:crypt,platform:'darwin'});
- await expect(missing.localCredential()).rejects.toThrow('未检测到 Qoder 客户端登录');
- await writeFile(f.path,Buffer.from(await crypt('encrypt',JSON.stringify({schemaVersion:1,user:{id:'original',email:'original@example.test'},token:'native-pat',expiresAt:'2020-01-01T00:00:00Z'})),'base64'));
- await expect(f.manager.localCredential()).rejects.toThrow('缺少令牌、账号或有效期');
- await expect(new DesktopAccounts('workbuddy',f.secrets,async()=>[],{paths:{workbuddy:f.path},crypto:crypt,platform:'darwin'}).localCredential()).rejects.toThrow('该客户端暂不支持导入本机登录');
-});
 it('observes desktop usage identities without backups, respects skipped decryption and isolates international logins',async()=>{
  const q=await setup('qoder'),blocked={get:vi.fn(async()=>{throw Error('Must not read backups');}),set:vi.fn(async()=>{})};
  const skipped=new DesktopAccounts('qoder',blocked,async()=>[],{paths:{qoder:q.path},platform:'darwin'});expect(await skipped.usageLogin()).toBeNull();expect(blocked.get).not.toHaveBeenCalled();expect(await q.manager.usageLogin()).toMatchObject({provider:'qoder',accountId:'original',email:'original@example.test'});
@@ -134,4 +122,23 @@ it('restores the original after WorkBuddy normalizes its domestic login endpoint
 it('passes a Qoder display name into usage attribution without requiring email',async()=>{
  const f=await setup('qoder');await writeFile(f.path,Buffer.from(await crypt('encrypt',JSON.stringify({schemaVersion:1,user:{id:'native-user',name:'Qoder User'}})),'base64'));
  expect(await f.manager.usageLogin()).toMatchObject({provider:'qoder',accountId:'native-user',email:null,displayName:'Qoder User'});
+});
+it.each(['workbuddy','workbuddy-ai'] as const)('imports %s native millisecond expiry from the configured path without writing',async provider=>{
+ const f=await setup(provider);const raw=JSON.stringify({account:{uid:'new',email:'native@example.test'},auth:{accessToken:'native-access',refreshToken:'native-refresh',expiresAt:Date.parse('2035-01-01T00:00:00Z'),domain:provider==='workbuddy-ai'?'www.workbuddy.ai':'www.codebuddy.cn'}});await writeFile(f.path,raw);
+ expect(await f.manager.importCredential()).toMatchObject({access_token:'native-access',refresh_token:'native-refresh',uid:'new',expired:'2035-01-01T00:00:00.000Z'});expect(await readFile(f.path,'utf8')).toBe(raw);
+});
+it('explains protected WorkBuddy credentials instead of importing ciphertext',async()=>{const f=await setup();await expect(f.manager.importCredential()).rejects.toThrow('加密');expect(await readFile(f.path)).toEqual(f.original);});
+
+it.each(['signed-out','other-account','signed-out-file'] as const)('directly switches Qoder from %s after an earlier switch while retaining the original backup',async state=>{
+ const f=await setup('qoder'),prepared=await f.manager.prepare(credentials());await f.manager.apply((await f.manager.status()).revision,prepared);
+ if(state==='signed-out')await rm(f.path);
+ else await writeFile(f.path,Buffer.from(await crypt('encrypt',JSON.stringify(state==='other-account'?{schemaVersion:1,user:{id:'external'},token:'external-token'}:{schemaVersion:1,user:null,token:null,refreshToken:null})),'base64'));
+ const status=await f.manager.status();if(state!=='other-account')expect(status.loginState).toBe('signed-out');
+ await f.manager.check(status.revision);await f.manager.apply(status.revision,prepared);expect(await f.manager.status()).toMatchObject({accountId:'new',backup:{state:'applied'}});
+ await f.manager.apply((await f.manager.status()).revision,null);expect(await readFile(f.path)).toEqual(f.original);
+});
+it('keeps explicit Qoder restore protected from replacing another external account',async()=>{
+ const f=await setup('qoder');await f.manager.apply((await f.manager.status()).revision,await f.manager.prepare(credentials()));
+ const external=Buffer.from(await crypt('encrypt',JSON.stringify({schemaVersion:1,user:{id:'external'},token:'external-token'})),'base64');await writeFile(f.path,external);
+ await expect(f.manager.apply((await f.manager.status()).revision,null)).rejects.toThrow('其他账号');expect(await readFile(f.path)).toEqual(external);
 });

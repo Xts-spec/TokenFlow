@@ -1,5 +1,6 @@
+import {ExpiredAccountNotice} from './ExpiredAccountNotice';
 import type {MaintenanceContext} from '../../../packages/core/src/maintenance-conversations';
-import {Thinking,LoadingSkeleton,LoadError} from './LoadingState';
+import {ThinkingFeedback,LoadingSkeleton,LoadError} from './LoadingState';
 import {SidebarDivider} from './SidebarDivider';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -28,6 +29,7 @@ import './kapian.css';
 import './graphite.css';
 import './refinement.css';
 import './page-layout.css';
+import './dialogs.css';
 
 type View='accounts'|'apis'|'agents'|'proxy'|'activity'|'usage'|'cleanup'|'settings';
 const empty:LocalAgentSnapshot={state:'stopped',loginState:'idle',port:8317,logs:[],accounts:[],models:[],accountError:undefined,lastError:undefined,quotas:{},quotaBusy:false,providers:[],login:undefined};
@@ -75,6 +77,10 @@ function App(){
   if(localError||!pending&&!local.accountsLoading&&!local.apiRoutesSyncing&&!local.quotaBusy&&!['starting','stopping'].includes(local.state))return;
   const timer=setTimeout(()=>void refresh().catch(()=>{}),1500);return()=>clearTimeout(timer);
  },[local,localError,refresh]);
+ // Read updated account state after a source failure. The backend refreshes only the affected source.
+ const observedSourceFailure=useRef('');
+ const sourceFailureId=overview.activity?.recent.find(call=>call.status===401||call.error?.code?.startsWith('source_'))?.id;
+ useEffect(()=>{if(!sourceFailureId||sourceFailureId===observedSourceFailure.current)return;observedSourceFailure.current=sourceFailureId;void refresh().catch(()=>{});},[sourceFailureId,refresh]);
  const previousLoginStatus=useRef<string|undefined>(undefined);
  const previousAccountsLoading=useRef(false);
  const accountIDs=local.accounts.map(account=>account.id).sort().join(',');
@@ -101,8 +107,8 @@ function App(){
  };
  const command=(action:string)=>act(()=>requestJSON<LocalAgentSnapshot>(`/api/local-agent/${action}`,post()));
  const accounts:AccountActions={
-  refresh:(provider,force=true)=>force
-   ?act(()=>requestJSON<LocalAgentSnapshot>(`/api/local-agent/providers/${provider}/refresh`,post(),300000),`${local.providers.find(item=>item.id===provider)?.label??provider} 账号、模型和额度已刷新。`)
+  refresh:(provider,force=true,accountId)=>force
+   ?act(()=>requestJSON<LocalAgentSnapshot>(accountId?`/api/local-agent/accounts/${accountId}/refresh`:`/api/local-agent/providers/${provider}/refresh`,post(),300000),`${accountId?local.accounts.find(item=>item.id===accountId)?.label??provider:local.providers.find(item=>item.id===provider)?.label??provider} 账号、模型和额度已刷新。`)
    :requestJSON<LocalAgentSnapshot>(`/api/local-agent/providers/${provider}/refresh`,post({force:false}),300000).then(()=>refresh()).catch(()=>{}),
   connect:provider=>command(provider),
   importLocal:provider=>act(()=>requestJSON<LocalAgentSnapshot>(`/api/local-agent/import-local/${provider}`,post()),'已导入本机账号。'),
@@ -128,8 +134,9 @@ function App(){
    <nav aria-label="更多" className="tfSideFoot">{secondary.map(navButton)}</nav>
   </aside>
   <SidebarDivider/>
+  <ExpiredAccountNotice local={local} disabled={busy||!localLoaded} onChanged={refresh}/>
   <main className="tfMain">
-   {busy&&<div className="tfOperationFeedback"><Thinking label="正在处理操作"/></div>}
+   <ThinkingFeedback busy={busy}/>
    <div className="tfRequestStatus">{view!=='agents'&&localError&&<LoadError message={localError} retry={()=>refresh().catch(()=>{})}/>}</div>
    {view==='agents'&&<AgentsPage local={local} calls={calls} usage={usage} notify={setNotice} onRepair={openRepair} onAgent={setSelectedAgent} localError={localError} reloadLocal={refresh}/>}
    {!localLoaded?(!localError&&view!=='agents'&&<div className="tfPage"><LoadingSkeleton label="正在加载账号与模型" variant={view==='usage'?'overview':'cards'}/></div>):<>

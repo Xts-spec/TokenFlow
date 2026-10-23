@@ -130,3 +130,11 @@ it('does not treat a leftover Claude profile as a signed-in client after OAuth i
  await writeFile(join(dir,'.credentials.json'),JSON.stringify({claudeAiOauth:{accessToken:'present'}}));expect(await manager.status()).toMatchObject({loginState:'signed-in'});
  await writeFile(join(dir,'.claude.json'),'{}');expect(await manager.status()).toMatchObject({loginState:'unreadable',readError:expect.stringContaining('缺少账号资料')});
 });
+
+it('imports native Antigravity protobuf credentials and project without modifying its database',async()=>{
+ const f=await antigravity(),before=await f.store.read();
+ const expected={...credential(),project_id:'enterprise-project',id_token:'fixture-id'};
+ await f.store.write(before,f.store.prepare(before,expected));const bytes=await readFile(f.path);
+ expect(await f.store.importCredential()).toEqual({access_token:expected.access_token,refresh_token:expected.refresh_token,email:expected.email,expired:new Date(expected.expired).toISOString(),project_id:expected.project_id,id_token:expected.id_token});
+ expect(await readFile(f.path)).toEqual(bytes);
+});

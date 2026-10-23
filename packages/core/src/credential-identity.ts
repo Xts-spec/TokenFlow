@@ -15,6 +15,7 @@ export function credentialIdentity(provider:string,raw:RecordValue,summary:Recor
  const uid=credentialSubject(raw);
  let person=email??uid,scope:unknown[]=[];
  switch(provider){
+  case 'qoder': person=uid??email;break;
   case 'codex': {
    const workspace=text(raw.account_id)??text(auth.chatgpt_account_id)??text(object(summary.id_token).chatgpt_account_id);
    person=email??text(auth.chatgpt_user_id)??text(id.sub);
@@ -33,12 +34,14 @@ export function credentialIdentity(provider:string,raw:RecordValue,summary:Recor
  return person?hash([provider,person,...scope]):undefined;
 }
 /** Exact grant fingerprint; avoids overwriting an independent OAuth or SDK authorization. */
-export function credentialFingerprint(raw:RecordValue){return hash([raw.apiKey??raw.api_key??raw.refresh_token??raw.access_token??raw.token??raw]);}
+export function credentialFingerprint(raw:RecordValue){return hash([raw.apiKey??raw.api_key??raw.oauth_access_token??raw.refresh_token??raw.access_token??raw.token??raw]);}
 const timestamp=(value:unknown)=>{if(typeof value==='number'&&Number.isFinite(value))return value<1e11?value*1000:value;if(typeof value==='string'){if(/^\d+$/.test(value))return timestamp(Number(value));const parsed=Date.parse(value);if(Number.isFinite(parsed))return parsed;}return 0;};
 export function credentialPreference(raw:RecordValue,modified?:unknown,now=Date.now()):[number,number,number]{
  const expiry=timestamp(raw.apiKeyExpiresAtMs??raw.expired??raw.expires_at??claims(raw.access_token).exp);
  const hasToken=!!(text(raw.apiKey)??text(raw.api_key)??text(raw.access_token)??text(raw.token));
- const availability=!hasToken?0:!expiry||expiry>now?2:text(raw.refresh_token)?1:0;
+ const refreshExpiry=timestamp(raw.refresh_expired_at);
+ const canRefresh=!!text(raw.refresh_token)&&(!refreshExpiry||refreshExpiry>now);
+ const availability=!hasToken?0:!expiry||expiry>now?2:canRefresh?1:0;
  const updated=timestamp(raw.authorizedAt??raw.last_refresh??raw.updated_at)||timestamp(claims(raw.access_token).iat)||timestamp(modified);
  return [availability,updated,expiry];
 }

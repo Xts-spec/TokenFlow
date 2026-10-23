@@ -1,0 +1,21 @@
+{
+  "checks": {
+    "contextAndTransportTests": 147,
+    "apiSourceTests": 51,
+    "lanServiceTests": 7,
+    "totalDistinctTests": 205,
+    "typecheckPassed": true
+  },
+  "nativeCodexSynthetic": {
+    "passed": true,
+    "live": false,
+    "remoteCompaction": true,
+    "historyBytes": 531716,
+    "clientCompactions": 1,
+    "summaryCalls": 3,
+    "earliestRequirementPreserved": true,
+    "turnStatus": "completed"
+  },
+  "installedVersion": "10.15.26.50",
+  "packagedRuntimeCheckPassed": true
+}

@@ -1,5 +1,5 @@
 import {expect,it} from 'vitest';
-import {credentialIdentity as identity,compareCredentials,credentialFingerprint,credentialSubject} from '../packages/core/src/credential-identity.js';
+import {credentialIdentity as identity,compareCredentials,credentialPreference,credentialFingerprint,credentialSubject} from '../packages/core/src/credential-identity.js';
 const jwt=(claims:unknown)=>`x.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.x`;
 it('normalizes email without collapsing Codex members, Claude organizations, WorkBuddy regions or enterprise identities',()=>{
  for(const provider of ['cursor','antigravity','kimi','xai','qoder'])expect(identity(provider,{email:' User@Example.test '})).toBe(identity(provider,{email:'user@example.test'}));
@@ -29,4 +29,13 @@ it('selects usable grants before expired grants, then uses refresh or authorizat
  expect(compareCredentials({raw:{...good,last_refresh:'2026-10-15'}},{raw:good})).toBeLessThan(0);
  expect(credentialFingerprint(good)).toBe(credentialFingerprint({...good,access_token:'refreshed-access'}));
  expect(credentialFingerprint(good)).not.toBe(credentialFingerprint({...good,refresh_token:'independent-authorization'}));
+});
+it('groups Qoder IDE and standalone grants by the verified UID even when only one has an email',()=>{
+ expect(identity('qoder',{uid:'same-user',email:'person@example.test'})).toBe(identity('qoder',{uid:'same-user'}));
+ expect(identity('qoder',{uid:'first-user',email:'shared@example.test'})).not.toBe(identity('qoder',{uid:'second-user',email:'shared@example.test'}));
+});
+it('does not select an expired Trae refresh grant over a new authorization',()=>{
+ const expired={access_token:'old',refresh_token:'old-refresh',expired:'2025-11-22T09:32:59Z',refresh_expired_at:'2026-05-07T09:32:59Z'};
+ expect(compareCredentials({raw:expired},{raw:{access_token:'new',expired:'2035-01-01'}})).toBeGreaterThan(0);
+ expect(credentialPreference(expired)[0]).toBe(0);
 });

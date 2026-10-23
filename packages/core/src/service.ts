@@ -1,3 +1,7 @@
+import {gatewayDecoding} from './gateway-decoding.js';
+import {compactionModelWindow} from './initial-compaction.js';
+import {codexWebSearch} from './codex-web-search.js';
+import {sourceFailure} from './source-failure.js';
 import {providerUsage} from './gateway-observation.js';
 import {CursorLocalLogin} from './cursor-local.js';
 import { apiModelRoute } from '../../../apps/shared/api-endpoint.js';
@@ -15,7 +19,7 @@ import {CodexThreadMigration} from './codex-thread-migration.js';
 import {PiTerminalLifecycle} from './pi-terminal-lifecycle.js';
 import {ClaudeTerminalLifecycle} from './claude-terminal-lifecycle.js';
 import {ClaudeDesktopConnections,type ClaudeDesktopOptions} from './claude-desktop.js';
-import {claudeDesktopModelLimit} from '../../../apps/shared/claude-desktop-models.js';
+import {claudeDesktopModelLimit,claudeBuiltInFamily} from '../../../apps/shared/claude-desktop-models.js';
 import {removeKnownGatewayHelpNotice} from './gateway-help-notice.js';
 import { LocalMaintenance } from './local-maintenance.js';
 import { ApiSources, parseApiSourceInput, apiModelID } from './api-sources.js';
@@ -23,7 +27,7 @@ import { detectProtocol, validateQuickSource, sourceNameFromURL, type ProtocolPr
 import { NativeAccounts, nativeCredentialSchema, nativeProviderSchema, type NativeProvider } from './native-accounts.js';
 import { ClaudeAccountStore, claudeSettingsState, type CredentialStore } from './claude-accounts.js';
 import { AntigravityAccountStore, antigravityDatabasePath } from './antigravity-accounts.js';
-import { upstreamIdle, UPSTREAM_IDLE_TIMEOUT_MS, UPSTREAM_TOTAL_TIMEOUT_MS } from './upstream-idle.js';
+import { upstreamRequest, finishUpstream, inferenceFetch } from './upstream-request.js';
 import { GatewayContext, GatewayContextError, type CompactionReport } from './gateway-context.js';
 import {CodexContext,codexContextScope,portableCodexItem} from './codex-context.js';
 import { CodexAccounts } from './codex-accounts.js';
@@ -95,7 +99,7 @@ export async function createDesktopService(options:ServiceOptions) {
     }
   }
   const apiSources=await ApiSources.open(root,options.secrets,config);
-  const proxy=new CLIProxyManager(root,options.binary,options.localKey,proxyPort,{outboundProxyURL:options.outboundProxyURL,networkSnapshot:options.networkSnapshot,openExternal:options.openExternal,secrets:options.secrets,apiConfig:()=>apiSources.sidecarConfig(),apiModelIDs:()=>apiSources.sidecarModelIDs()});
+  const proxy=new CLIProxyManager(root,options.binary,options.localKey,proxyPort,{cursorLocalPath:options.cursorLocalPath,outboundProxyURL:options.outboundProxyURL,networkSnapshot:options.networkSnapshot,openExternal:options.openExternal,secrets:options.secrets,apiConfig:()=>apiSources.sidecarConfig(),apiModelIDs:()=>apiSources.sidecarModelIDs()});
   const localSnapshot=async():Promise<LocalAgentSnapshot>=>{
     const sources=await apiSources.list();const local=proxy.snapshot();
     return {...local,accountsLoading:discovery.state==='loading'||proxy.isLoadingAccounts(),apiSources:sources,models:[...local.models,...sources.filter(s=>s.enabled&&s.hasKey).flatMap(s=>s.models.filter(model=>proxy.apiModelAvailable(apiModelID(s.id,model))).map(model=>({id:apiModelID(s.id,model),displayName:modelLabel([],apiModelID(s.id,model),sources),provider:'api' as const})))]};
@@ -103,6 +107,12 @@ export async function createDesktopService(options:ServiceOptions) {
   const resolveSource=(id:string,model:string,retryKnownModel=false)=>{
     if(apiSources.has(id)){if(proxy.snapshot().state!=='running')throw Object.assign(new Error('网关未启动'),{statusCode:409});apiSources.assert(id,model);if(!proxy.apiModelAvailable(model))throw new RunnerCoreError('API 模型路由暂不可用，请重新保存来源或重启网关。',{code:'api_model_unavailable',statusCode:409});return '';}
     return proxy.sourceAuth(id,model,retryKnownModel);
+  };
+  const failureRefreshes=new Map<string,number>();
+  const refreshFailedSource=(id:string)=>{
+    const account=proxy.snapshot().accounts.find(a=>a.id===id);
+    if(!account||account.disabled||account.authenticationRequired||!isLoginProvider(account.provider)||Date.now()-(failureRefreshes.get(id)??0)<60000)return;
+    failureRefreshes.set(id,Date.now());void proxy.refreshAccounts(account.provider,false).catch(()=>{});
   };
   // Saving a pinned selection does not require a successful live availability check.
   // Keep source ownership validation separate from execution-time authorization.
@@ -134,7 +144,7 @@ export async function createDesktopService(options:ServiceOptions) {
     };
   };
   const provider=async()=>new ResponsesProvider(config,await key(),undefined,config.kind==='cliproxy'?cursorFetch(config.model):undefined);
-  const app=createServer({allowedOrigins:[]});
+  const app=createServer({allowedOrigins:[]});gatewayDecoding(app);
   let mutationOwner:string|undefined;
   let selectionClearOwner:string|undefined;
   const maintenanceRequests=new Set<string>();
@@ -178,7 +188,7 @@ export async function createDesktopService(options:ServiceOptions) {
       if(localRun.active&&localRun.runs[0]?.kind==='upgrade'&&!['/api/maintenance/stop','/api/maintenance/local/stop'].includes(route))return reply.code(409).send({error:'升级正在执行，请等待完成后启动维修或修改权限。'});
     }
     const backgroundRefresh=route==='/api/local-agent/:action'&&['refresh','quota'].includes((req.params as {action:string}).action);
-    if(!backgroundRefresh&&((req.method==='PUT'&&(route==='/api/settings'||route==='/api/local-agent/gateway'||route==='/api/sources/:id'))||(req.method==='DELETE'&&(route==='/api/local-agent/accounts/:id'||route==='/api/sources/:id'||route==='/api/maintenance/selection'))||(req.method==='POST'&&['/api/maintenance/local/upgrade','/api/sources','/api/sources/quick','/api/sources/:id/models','/api/sources/:id/check','/api/native-accounts/:provider/switch','/api/native-accounts/:provider/restore','/api/codex-accounts/switch','/api/codex-accounts/restore','/api/claude-desktop/connect','/api/claude-desktop/restore','/api/claude-desktop/official','/api/claude-desktop/restart','/api/a2a/connect','/api/a2a/codex-migration/restore','/api/a2a/program','/api/a2a/restart','/api/a2a/restore','/api/a2a/delete','/api/a2a/import','/api/providers/probe','/api/local-agent/:action','/api/local-agent/login/:action','/api/local-agent/accounts/:id','/api/local-agent/import-local/:provider'].includes(route??'')))) {
+    if(!backgroundRefresh&&((req.method==='PUT'&&(route==='/api/settings'||route==='/api/local-agent/gateway'||route==='/api/sources/:id'))||(req.method==='DELETE'&&(route==='/api/local-agent/accounts/:id'||route==='/api/local-agent/accounts/:id/expired'||route==='/api/sources/:id'||route==='/api/maintenance/selection'))||(req.method==='POST'&&['/api/maintenance/local/upgrade','/api/sources','/api/sources/quick','/api/sources/:id/models','/api/sources/:id/check','/api/native-accounts/:provider/switch','/api/native-accounts/:provider/restore','/api/codex-accounts/switch','/api/codex-accounts/restore','/api/claude-desktop/connect','/api/claude-desktop/restore','/api/claude-desktop/official','/api/claude-desktop/restart','/api/a2a/connect','/api/a2a/codex-migration/restore','/api/a2a/program','/api/a2a/restart','/api/a2a/restore','/api/a2a/delete','/api/a2a/import','/api/providers/probe','/api/local-agent/:action','/api/local-agent/login/:action','/api/local-agent/accounts/:id','/api/local-agent/import-local/:provider'].includes(route??'')))) {
       if(localMaintenance.snapshot().active)return reply.code(409).send({error:'本地诊断或升级正在运行，请等待完成后修改配置。'});
       if(mutationOwner)return reply.code(409).send({code:'configuration_busy',error:'正在等待另一个启动或配置操作完成，尚未应用本次更改。'});
       mutationOwner=req.id;
@@ -202,6 +212,10 @@ export async function createDesktopService(options:ServiceOptions) {
     catch(error){throw new RunnerCoreError(error instanceof Error?error.message:'Local Agent 操作失败',{code:'local_agent_error',statusCode:400});}
   };
   const connections=new AgentConnections(root,options.agentPaths,options.agentProcesses);
+  const refreshCodexCatalog=async()=>{
+    const catalogRefresh=await connections.refreshCodexCompactionLimits(model=>compactionModelWindow(model,proxy.snapshot().models,connections.paths.codex));
+    if(catalogRefresh.failed)app.log.warn({failed:catalogRefresh.failed},'Some generated Codex compaction metadata could not be refreshed; model routing remains available.');
+  };
   const claudeDesktop=new ClaudeDesktopConnections(options.secrets,options.claudeDesktop);
   const claudeTerminal=new ClaudeTerminalLifecycle(undefined,undefined,undefined,{},dirname(connections.paths.claude));
   const switchJournal=new SwitchJournal(join(root,'switch-failures.json'));await switchJournal.load();
@@ -239,8 +253,8 @@ export async function createDesktopService(options:ServiceOptions) {
   const cursorNativeUsage=await CursorNativeUsage.open(root,()=>proxy.cursor.nativeUsageReaders());
   // A managed Agent uses the model selected here even if an existing conversation retains an older model ID.
   // Bind by saved connection key, never by its editable display name or by an arbitrary single-model key.
-  const fixedRoutes=new Map<string,{target:Target|'claude-desktop';sourceId:string;model:string;selections?:ModelSelection[];modelAliases?:Record<string,string>}>((await connections.status()).flatMap(t=>t.connection?.state==='applied'?[[t.connection.keyId,{target:t.id,sourceId:t.connection.sourceId,model:t.connection.model,selections:t.connection.selections,modelAliases:t.connection.modelAliases}] as const]:[]));
-  const desktopRoute=await claudeDesktop.route().catch(()=>null);if(desktopRoute?.keyId&&desktopRoute.selections[0])fixedRoutes.set(desktopRoute.keyId,{target:'claude-desktop',...desktopRoute.selections[0],selections:desktopRoute.selections,modelAliases:desktopRoute.modelAliases});
+  const fixedRoutes=new Map<string,{target:Target|'claude-desktop';sourceId:string;model:string;fastModel?:string;selections?:ModelSelection[];modelAliases?:Record<string,string>}>((await connections.status()).flatMap(t=>t.connection?.state==='applied'?[[t.connection.keyId,{target:t.id,sourceId:t.connection.sourceId,model:t.connection.model,fastModel:t.connection.fastModel,selections:t.connection.selections,modelAliases:t.connection.modelAliases}] as const]:[]));
+  const desktopRoute=await claudeDesktop.route().catch(()=>null);if(desktopRoute?.keyId&&desktopRoute.selections[0])fixedRoutes.set(desktopRoute.keyId,{target:'claude-desktop',...desktopRoute.selections[0],fastModel:desktopRoute.fastModel,selections:desktopRoute.selections,modelAliases:desktopRoute.modelAliases});
   const codexContext=new CodexContext(root,connections.paths.codex,gatewayContext);
   const codexContextScopes=async()=>((await connections.status()).find(t=>t.id==='codex')?.backups??[]).flatMap(record=>(record.selections??[record]).map(item=>({owner:record.keyId,source:item.sourceId,model:item.model})));
   const codexLifecycle=new CodexSwitchLifecycle(()=>options.agentProcesses?options.agentProcesses('codex'):agentProcesses('codex'));
@@ -278,17 +292,32 @@ export async function createDesktopService(options:ServiceOptions) {
   const desktopLifecycle=new QoderLifecycle();
   let discoveryTask:Promise<void>|undefined;
   const discovery:{state:'idle'|'loading'|'ready';unavailable:string[]}={state:'idle',unavailable:[]};
+  const importNative=async(target:'codex'|'claude'|'qoder'|'qoder-ide'|'antigravity'|'workbuddy'|'workbuddy-ai',onlyNew=false)=>{
+    if(target==='workbuddy'||target==='workbuddy-ai'){
+      try{return await proxy.importCredential('workbuddy',await desktopAccounts[target].importCredential(),onlyNew);}
+      catch(error){
+        if((error as {code?:string}).code!=='NATIVE_PROTECTED')throw error;
+        // The native client's private crypto API is unavailable to other apps.
+        // Reuse an already authorized, verified grant for this exact identity.
+        const native=await desktopAccounts[target].status();
+        const candidates=(await proxy.desktopNativeAccounts(target)).filter(a=>a.accountId&&a.accountId===native.accountId&&(a.enterpriseId??'')===(native.enterpriseId??''));
+        for(const candidate of candidates){const snapshot=await proxy.refreshAccounts('workbuddy',false,candidate.id);if(snapshot.accounts.some(a=>a.id===candidate.id&&!a.disabled&&!a.unavailable&&a.models?.length))return snapshot;}
+        throw error;
+      }
+    }
+    const credential=target==='qoder'?await desktopAccounts.qoder.importCredential():target==='qoder-ide'?await qoderIdeLogin.importCredential():target==='antigravity'?await antigravityAccountStore.importCredential():await localCredential(target,connections.paths,options.claudeCredentialStore);
+    return proxy.importCredential(target==='qoder-ide'?'qoder':target,target==='qoder'||target==='qoder-ide'?{...credential,native_client:target}:credential,onlyNew);
+  };
   const discoverLocal=()=>discoveryTask??=(async()=>{
     discovery.state='loading';
-    try{await proxy.start();for(const target of ['codex','claude'] as const){
-      try{await proxy.importCredential(target,await localCredential(target,connections.paths,options.claudeCredentialStore),true);}
+    try{await proxy.start();for(const target of ['codex','claude','qoder','qoder-ide','antigravity','workbuddy','workbuddy-ai'] as const){
+      try{await importNative(target,true);}
       catch{discovery.unavailable.push(target);}
     }
-    for(const provider of ['workbuddy','zcode','trae'] as const){
+    for(const provider of ['trae'] as const){
       try{await proxy.importLocal(provider,true);}catch{discovery.unavailable.push(provider);}
-    }
-    try{await proxy.importCredential('qoder',await desktopAccounts.qoder.localCredential(),true);}
-    catch{discovery.unavailable.push('qoder');}}finally{
+    }}finally{
+      await refreshCodexCatalog();
       discovery.state='ready';
     }
   })();
@@ -417,8 +446,9 @@ export async function createDesktopService(options:ServiceOptions) {
     const created=await gatewayKeys.create(gatewayKeyInput.parse({name:`A2A · ${input.target}`,models:selections.map(item=>item.model),agents:[['workbuddy','workbuddy-ai','qoder','pi','deepseek'].includes(input.target)?'openai':input.target],...(input.selections?{modelSources:Object.fromEntries(selections.map(item=>[item.model,item.sourceId]))}:{sourceId:input.sourceId}),tokenLimit:input.tokenLimit}));
     try{
       const local=await localSnapshot(),catalog=local.models;
-      const record=await connections.apply({...input,modelLabels:Object.fromEntries(selections.map(item=>[item.model,modelLabel(catalog,item.model,local.apiSources)])),keyId:created.key.id,key:created.apiKey,origin});
-      fixedRoutes.set(record.keyId,{target:record.target,sourceId:record.sourceId,model:record.model,selections:record.selections,modelAliases:record.modelAliases});
+      const modelContextWindows=input.target==='codex'?Object.fromEntries((await Promise.all(selections.map(async item=>[item.model,await compactionModelWindow(item.model,catalog,connections.paths.codex)] as const))).filter((entry):entry is readonly [string,number]=>entry[1]!==undefined)):undefined;
+      const record=await connections.apply({...input,modelLabels:Object.fromEntries(selections.map(item=>[item.model,modelLabel(catalog,item.model,local.apiSources)])),modelContextWindows,keyId:created.key.id,key:created.apiKey,origin});
+      fixedRoutes.set(record.keyId,{target:record.target,sourceId:record.sourceId,model:record.model,fastModel:record.fastModel,selections:record.selections,modelAliases:record.modelAliases});
       if(input.replaceId){const previous=(await connections.status()).flatMap(t=>t.backups).find(r=>r.id===input.replaceId);if(previous){fixedRoutes.delete(previous.keyId);if(gatewayKeys.list().some(k=>k.id===previous.keyId))await gatewayKeys.remove(previous.keyId);}}
       if(input.target==='codex')await codexThreads.migrate(input.model,selections.map(item=>item.model));
       const verification=await connections.review(record.id);if(!verification.checks.every(c=>c.ok))throw new Error('写入后的配置复查未通过，接入记录和备份已保留，请生成维修方案。');return {...record,verification};
@@ -445,7 +475,7 @@ export async function createDesktopService(options:ServiceOptions) {
   const proposeRestore=async(id:string,chain?:MaintenanceChain)=>{
     const target=(await connections.status()).find(t=>t.backups.some(b=>b.id===id));
     if(!target||chain&&(target.id!==chain.target||chain.connectionId&&chain.connectionId!==id))throw new Error('只能还原当前选定链路的接入记录。');
-    const code=JSON.stringify({operation:'restore_connection',id,target:target.id,path:target.path,revision:target.revision,runningProcesses:target.pids,allowRunning:true,restore:'停用网关并使用官方或客户端默认配置，撤销对应 Key；保留登录、无关设置和备份',after:'复查配置，重启目标 Agent'},null,2);
+    const code=JSON.stringify({operation:'restore_connection',id,target:target.id,path:target.path,revision:target.revision,runningProcesses:target.pids,allowRunning:true,restore:target.id==='codex'||target.id==='claude'?'切回官方服务并撤销网关 Key；保留登录、无关设置和备份':'只移除 TokenFlow 网关模型并撤销对应 Key；保留其他 API、账号和备份',after:'复查配置，重启目标 Agent'},null,2);
     return approval.propose(`停用 ${target.name} 网关`,code,()=>restoreConnection(id,{revision:target.revision,allowRunning:true}));
   };
   const readMaintenanceUsage=async(context:MaintenanceContext,query:MaintenanceUsageQuery={})=>{
@@ -571,6 +601,8 @@ export async function createDesktopService(options:ServiceOptions) {
   const desktopStatus=async(provider:DesktopProvider|'qoder-ide',refresh=false)=>{const status=await (provider==='qoder-ide'?qoderIdeLogin:desktopAccounts[provider]).status(refresh);return {...status,...(provider==='workbuddy-ai'?{installation:await detectAgent('workbuddy-ai')}:{}),accounts:(await proxy.desktopNativeAccounts(provider==='qoder-ide'?'qoder':provider)).map(a=>status.unavailableReason?{...a,switchable:false,reason:status.unavailableReason}:a),gatewayConnected:!!(await connections.status()).find(t=>t.id===provider)?.connection};};
   const cursorLocalLogin=new CursorLocalLogin(options.cursorLocalPath);
   app.get('/api/native-accounts/cursor',async req=>({...await cursorLocalLogin.status((req.query as {refresh?:string}).refresh==='1'),readOnly:true,pids:[],backup:null,gatewayConnected:false,accounts:proxy.cursor.snapshot().accounts.map(a=>({id:a.id,email:a.label,switchable:false,reason:'请在 Cursor 客户端切换本机登录。'}))}));
+  app.get('/api/native-accounts/trae',()=>proxy.localImportStatus('trae'));
+  app.get('/api/native-accounts/zcode',async(_req,reply)=>reply.code(410).send({error:'ZCode 不支持本机认证，请通过官网授权添加账号。'}));
   app.get('/api/native-accounts/:provider',async req=>{const provider=officialProvider.parse((req.params as {provider:string}).provider);return provider==='workbuddy'||provider==='workbuddy-ai'||provider==='qoder'||provider==='qoder-ide'?desktopStatus(provider,(req.query as {refresh?:string}).refresh==='1'):nativeStatus(provider);});
   for(const action of ['switch','restore'] as const)app.post(`/api/native-accounts/:provider/${action}`,async req=>{
     const provider=officialProvider.parse((req.params as {provider:string}).provider);
@@ -594,7 +626,7 @@ export async function createDesktopService(options:ServiceOptions) {
       const credential=input.sourceId?nativeCredentialSchema.parse(await proxy.nativeCredential('claude',input.sourceId,input.model)):undefined;
       if(credential&&!(credential.scopes??credential.scope?.split(/\s+/)??['user:inference']).includes('user:inference'))throw Object.assign(new Error('账号没有 Claude Code 推理权限，请重新授权。'),{statusCode:409});
       const target=(await connections.status()).find(t=>t.id==='claude');
-      if(credential)await nativeAccounts.claude.preflightSwitch(input,credential,target?.connection?claudeSettingsState(await connections.restoration(target.connection.id)):undefined);
+      if(credential)await nativeAccounts.claude.preflightSwitch(input,credential,target?.connection?claudeSettingsState(await connections.restoration(target.connection.id,'native')):undefined);
       else await nativeAccounts.claude.preflightRestore(input.revision);
       const work=async()=>{
         const state=await nativeStatus('claude');if(state.revision!==input.revision||state.pids.length)throw Object.assign(new Error('Claude Code 登录或进程已变化，请退出其他会话后重试。'),{statusCode:409});
@@ -653,7 +685,7 @@ export async function createDesktopService(options:ServiceOptions) {
       const local=await localSnapshot();
       await claudeDesktop.connect({revision:input.revision,selections:input.selections,fastModel:input.fast?.model,origin:`http://${req.headers.host}`,keyId:created.key.id,key:created.apiKey,labels:Object.fromEntries(input.selections.map(s=>[s.model,modelLabel(local.models,s.model,local.apiSources)]))});saved=true;
       const applied=await claudeDesktop.route();
-      fixedRoutes.set(created.key.id,{target:'claude-desktop',...input.selections[0],selections:input.selections,modelAliases:applied?.modelAliases});
+      fixedRoutes.set(created.key.id,{target:'claude-desktop',...input.selections[0],fastModel:applied?.fastModel,selections:input.selections,modelAliases:applied?.modelAliases});
       if(prior.keyId){fixedRoutes.delete(prior.keyId);if(gatewayKeys.list().some(k=>k.id===prior.keyId))await gatewayKeys.remove(prior.keyId);}
     });}catch(error){const current=await claudeDesktop.status().catch(()=>null);if(!saved&&current?.keyId!==created.key.id)await gatewayKeys.remove(created.key.id);if(saved)throw Object.assign(new Error('Claude Desktop 模型配置已保存，重新打开未确认。请手动打开 Claude Desktop；原登录和恢复备份保留。'),{statusCode:409});throw error;}
     return {...await claudeDesktopStatus(),message:process.platform==='linux'?'配置已保存，请重新打开 Claude Desktop。':'Claude Desktop 已重新打开，请在新会话确认模型。'};
@@ -785,7 +817,9 @@ export async function createDesktopService(options:ServiceOptions) {
   app.get('/api/gateway-keys', async()=>({keys:gatewayKeys.list()}));
   const scopedInput = async (body: unknown, existingId?: string, modelOnly=false) => {
     const existing=existingId?gatewayKeys.list().find(key=>key.id===existingId):undefined;
-    const input = gatewayKeyInput.parse({...((existing)?{access:existing.access,agents:existing.agents,tokenLimit:existing.tokenLimit,sourceId:existing.sourceId,modelSources:existing.modelSources}:{}),...(typeof body==='object'&&body?body:{})});
+    const parsed=gatewayKeyInput.safeParse({...((existing)?{access:existing.access,allowedIPs:existing.allowedIPs,agents:existing.agents,tokenLimit:existing.tokenLimit,sourceId:existing.sourceId,modelSources:existing.modelSources}:{}),...(typeof body==='object'&&body?body:{})});
+    if(!parsed.success){if(parsed.error.issues.some(issue=>issue.path[0]==='allowedIPs'))throw new RunnerCoreError('来源 IP 请填写完整的 IPv4 或 IPv6 地址。',{statusCode:400,code:'invalid_source_ip'});throw parsed.error;}
+    const input=parsed.data;
     if(input.access==='lan'&&existing&&!existing.exported&&(!modelOnly||existing.sourceId||existing.modelSources))throw Object.assign(new Error('本地 Agent 的专用 Key 仅供本机使用，请在 API 代理中创建访问密钥。'),{statusCode:400});
     const previous = existingId ? gatewayKeys.list().find(key=>key.id===existingId)?.models ?? [] : [];
     const local=await localSnapshot();
@@ -806,14 +840,37 @@ export async function createDesktopService(options:ServiceOptions) {
     else if(pending.length)await validateSavedSelections(pending);
     return input;
   };
+  // Listener changes and key writes form one serialized operation. A failed bind must not leave an unseen key.
+  let keyAccessTask:Promise<unknown>=Promise.resolve();
+  const migrateLANPolicy=async()=>{
+    const current=access.snapshot();
+    if(!current.allowedIPs.length)return;
+    await gatewayKeys.inheritLANIPs(current.allowedIPs);
+    await access.update({enabled:current.enabled,port:current.port,allowedIPs:[]});
+  };
+  const changeExportedKey=<T>(needsLAN:boolean,work:()=>Promise<T>):Promise<T>=>{
+    const task=keyAccessTask.catch(()=>{}).then(async()=>{
+      if(needsLAN)await migrateLANPolicy();
+      const before=access.snapshot();let started=false;
+      if(needsLAN&&(!before.enabled||!before.running)){await access.update({enabled:true,port:before.port,allowedIPs:before.allowedIPs});started=true;}
+      let result:T;
+      try{result=await work();}catch(error){if(started&&!gatewayKeys.list().some(k=>k.exported&&k.enabled&&k.access==='lan'))await access.update({enabled:before.enabled,port:before.port,allowedIPs:before.allowedIPs}).catch(()=>{});throw error;}
+      if(!gatewayKeys.list().some(k=>k.exported&&k.enabled&&k.access==='lan')&&access.snapshot().enabled){const current=access.snapshot();await access.update({enabled:false,port:current.port,allowedIPs:current.allowedIPs});}
+      return result;
+    });keyAccessTask=task;return task;
+  };
   app.post('/api/gateway-keys', async(req,reply)=>{
-    const created=await gatewayKeys.create(await scopedInput(req.body),true);
-    const keyStored=options.secrets.persistent!==false;
-    if(keyStored)try{await options.secrets.set(`gateway-key-${created.key.id}`,created.apiKey);}catch{
-      await gatewayKeys.remove(created.key.id);
-      throw Object.assign(new Error('Key 未生成：系统加密存储不可用，请解锁后重试。'),{statusCode:409});
-    }
-    reply.header('cache-control','no-store');return {...created,keyStored};
+    const input=await scopedInput(req.body);
+    const result=await changeExportedKey(input.enabled&&input.access==='lan',async()=>{
+      const created=await gatewayKeys.create(input,true);
+      const keyStored=options.secrets.persistent!==false;
+      if(keyStored)try{await options.secrets.set(`gateway-key-${created.key.id}`,created.apiKey);}catch{
+        await gatewayKeys.remove(created.key.id);
+        throw Object.assign(new Error('Key 未生成：系统加密存储不可用，请解锁后重试。'),{statusCode:409});
+      }
+      return {...created,keyStored};
+    });
+    reply.header('cache-control','no-store');return {...result,gatewayAccess:access.snapshot()};
   });
   app.post('/api/gateway-keys/:id/reveal',async(req,reply)=>{
     const id=z.string().uuid().parse((req.params as {id:string}).id);
@@ -834,22 +891,22 @@ export async function createDesktopService(options:ServiceOptions) {
   };
   app.put('/api/gateway-keys/:id/models',async req=>{
     const id=z.string().uuid().parse((req.params as {id:string}).id);
-    const {selections,access}=z.object({selections:z.array(z.object({sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(3).max(300)}).strict()).max(2000),access:z.enum(['local','lan']).optional()}).strict().parse(req.body);
+    const {selections,access:keyAccess,allowedIPs}=z.object({selections:z.array(z.object({sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(3).max(300)}).strict()).max(2000),access:z.enum(['local','lan']).optional(),allowedIPs:gatewayKeyInput.shape.allowedIPs}).strict().parse(req.body);
     if(new Set(selections.map(item=>item.model)).size!==selections.length)throw Object.assign(new Error('同一模型只能选择一个来源账号'),{statusCode:400});
     return updateKey(id,async()=>{
       const existing=gatewayKeys.list().find(key=>key.id===id);
       if(!existing)throw Object.assign(new Error('Key 不存在'),{statusCode:404});
       if(!existing.exported&&(existing.sourceId||existing.modelSources))throw Object.assign(new Error('此 Key 由本地 Agent 或维修流程管理，请在对应入口修改模型。'),{statusCode:409});
-      const input=await scopedInput({name:existing.name,purpose:existing.purpose,enabled:existing.enabled,access:access??existing.access,sourceId:undefined,models:selections.map(item=>item.model),modelSources:Object.fromEntries(selections.map(item=>[item.model,item.sourceId]))},id,true);
-      return gatewayKeys.updateModels(id,input.models,input.modelSources??{},input.access);
+      const input=await scopedInput({name:existing.name,purpose:existing.purpose,enabled:existing.enabled,access:keyAccess??existing.access,allowedIPs:allowedIPs??existing.allowedIPs,sourceId:undefined,models:selections.map(item=>item.model),modelSources:Object.fromEntries(selections.map(item=>[item.model,item.sourceId]))},id,true);
+      return changeExportedKey(input.enabled&&input.access==='lan',()=>gatewayKeys.updateModels(id,input.models,input.modelSources??{},input.access,input.allowedIPs));
     });
   });
   app.put('/api/gateway-keys/:id', async req=>{
     const id=z.string().uuid().parse((req.params as {id:string}).id);
-    return updateKey(id,async()=>gatewayKeys.update(id,await scopedInput(req.body,id)));
+    return updateKey(id,async()=>{const input=await scopedInput(req.body,id);return changeExportedKey(input.enabled&&input.access==='lan',()=>gatewayKeys.update(id,input));});
   });
   app.post('/api/gateway-keys/:id/reset-usage',async req=>gatewayKeys.resetUsage(z.string().uuid().parse((req.params as {id:string}).id)));
-  app.delete('/api/gateway-keys/:id', async req=>{const id=z.string().uuid().parse((req.params as {id:string}).id);const result=await gatewayKeys.remove(id);await options.secrets.remove?.(`gateway-key-${id}`);return result;});
+  app.delete('/api/gateway-keys/:id', async req=>{const id=z.string().uuid().parse((req.params as {id:string}).id);return changeExportedKey(false,async()=>{const result=await gatewayKeys.remove(id);await options.secrets.remove?.(`gateway-key-${id}`);return result;});});
   const sourceDependencies=async(id:string)=>{
     const targets=(await connections.status()).filter(t=>t.connection&&(t.connection.selections??[t.connection]).some(item=>item.sourceId===id)).map(t=>({id:t.id,name:t.name,model:t.connection!.model}));
     const keys=gatewayKeys.list().filter(k=>k.sourceId===id||Object.values(k.modelSources??{}).includes(id)||k.models.some(m=>m.startsWith(`api-${id}/`))).map(k=>({id:k.id,name:k.name,models:k.models}));
@@ -978,10 +1035,18 @@ export async function createDesktopService(options:ServiceOptions) {
     if(!input.redirectURL)throw Object.assign(new Error('请输入完整回调地址'),{statusCode:400});
     return localOperation(()=>proxy.submitCallback(input.id,input.redirectURL!));
   });
+  app.post('/api/local-agent/accounts/:id/refresh',async req=>{
+    const id=z.string().regex(/^[a-f0-9]{24}$/).parse((req.params as {id:string}).id);
+    return localOperation(()=>proxy.refreshAccount(id));
+  });
   app.post('/api/local-agent/accounts/:id',async req=>{
     const {enabled}=z.object({enabled:z.boolean()}).strict().parse(req.body);
     const id=z.string().regex(/^[a-f0-9]{24}$/).parse((req.params as {id:string}).id);
     return localOperation(()=>proxy.setAccountEnabled(id,enabled));
+  });
+  app.delete('/api/local-agent/accounts/:id/expired',async req=>{
+    const id=z.string().regex(/^[a-f0-9]{24}$/).parse((req.params as {id:string}).id);
+    return proxy.removeExpiredAccount(id);
   });
   app.delete('/api/local-agent/accounts/:id',async req=>{
 
@@ -990,18 +1055,30 @@ export async function createDesktopService(options:ServiceOptions) {
   });
   app.post('/api/local-agent/import-local/:provider',async req=>{
 
-    const provider=z.enum(['trae','workbuddy','workbuddy-ai','zcode','cursor','qoder']).parse((req.params as {provider:string}).provider);
-    if(provider==='qoder')return localOperation(async()=>proxy.importCredential('qoder',await desktopAccounts.qoder.localCredential()));
-    return localOperation(()=>proxy.importLocal(provider));
+    const provider=z.enum(['codex','claude','qoder','qoder-ide','antigravity','trae','workbuddy','workbuddy-ai','zcode','cursor']).parse((req.params as {provider:string}).provider);
+    return localOperation(()=>provider==='codex'||provider==='claude'||provider==='qoder'||provider==='qoder-ide'||provider==='antigravity'||provider==='workbuddy'||provider==='workbuddy-ai'?importNative(provider):proxy.importLocal(provider));
   });
   const access=await GatewayAccess.open(root,gatewayKeys);
   app.get('/api/gateway/access',async()=>access.snapshot());
   app.put('/api/gateway/access',async req=>access.update(gatewayAccessInput.parse(req.body)));
-  app.addHook('onReady',async()=>{await access.start();});
+  app.addHook('onReady',async()=>{
+    if(gatewayKeys.list().some(key=>key.exported&&key.enabled&&key.access==='lan')){
+      // A failed migration keeps the old entrance policy in force.
+      await migrateLANPolicy().catch(()=>{});await access.start();
+    }
+    else if(access.snapshot().enabled){
+      const current=access.snapshot();
+      // Older versions had a separate global switch. Keys now decide whether
+      // this entrance is needed; stale settings must not reopen it on startup.
+      await access.update({enabled:false,port:current.port,allowedIPs:current.allowedIPs}).catch(()=>{});
+    }
+  });
   app.addHook('preClose',async()=>{await access.close();});
   // Both API entrances share routing, model permissions, streaming and metering.
+  // Fastify requires a positive integer bodyLimit. Its largest representable
+  // integer disables practical application byte caps on inference requests.
   for(const path of ['models','responses','responses/compact','chat/completions','messages','messages/count_tokens']){
-   const route:RouteOptions={method:path==='models'?'GET':'POST',url:`/v1/${path}`,bodyLimit:16*1024*1024,handler:async(req,reply)=>{
+   const route:RouteOptions={method:path==='models'?'GET':'POST',url:`/v1/${path}`,bodyLimit:Number.MAX_SAFE_INTEGER,handler:async(req,reply)=>{
     const bearer=clientCredential(req.headers).value;
     const client=gatewayKeys.authenticate(bearer);
     if(bearer && !same(bearer,options.token) && !client) return reply.code(401).send({error:{message:'Invalid or disabled API key',type:'authentication_error'}});
@@ -1011,6 +1088,19 @@ export async function createDesktopService(options:ServiceOptions) {
       if(compatible.changed)reply.header('X-Token-Flow-Compatibility','claude-code-help-v1');
     }
     const fixed=client&&fixedRoutes.get(client.id);
+    if(path!=='models'&&client&&fixed&&(fixed.target==='claude'||fixed.target==='claude-desktop')){
+      const requested=z.object({model:z.string().min(1).max(300)}).parse(req.body).model;
+      const family=!client.models.includes(requested)&&claudeBuiltInFamily(requested);
+      if(family){
+        const model=family==='fast'?fixed.fastModel??fixed.modelAliases?.['claude-haiku-4-5']??fixed.model:fixed.model;
+        const alias=requested.replace(/\[1m\]$/i,'');
+        // Old profiles reused built-in ids for menu rows. The same request could
+        // mean a menu selection or a subagent: never guess and send it elsewhere.
+        if(fixed.target==='claude-desktop'&&fixed.modelAliases?.[alias]&&fixed.modelAliases[alias]!==model)return reply.code(409).send({error:{type:'model_mapping_conflict',message:'Claude Desktop 旧版菜单映射与内置子代理型号冲突。请在 TokenFlow 重新应用所选模型，并在旧对话中重新选择一次模型；对话内容保留。'}});
+        req.body={...(req.body as Record<string,unknown>),model};
+        reply.header('X-Token-Flow-Model',model);
+      }
+    }
     if(path!=='models'&&fixed?.target==='codex'&&client){
       const requested=z.object({model:z.string().min(1).max(300)}).parse(req.body).model;
       const qualified=`codex/${requested}`;
@@ -1036,7 +1126,7 @@ export async function createDesktopService(options:ServiceOptions) {
         if(requested!==fixed.model){req.body={...(req.body as Record<string,unknown>),model:fixed.model};reply.header('X-Token-Flow-Model',fixed.model);}
       }
     }
-    const started=Date.now();const traceRequest=requestTrace(req.body);let traceResponse:ResponseObservation={tools:[]};let compaction:CompactionReport|undefined;let contextUsageIncomplete=false;let recorded=false;let callError:{code:string;message:string}|undefined;
+    const started=Date.now();const traceRequest=requestTrace(req.body);let traceResponse:ResponseObservation={tools:[]};let compaction:CompactionReport|undefined;let contextUsageIncomplete=false;let recorded=false;let callError:{code:string;message:string}|undefined;let contextFailureStatus:number|undefined;let billingUsage:ReturnType<typeof providerUsage>|undefined;
     const record=(status:number,usage:{inputTokens:number|null;outputTokens:number|null;cachedTokens?:number|null;cacheWriteTokens?:number|null;reasoningTokens?:number|null}={inputTokens:null,outputTokens:null})=>{
       if(recorded||path==='models')return;recorded=true;
       const rawModel=(req.body as {model?:unknown})?.model;
@@ -1069,7 +1159,7 @@ export async function createDesktopService(options:ServiceOptions) {
           const sourceId=client.modelSources[model];
           if(client.models.includes(model)){
             if(!sourceId){record(403);return reply.code(403).send({error:{message:'Model is not configured for this Agent',type:'model_not_allowed'}});}
-            try{selectedAuth=resolveSource(sourceId,model,true);}catch{record(503);return reply.code(503).send({error:{message:'Selected source account is unavailable',type:'source_unavailable'}});}
+            try{selectedAuth=resolveSource(sourceId,model,true);}catch{refreshFailedSource(sourceId);const issue=sourceFailure(proxy.snapshot(),sourceId,model);callError={code:issue.type,message:issue.message};record(issue.status);return reply.code(issue.status).send({error:{message:issue.message,type:issue.type}});}
           }
         }
       }else if(client.sourceId){
@@ -1078,7 +1168,7 @@ export async function createDesktopService(options:ServiceOptions) {
           for(let index=available.length-1;index>=0;index--)try{sourceAuth(available[index].id);}catch{available.splice(index,1);}
         }else{
           const model=z.object({model:z.string().min(1).max(300)}).parse(req.body).model;
-          if(client.models.includes(model))try{selectedAuth=sourceAuth(model);}catch{record(503);return reply.code(503).send({error:{message:'Selected source account is unavailable',type:'source_unavailable'}});}
+          if(client.models.includes(model))try{selectedAuth=sourceAuth(model);}catch{refreshFailedSource(client.sourceId!);const issue=sourceFailure(proxy.snapshot(),client.sourceId!,model);callError={code:issue.type,message:issue.message};record(issue.status);return reply.code(issue.status).send({error:{message:issue.message,type:issue.type}});}
         }
       }
       if(path==='models'){
@@ -1106,65 +1196,76 @@ export async function createDesktopService(options:ServiceOptions) {
     if(apiSource){try{if(client&&directKeys.has(client.id)&&path.startsWith('responses')&&apiModelRoute(apiSource,(req.body as {model:string}).model).protocol==='responses')apiSources.assert(apiSource.id,(req.body as {model:string}).model);else resolveSource(apiSource.id,(req.body as {model:string}).model);}catch{record(503);await settle({inputTokens:null,outputTokens:null},false);return reply.code(503).send({error:{message:'API source unavailable',type:'source_unavailable'}});}}
     const upstreamURL=client||apiSource?proxy.gateway().baseURL:config.baseURL;
     const upstreamKey=client||apiSource?proxy.gateway().apiKey:await key();
-    const abort=upstreamIdle();
-    const timeoutMessage=()=>abort.timeoutKind==='total'?`本次请求已达到 ${UPSTREAM_TOTAL_TIMEOUT_MS/1000} 秒总时限，请检查来源后手动重试。`:`上游连续 ${UPSTREAM_IDLE_TIMEOUT_MS/1000} 秒未返回数据，请稍后重试或缩短对话。`;
+    const abort=upstreamRequest();
     let clientDisconnected=false;
     reply.raw.once('close',()=>{if(!reply.raw.writableFinished){clientDisconnected=true;abort.abort();}});
     try {
       const cursorModel=typeof (req.body as {model?:unknown})?.model==='string'&&(req.body as {model:string}).model.startsWith('cursor/');
-      if(cursorModel&&proxy.snapshot().state!=='running'){record(503);await settle({inputTokens:null,outputTokens:null},false);abort.close();return reply.code(503).send({error:{message:'网关未启动',type:'provider_error'}});}
+      if(cursorModel&&proxy.snapshot().state!=='running'){record(503);await settle({inputTokens:null,outputTokens:null},false);return reply.code(503).send({error:{message:'网关未启动',type:'provider_error'}});}
       // Resolve capability from the configured receiver, never the source model or caller headers.
       const nativeCodexReceiver=fixed?fixed.target==='codex':client?.agents.length===1&&client.agents[0]==='codex';
-      const send=async(route:string,body:unknown)=>{
+      let initialCompaction=false;
+      const send=async(route:string,body:unknown,clock=abort)=>{
         const protocol=apiSource?apiModelRoute(apiSource,(body as {model:string}).model).protocol:undefined;
         const native=apiSource&&(protocol==='responses'&&route.startsWith('responses')||protocol==='chat'&&route==='chat/completions'||protocol==='messages'&&route.startsWith('messages'));
-        if(native){const headers:Record<string,string>={};for(const name of ['anthropic-version','anthropic-beta'])if(typeof req.headers[name]==='string')headers[name]=req.headers[name];return abort.watch(await apiSources.response(apiSource.id,route,body as {model:string},abort.signal,headers));}
-        return abort.watch(await fetch(`${upstreamURL.replace(/\/$/,'')}/${route}`,{method:req.method,headers:{'X-Token-Flow-Image-Generation':nativeCodexReceiver?'allow':'deny',...(selectedAuth?{'X-Token-Flow-Auth':selectedAuth}:{}),Authorization:`Bearer ${upstreamKey}`,'Content-Type':'application/json',...(typeof req.headers['anthropic-version']==='string'?{'anthropic-version':req.headers['anthropic-version']}:{}),...(typeof req.headers['anthropic-beta']==='string'?{'anthropic-beta':req.headers['anthropic-beta']}:{}),...(typeof req.headers['x-stainless-lang']==='string'?{'x-stainless-lang':req.headers['x-stainless-lang']}:{})},body:req.method==='POST'?JSON.stringify(body):undefined,redirect:'error',signal:abort.signal}));
+        if(native){const headers:Record<string,string>={};for(const name of ['anthropic-version','anthropic-beta'])if(typeof req.headers[name]==='string')headers[name]=req.headers[name];return clock.watch(await apiSources.response(apiSource.id,route,body as {model:string},clock.signal,headers));}
+        return clock.watch(await inferenceFetch(`${upstreamURL.replace(/\/$/,'')}/${route}`,{method:req.method,headers:{'X-Token-Flow-Image-Generation':nativeCodexReceiver?'allow':'deny',...(selectedAuth?{'X-Token-Flow-Auth':selectedAuth}:{}),Authorization:`Bearer ${upstreamKey}`,'Content-Type':'application/json',...(typeof req.headers['anthropic-version']==='string'?{'anthropic-version':req.headers['anthropic-version']}:{}),...(typeof req.headers['anthropic-beta']==='string'?{'anthropic-beta':req.headers['anthropic-beta']}:{}),...(typeof req.headers['x-stainless-lang']==='string'?{'x-stainless-lang':req.headers['x-stainless-lang']}:{})},body:req.method==='POST'?JSON.stringify(body):undefined,redirect:'error',signal:clock.signal}));
       };
       const model=(req.body as {model?:string})?.model;
       const bridgeContext=(path==='responses'||path==='responses/compact')&&!!(client||config.kind==='cliproxy'||apiSource)&&typeof model==='string'&&(fixed?.target==='codex'||/^(qoder|workbuddy|cursor)\//.test(model)||!!apiSource);
       const workbuddyModel=!!model?.startsWith('workbuddy/')&&!apiSource;
       const sdkSourceId=client?.modelSources?.[model!]??client?.sourceId??proxy.snapshot().accounts.find(a=>a.provider==='workbuddy'&&!a.disabled&&a.models?.includes(model!))?.id;
-      const dispatch=cursorModel?async(route:string,body:unknown)=>abort.watch(await proxy.cursor.response(route,body,abort.signal,client?.modelSources?.[model!]??client?.sourceId)):workbuddyModel&&path!=='messages/count_tokens'?async(route:string,body:unknown)=>{
+      const transport=cursorModel?async(route:string,body:unknown,clock=abort)=>clock.watch(await proxy.cursor.response(route,body,clock.signal,client?.modelSources?.[model!]??client?.sourceId)):workbuddyModel&&path!=='messages/count_tokens'?async(route:string,body:unknown,clock=abort)=>{
         if(!sdkSourceId)throw new Error('WorkBuddy source unavailable');
-        return abort.watch(await workbuddySDK.response(sdkSourceId,route,body,abort.signal));
+        return clock.watch(await workbuddySDK.response(sdkSourceId,route,body,clock.signal));
       }:send;
-      const response=bridgeContext?await gatewayContext.response(path,req.body as {model:string},client?.id??'workspace',client?.modelSources?.[model]??client?.sourceId??apiSource?.id??upstreamURL,dispatch,fixed?.target==='codex'?{scope:codexContextScope,normalize:portableCodexItem,recover:async item=>codexContext.recover(item,await codexContextScopes())}:undefined,{onCompaction:report=>{compaction=report;},onUsageIncomplete:()=>{contextUsageIncomplete=true;if(compaction)compaction={...compaction,unmetered:true};}}):await dispatch(path,req.body);
+      const dispatch=async(route:string,body:unknown)=>{
+        const forward=nativeCodexReceiver&&route.startsWith('responses')?codexWebSearch(body as Record<string,any>):body;
+        if(!initialCompaction)return transport(route,forward);
+        const clock=upstreamRequest();const cancel=()=>clock.abort();abort.signal.addEventListener('abort',cancel,{once:true});if(abort.signal.aborted)clock.abort();
+        const detach=()=>abort.signal.removeEventListener('abort',cancel);
+        try{return finishUpstream(await transport(route,forward,clock),detach);}catch(error){detach();throw error;}
+      };
+      const sessionId=req.headers['session_id']??req.headers['session-id'];
+      const importedHistory=fixed?.target==='codex'?await codexThreads.bootstrapHistory(typeof sessionId==='string'?sessionId:undefined):undefined;
+      const response=bridgeContext?await gatewayContext.response(path,req.body as {model:string},client?.id??'workspace',client?.modelSources?.[model]??client?.sourceId??apiSource?.id??upstreamURL,dispatch,fixed?.target==='codex'?{bootstrapHistory:importedHistory?.revision,bootstrapRecordedAt:importedHistory?.recordedAt,contextWindowTokens:await compactionModelWindow(model,proxy.snapshot().models,connections.paths.codex),scope:codexContextScope,threadId:typeof sessionId==='string'?sessionId:undefined,normalize:portableCodexItem,recover:async item=>codexContext.recover(item,await codexContextScopes())}:undefined,{signal:abort.signal,onCancel:()=>abort.abort(),onInitialCompaction:active=>{initialCompaction=active;},onCompaction:report=>{compaction=report;},onBillingUsage:usage=>{billingUsage=providerUsage(usage);},onError:error=>{contextFailureStatus=error.statusCode;callError={code:error.code,message:error.message};},onUsageIncomplete:()=>{contextUsageIncomplete=true;if(compaction)compaction={...compaction,unmetered:true};}}):await dispatch(path,req.body);
       if(!response.ok){
-        await settle({inputTokens:null,outputTokens:null},response.status>=500);
+        if(response.status===401){const failedSource=client?.modelSources?.[model!]??client?.sourceId;if(failedSource)refreshFailedSource(failedSource);}
+        await settle(billingUsage??{inputTokens:null,outputTokens:null},contextUsageIncomplete||!!compaction?.unmetered||response.status>=500);
         const error=upstreamError(response.status,await readUpstreamError(response));
-        callError={code:error.type==='source_policy_blocked'?'source_policy_blocked':error.code??error.type,message:error.message};record(response.status);
-        await response.body?.cancel().catch(()=>{});abort.close();
+        if(path.startsWith('responses')&&error.code==='upstream_context_length')error.code='context_length_exceeded';
+        callError={code:error.type==='source_policy_blocked'?'source_policy_blocked':error.code??error.type,message:error.message};record(response.status,billingUsage);
+        await response.body?.cancel().catch(()=>{});
         return reply.code(response.status).send({...(path==='messages'?{type:'error'}:{}),error});
       }
       if(response.headers.has('x-token-flow-transport'))reply.header('X-Token-Flow-Transport',response.headers.get('x-token-flow-transport')!);
       if(cursorModel&&response.headers.has('x-token-flow-output-limit'))reply.header('X-Token-Flow-Output-Limit',response.headers.get('x-token-flow-output-limit')!);
       if(bridgeContext&&response.headers.has('x-token-flow-compaction'))reply.header('X-Token-Flow-Compaction',response.headers.get('x-token-flow-compaction')!);
       reply.code(response.status).header('Content-Type',response.headers.get('content-type')??'application/json').header('Cache-Control','no-store');
-      if(!response.body){record(response.status);await settle({inputTokens:null,outputTokens:null},true);abort.close();return '';}
+      if(!response.body){record(response.status);await settle({inputTokens:null,outputTokens:null},true);return '';}
       const source=Readable.fromWeb(response.body as never);
       const stream=observeUsage((response.headers.get('content-type')??'').includes('text/event-stream'),async usage=>{
+        if(billingUsage)usage={...usage,...billingUsage,cacheWriteTokens:billingUsage.cacheWriteTokens??undefined,reasoningTokens:billingUsage.reasoningTokens??undefined};
         if(usage.failed&&compaction)usage={...usage,inputTokens:usage.inputTokens??compaction.inputTokens,outputTokens:usage.outputTokens??compaction.outputTokens,cachedTokens:usage.cachedTokens??compaction.cachedTokens};
-        if(abort.timedOut)callError={code:abort.timeoutKind==='total'?'upstream_total_timeout':'upstream_idle_timeout',message:timeoutMessage()};
-        else if(!callError){
+        if(!callError){
           if(traceResponse.error)callError=traceResponse.error;
           else if(clientDisconnected)callError={code:'request_cancelled',message:'客户端已取消请求。'};
           else if(usage.failed)callError={code:'upstream_incomplete_response',message:'上游响应未完整结束。'};
         }
-        record(abort.timedOut?504:callError?.code==='request_cancelled'?499:callError?.code==='upstream_stream_error'||usage.failed?502:response.status,usage);
+        record(callError?.code==='request_cancelled'?499:contextFailureStatus??(callError?.code==='upstream_stream_error'||usage.failed?502:response.status),usage);
         await settle(usage,contextUsageIncomplete||!!compaction?.unmetered||abort.signal.aborted||usage.failed||usage.inputTokens===null||usage.outputTokens===null);
       },details=>{traceResponse=details;});
-      source.once('error',()=>{if(!abort.signal.aborted)callError={code:'upstream_stream_error',message:'上游连接中断。'};abort.abort();stream.destroy();});stream.once('close',()=>{abort.close();source.destroy();});
+      source.once('error',()=>{if(!abort.signal.aborted)callError={code:'upstream_stream_error',message:'上游连接中断。'};abort.abort();stream.destroy();});stream.once('close',()=>{source.destroy();});
       reply.raw.once('close',()=>stream.destroy());
       source.pipe(stream);return reply.send(stream);
     }catch(error){
-      const status=error instanceof GatewayContextError?error.statusCode:abort.timedOut?504:abort.signal.aborted?499:502;
-      callError={code:error instanceof GatewayContextError?error.code:abort.timedOut?(abort.timeoutKind==='total'?'upstream_total_timeout':'upstream_idle_timeout'):status===499?'request_cancelled':'upstream_connection_error',message:abort.timedOut?timeoutMessage():status===499?'客户端已取消请求。':error instanceof GatewayContextError?error.message:'无法连接上游服务，或连接已中断。'};
+      const status=error instanceof GatewayContextError?error.statusCode:abort.signal.aborted?499:502;
+      callError={code:error instanceof GatewayContextError?error.code:status===499?'request_cancelled':'upstream_connection_error',message:status===499?'客户端已取消请求。':error instanceof GatewayContextError?error.message:'无法连接上游服务，或连接已中断。'};
       const measured=providerUsage(error instanceof GatewayContextError?error.usage:undefined);
       const missingUsage=measured.inputTokens===null||measured.outputTokens===null;
       const usage=compaction?{...measured,inputTokens:measured.inputTokens??compaction.inputTokens,outputTokens:measured.outputTokens??compaction.outputTokens,cachedTokens:measured.cachedTokens??compaction.cachedTokens,cacheWriteTokens:measured.cacheWriteTokens??compaction.cacheWriteTokens,reasoningTokens:measured.reasoningTokens??compaction.reasoningTokens}:measured;
-      record(status,usage);await settle(usage,!!compaction?.unmetered||(error instanceof GatewayContextError&&error.unmetered)||(status>=500||(compaction?.calls??0)>0)&&missingUsage);abort.close();
-      return reply.code(status).send({error:{code:callError.code,message:callError.message,type:error instanceof GatewayContextError?'context_error':abort.timedOut?'timeout_error':'provider_error'}});
+      record(status,usage);await settle(usage,!!compaction?.unmetered||(error instanceof GatewayContextError&&error.unmetered)||(status>=500||(compaction?.calls??0)>0)&&missingUsage);
+      return reply.code(status).send({error:{code:callError.code,message:callError.message,type:error instanceof GatewayContextError?'context_error':'provider_error'}});
     }
    }};
    app.route({...route});access.app.route({...route});

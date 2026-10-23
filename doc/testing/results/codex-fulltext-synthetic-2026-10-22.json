@@ -1,0 +1,107 @@
+{
+  "timing": {
+    "firstTurnMs": 2219,
+    "firstCompaction": {
+      "inputBytes": 12687952,
+      "outputBytes": 25239,
+      "calls": 259,
+      "reused": 0,
+      "durationMs": 2084,
+      "inputTokens": 25900,
+      "outputTokens": 5180,
+      "cachedTokens": null,
+      "cacheWriteTokens": null,
+      "reasoningTokens": null,
+      "failed": false,
+      "unmetered": false
+    },
+    "reuse": [
+      {
+        "durationMs": 75,
+        "status": "completed",
+        "earliestRequirementPreserved": true
+      }
+    ],
+    "followup": {
+      "durationMs": 186,
+      "rawHistoryBytes": 12973823,
+      "newSummaryCalls": 5,
+      "report": {
+        "inputBytes": 311913,
+        "outputBytes": 71608,
+        "calls": 5,
+        "reused": 0,
+        "durationMs": 17,
+        "inputTokens": 500,
+        "outputTokens": 100,
+        "cachedTokens": null,
+        "cacheWriteTokens": null,
+        "reasoningTokens": null,
+        "failed": false,
+        "unmetered": false
+      }
+    }
+  },
+  "passed": true,
+  "clientOnly": false,
+  "live": false,
+  "largeHistory": true,
+  "bootstrapCompactions": 0,
+  "normalizeContextError": false,
+  "remoteCompaction": false,
+  "seedThresholdCleared": true,
+  "seedReportedInputTokens": 100,
+  "totalScope": false,
+  "persistedCompactions": 0,
+  "resumed": [
+    {
+      "durationMs": 75,
+      "status": "completed",
+      "earliestRequirementPreserved": true
+    }
+  ],
+  "firstTurnStatus": "completed",
+  "firstError": null,
+  "retryTurn": false,
+  "singleAttempt": false,
+  "knownUsage": false,
+  "model": "codex/gpt-6-luna",
+  "turnStatus": "completed",
+  "errorCode": null,
+  "historyBytes": 12666534,
+  "clientCompactions": 0,
+  "gatewayCompactions": 2,
+  "summaryCalls": 264,
+  "sourceContextErrors": 0,
+  "earliestRequirementPreserved": true,
+  "requests": [
+    {
+      "phase": 1,
+      "path": "/v1/responses",
+      "bytes": 12707835,
+      "items": 29,
+      "trigger": false,
+      "localCompact": false,
+      "model": "codex/gpt-6-luna"
+    },
+    {
+      "phase": 1,
+      "path": "/v1/responses",
+      "bytes": 12743686,
+      "items": 32,
+      "trigger": false,
+      "localCompact": false,
+      "model": "codex/gpt-6-luna"
+    },
+    {
+      "phase": 1,
+      "path": "/v1/responses",
+      "bytes": 12973889,
+      "items": 61,
+      "trigger": true,
+      "localCompact": false,
+      "model": "codex/gpt-6-luna"
+    }
+  ],
+  "summaryRequestBytes": 13169202
+}

@@ -2,12 +2,14 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { readFile, writeFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
+import {gatewayIPAddress} from './gateway-ip.js';
 
 export const gatewayKeyInput = z.object({
   name: z.string().trim().min(1).max(80),
   purpose:z.string().trim().max(160).optional(),
   enabled: z.boolean().default(true),
   access: z.enum(['local','lan']).default('local'),
+  allowedIPs:z.array(gatewayIPAddress).max(256).optional().transform(values=>values?[...new Set(values)]:undefined),
   sourceId: z.string().regex(/^[a-f0-9]{24}$/).optional(),
   modelSources: z.record(z.string().regex(/^[a-f0-9]{24}$/)).optional(),
   agents: z.array(z.enum(['codex','claude','openai'])).max(3).default(['codex','claude','openai']).transform(ids=>[...new Set(ids)]),
@@ -66,16 +68,32 @@ export class GatewayKeys {
     return this.mutate(entries => {
       const entry = entries.find(key => key.id === id);
       if (!entry) throw Object.assign(new Error('Key 不存在'), {statusCode:404});
+      const allowedIPs=entry.allowedIPs;
       Object.assign(entry, input);
+      // Omission keeps the current policy, including one migrated while this
+      // update was queued. An explicit empty array removes the restriction.
+      if(input.allowedIPs===undefined&&allowedIPs!==undefined)entry.allowedIPs=allowedIPs;
       return publicKey(entry);
     });
   }
-  updateModels(id:string,models:string[],modelSources:Record<string,string>,access?:GatewayKey['access']) {
+  /** Move the former entrance-wide policy onto existing keys before removing it. */
+  inheritLANIPs(allowedIPs:string[]) {
+    return this.mutate(entries=>{
+      for(const entry of entries){
+        if(!entry.exported||entry.access!=='lan')continue;
+        const next=entry.allowedIPs?.length?entry.allowedIPs.filter(ip=>allowedIPs.includes(ip)):[...allowedIPs];
+        if(!next.length)throw denied(`「${entry.name}」的旧来源限制没有交集，请先改为仅本机，再重新设置局域网来源。`,409);
+        entry.allowedIPs=next;
+      }
+    });
+  }
+  updateModels(id:string,models:string[],modelSources:Record<string,string>,access?:GatewayKey['access'],allowedIPs?:string[]) {
     return this.mutate(entries=>{
       const entry=entries.find(key=>key.id===id);
       if(!entry)throw Object.assign(new Error('Key 不存在'),{statusCode:404});
       entry.models=models;entry.modelSources=modelSources;delete entry.sourceId;
       if(access!==undefined)entry.access=access;
+      if(allowedIPs!==undefined)entry.allowedIPs=allowedIPs;
       // Legacy exported keys had no marker; keep them visible after pinning their model sources.
       entry.exported=true;
       return publicKey(entry);

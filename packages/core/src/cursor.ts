@@ -84,7 +84,7 @@ class CursorAccount {
  snapshot():{accounts:LocalAccount[];models:LocalModel[];login?:CursorLogin;quotas:Record<string,AccountQuota>}{
   const c=this.credential;const expired=!!c?.apiKeyExpiresAtMs&&c.apiKeyExpiresAtMs<=Date.now();const enabled=!!c&&!c.disabled&&!expired;
   const models=enabled&&Date.now()-this.catalogVerifiedAt<15*60000?this.models.map(m=>({id:`cursor/${m.id}`,provider:'cursor' as const,displayName:m.displayName,capabilities:{text:true,tools:true,images:false}})):[];
-  return {accounts:c?[{id:this.id!,provider:'cursor',label:c.email||`Cursor SDK 账号 ${this.id!.slice(0,8)}`,status:expired?'授权已过期':this.catalogStatus==='loading'?'模型同步中':this.error?(this.models.length?'使用上次模型目录':'模型同步失败'):'active',modelError:this.error,disabled:c.disabled,unavailable:expired,models:models.map(m=>m.id)}]:[],models,login:this.login,
+  return {accounts:c?[{id:this.id!,provider:'cursor',label:c.email||`Cursor SDK 账号 ${this.id!.slice(0,8)}`,status:expired?'授权已过期':this.catalogStatus==='loading'?'模型同步中':this.error?(this.models.length?'使用上次模型目录':'模型同步失败'):'active',modelError:this.error,disabled:c.disabled,unavailable:expired,authenticationRequired:expired,models:models.map(m=>m.id)}]:[],models,login:this.login,
    quotas:c?{[this.id!]:this.quota&&this.quota.accountId===this.id?this.quota:{accountId:this.id!,provider:'cursor' as const,status:'ok' as const,observedAt:this.observedAt,windows:[],note:'正在查询 Cursor 官方用量与额度…'}}:{}};
  }
  assertSource(id:string,model:string){if(!this.owns(id)||!this.snapshot().models.some(m=>m.id===model))throw failure('Cursor 账号或模型当前不可用。',409);return `cursor:${id}`;}
@@ -195,7 +195,7 @@ export class CursorProvider {
  private loading?:Promise<void>;private loaded=false;private loginAccount?:CursorAccount;
  private importing=false;private closed=false;private writes=Promise.resolve();
  private aliases:Record<string,string>={};private history:CredentialHistory;
- constructor(private root:string,private secrets:Secrets,private openExternal?:(url:string)=>Promise<void>){this.history=new CredentialHistory(root,secrets);}
+ constructor(private root:string,private secrets:Secrets,private openExternal?:(url:string)=>Promise<void>,private localPath?:string){this.history=new CredentialHistory(root,secrets);}
  private identity(c:Credential){return credentialEmail(c.email)??c.email?.trim().toLowerCase()??credentialFingerprint(c);}
  get id(){return this.accounts.find(a=>a.id)?.id;}
  owns(id:string){return this.accounts.some(a=>a.owns(this.aliases[id]??id));}
@@ -232,13 +232,13 @@ export class CursorProvider {
   this.loaded=true;await Promise.all(this.accounts.map(a=>a.load()));
  })().finally(()=>{this.loading=undefined;});return this.loading;}
 
- async refresh(forceQuota=true){await this.load();await Promise.all(this.accounts.map(a=>a.refresh(forceQuota)));}
+ async refresh(forceQuota=true,id?:string){await this.load();await Promise.all(this.accounts.filter(a=>!id||a.snapshot().accounts.some(account=>account.id===(this.aliases[id]??id))).map(a=>a.refresh(forceQuota)));}
  async refreshIfStale(){if(this.loaded&&!this.closed)await Promise.all(this.accounts.map(a=>a.refreshIfStale()));}
  snapshot(){const snapshots=this.accounts.map(a=>a.snapshot());return {accounts:snapshots.flatMap(s=>s.accounts),models:[...new Map(snapshots.flatMap(s=>s.models).map(m=>[m.id,m])).values()],quotas:Object.assign({},...snapshots.map(s=>s.quotas)) as Record<string,AccountQuota>,login:this.loginAccount?.snapshot().login};}
  assertSource(id:string,model:string){const account=this.account(id);return account.assertSource(account.id!,model);}
  async beginLogin(){await this.load();if(this.closed)throw failure('应用正在退出');if(this.importing||this.accounts.some(a=>a.busy))throw failure('Cursor 正在处理请求或授权，请稍后重试。',409);this.loginAccount=this.make();await this.loginAccount.beginLogin();}
  async importLocal(){await this.load();if(this.closed)throw failure('应用正在退出');if(this.importing||this.accounts.some(a=>a.busy))throw failure('Cursor 正在处理请求或授权，请稍后重试。',409);this.importing=true;
-  try{const session=await localCursorSession();const existing=this.accounts.find(a=>this.values.get(a)?.email?.toLowerCase()===session.email.toLowerCase());if(existing&&credentialPreference(this.values.get(existing)!)[0]>0){await existing.refresh();return;}
+  try{const session=await localCursorSession(this.localPath);const existing=this.accounts.find(a=>this.values.get(a)?.email?.toLowerCase()===session.email.toLowerCase());if(existing&&credentialPreference(this.values.get(existing)!)[0]>0){await existing.refresh();return;}
    if(existing){await this.history.remember('cursor',[this.values.get(existing)!]);}
    const credential=credentialSchema.parse({...await session.createCredential(),authorizedAt:Date.now()});await this.history.remember('cursor',[credential]);const entries=[...this.values.entries()].filter(([a])=>a!==existing).map(([,c])=>c).concat(credential);
    await this.secrets.set('cursor-account',JSON.stringify({version:1,accounts:entries,aliases:this.aliases}));if(existing){this.values.delete(existing);this.accounts=this.accounts.filter(a=>a!==existing);await existing.close();}

@@ -1,0 +1,20 @@
+{
+  "version": "10.15.26.53",
+  "sourceCommits": [
+    "47a1db1",
+    "7297f79"
+  ],
+  "installed": true,
+  "health": {
+    "status": "ok",
+    "service": "tokenflow"
+  },
+  "appAsarMatchesPackage": true,
+  "packagedRuntimePassed": true,
+  "codexRestarted": false,
+  "codexConfigUnchanged": false,
+  "configNote": "Config hash changed during packaging/restart interval; no explicit config edit performed in deployment. Original contents were not captured, so cause is not established.",
+  "tokenFlowPID": 81327,
+  "verifiedAt": "2026-10-23T03:53:14.145318+00:00",
+  "backupNote": "The .52 backup precondition failed; copy command still ran. Subsequently stopped old process and reinstalled into a clean directory. Existing .50 backup remains."
+}

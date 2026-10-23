@@ -28,5 +28,5 @@ export function RepairModelMenu({local,anchor,current,isDisabled,onPick,onClose}
    <h3 title={group.label}><ProviderIcon provider={group.provider} size={16}/><span>{group.label}</span></h3>
    {group.models.map(model=>{const choice={sourceId:group.id,model:model.id};const on=current?.sourceId===choice.sourceId&&current.model===choice.model;const disabled=isDisabled(choice);return <button type="button" key={model.id} aria-pressed={on} disabled={disabled} title={disabled?'网关尚未连接，此来源暂不可用':model.id} onClick={()=>{onPick(choice);onClose();anchor.current?.focus({preventScroll:true});}}><span>{model.label}</span>{on&&<span aria-hidden="true">✓</span>}</button>;})}
   </section>)}{!groups.length&&<p className="tfHint">{q?'没有匹配的模型':'还没有可用模型'}</p>}</div>
- </div>,document.body);
+ </div>,anchor.current?.closest('dialog')??document.body);
 }

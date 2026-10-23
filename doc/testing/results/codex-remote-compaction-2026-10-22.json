@@ -1,0 +1,206 @@
+{
+  "passed": true,
+  "clientOnly": false,
+  "live": true,
+  "largeHistory": true,
+  "bootstrapCompactions": 1,
+  "normalizeContextError": false,
+  "remoteCompaction": false,
+  "seedThresholdCleared": true,
+  "seedReportedInputTokens": 100,
+  "totalScope": false,
+  "persistedCompactions": 2,
+  "resumed": [
+    {
+      "status": "completed",
+      "earliestRequirementPreserved": true
+    }
+  ],
+  "firstTurnStatus": "completed",
+  "firstError": null,
+  "retryTurn": false,
+  "singleAttempt": false,
+  "knownUsage": false,
+  "model": "codex/gpt-6-luna",
+  "turnStatus": "completed",
+  "errorCode": null,
+  "historyBytes": 12666528,
+  "clientCompactions": 1,
+  "gatewayCompactions": 2,
+  "summaryCalls": 2,
+  "sourceContextErrors": 0,
+  "earliestRequirementPreserved": true,
+  "requests": [
+    {
+      "phase": 1,
+      "path": "/v1/responses",
+      "bytes": 12707014,
+      "items": 28,
+      "trigger": true,
+      "localCompact": false,
+      "model": "codex/gpt-6-luna"
+    },
+    {
+      "phase": 1,
+      "path": "/v1/responses",
+      "bytes": 1492201,
+      "items": 17,
+      "trigger": true,
+      "localCompact": false,
+      "model": "codex/gpt-6-luna"
+    },
+    {
+      "phase": 1,
+      "path": "/v1/responses",
+      "bytes": 91470,
+      "items": 17,
+      "trigger": false,
+      "localCompact": false,
+      "model": "codex/gpt-6-luna"
+    },
+    {
+      "phase": 1,
+      "path": "/v1/responses",
+      "bytes": 92326,
+      "items": 19,
+      "trigger": false,
+      "localCompact": false,
+      "model": "codex/gpt-6-luna"
+    }
+  ],
+  "upstream": [
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 21034,
+      "hasAnchor": true,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 227,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "usage": {
+        "input_tokens": 6984,
+        "output_tokens": 333,
+        "total_tokens": 7317,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 100
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 2063,
+      "hasAnchor": false,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 1,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 163,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.completed": 1
+      },
+      "usage": {
+        "input_tokens": 887,
+        "output_tokens": 167,
+        "total_tokens": 1054,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": false,
+      "bytes": 50350,
+      "hasAnchor": true,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 1,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 22,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.completed": 1
+      },
+      "usage": {
+        "input_tokens": 14078,
+        "output_tokens": 26,
+        "total_tokens": 14104,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 3712
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": false,
+      "bytes": 51096,
+      "hasAnchor": true,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 1,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 22,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "usage": {
+        "input_tokens": 14136,
+        "output_tokens": 43,
+        "total_tokens": 14179,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 13952
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 15
+        }
+      }
+    }
+  ],
+  "configurationNote": "remoteCompaction/totalScope/normalizeContextError fields record experimental CLI overrides, all disabled; production AgentConnections configuration and GatewayContext normalization were used."
+}

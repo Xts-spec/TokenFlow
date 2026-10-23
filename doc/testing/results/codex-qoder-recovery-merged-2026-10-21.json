@@ -1,0 +1,79 @@
+{
+  "passed": false,
+  "error": "AssertionError [ERR_ASSERTION]: {\"message\":\"{\\\"error\\\":{\\\"type\\\":\\\"invalid_request_error\\\",\\\"code\\\":\\\"a2a_server_tool_unsupported\\\",\\\"message\\\":\\\"This source supports client function/custom tools only; server-side or unknown tool types are not supported.\\\"}}\",\"codexErrorInfo\":\"other\",\"additionalDetails\":null,\"misalignment\":null}\n+ actual - expected\n\n+ 'failed'\n- 'completed'\n",
+  "phase": "initial-recovery",
+  "recovery": [
+    {
+      "phase": "initial-recovery",
+      "inputBytes": 12688807,
+      "outputBytes": 37943,
+      "calls": 3,
+      "reused": 33,
+      "durationMs": 196263,
+      "inputTokens": 16767,
+      "outputTokens": 17449,
+      "cachedTokens": 0,
+      "cacheWriteTokens": null,
+      "reasoningTokens": 14585,
+      "failed": false,
+      "unmetered": false
+    }
+  ],
+  "rounds": [],
+  "checkpoints": [],
+  "summaryCalls": 3,
+  "requests": [
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 38941,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 23658,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "model": "qoder/gfmodel",
+      "bytes": 16042,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": false,
+      "model": "qoder/gfmodel",
+      "bytes": 56842,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 400,
+      "durationMs": 14
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": false,
+      "model": "qoder/gfmodel",
+      "bytes": 56842,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 400,
+      "durationMs": 12
+    }
+  ]
+}

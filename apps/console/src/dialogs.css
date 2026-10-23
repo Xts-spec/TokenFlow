@@ -1,0 +1,48 @@
+/* All dialogs share one centered surface. No platform or screen uses a side sheet. */
+:root :is(dialog.tfDialog,dialog.tfPicker,dialog.tfRepair){--tf-dialog-width:520px;position:fixed;inset:0;margin:auto;width:min(var(--tf-dialog-width),calc(100vw - 40px));height:fit-content;max-width:calc(100vw - 40px);max-height:calc(100dvh - 64px);box-sizing:border-box;padding:0;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--text);box-shadow:0 24px 80px #0004;overflow:auto;overscroll-behavior:contain;animation:none}
+:root :is(dialog.tfDialog,dialog.tfPicker,dialog.tfRepair)::backdrop{background:#08090a66;backdrop-filter:blur(3px)}
+:root :is(dialog.tfDialog,dialog.tfPicker,dialog.tfRepair)[open]{animation:none;transform:none}
+:root .tfDialogContent{min-height:0;padding:24px;box-sizing:border-box}
+:root .tfDialogContent>header{position:static;top:auto;padding:0;margin:0 0 20px;gap:16px}
+:root .tfDialogContent>header h2{font-size:17px;line-height:1.4}
+:root .tfDialog.tfRestartDialog{--tf-dialog-width:440px}
+:root .tfDialog.tfRestoreConfigDialog{--tf-dialog-width:520px}
+:root .tfDialog.tfVerifyDialog,:root .tfDialog.tfKeyRenameDialog{--tf-dialog-width:400px}
+:root .tfDialog.tfLoginDialog{--tf-dialog-width:520px}
+:root .tfDialog.tfKeyCreatedDialog{--tf-dialog-width:520px}
+:root .tfDialog.tfKeyDetail{--tf-dialog-width:680px}
+:root .tfDialog.tfApiEditorDialog{--tf-dialog-width:640px}
+:root .tfDialog.tfKeyCreateDialog{--tf-dialog-width:720px}
+:root .tfDialog.tfAgentPicker{--tf-dialog-width:800px;height:min(860px,calc(100dvh - 64px));overflow:hidden}
+:root .tfDialog.tfAgentPicker .tfDialogContent{height:100%;padding:0;display:flex;flex-direction:column}
+:root .tfDialog.tfAgentPicker .tfDialogContent>header{padding:22px 24px 16px;margin:0}
+:root .tfDialog.tfAgentPicker .tfDialogContent>footer{padding:16px 24px}
+:root dialog.tfPicker{--tf-dialog-width:720px;height:min(640px,calc(100dvh - 64px));overflow:hidden}
+:root dialog.tfPicker>header{padding:22px 24px 12px}
+:root dialog.tfPicker>.tfSearch{margin:8px 24px}
+:root dialog.tfPicker .tfPickerOrder{padding:8px 24px 12px}
+:root dialog.tfPicker .tfPickBody{padding:0 24px 20px;overflow:auto}
+:root dialog.tfPicker .tfPickerFooter{padding:16px 24px}
+:root .tfKeyCreateDialog .tfDialogContent>header{position:static}
+:root .tfCollectionAdd{width:34px;min-width:34px;height:34px;min-height:34px;padding:7px;border-radius:8px}
+:root dialog.tfRepair{--tf-dialog-width:640px;height:min(620px,calc(100dvh - 64px));display:none;flex-direction:column;overflow:hidden}
+:root dialog.tfRepair[open]{display:flex}
+:root[data-theme] .tfRepairFab{width:44px;min-width:44px;clip-path:none}
+:root .tfRepairFabLabel{display:none}
+@media(max-width:600px){
+ :root :is(dialog.tfDialog,dialog.tfPicker,dialog.tfRepair){max-height:calc(100dvh - 32px);width:calc(100vw - 24px);max-width:calc(100vw - 24px)}
+ :root .tfDialogContent{padding:20px}
+ :root .tfDialog.tfAgentPicker,:root dialog.tfPicker,:root dialog.tfRepair{height:min(600px,calc(100dvh - 32px))}
+ :root .tfDialog.tfAgentPicker .tfDialogContent>header{padding:20px 20px 12px}
+}
+
+:root :is(dialog.tfDialog,dialog.tfPicker,dialog.tfRepair):focus{outline:none}
+
+/* Application progress, result and restart choice retain one centered geometry. */
+:root .tfDialog.tfModelApplyDialog{width:min(var(--tf-dialog-width),calc(100vw - 24px));height:min(360px,calc(100dvh - 64px));overflow:hidden}
+:root dialog.tfDialog.tfModelApplyDialog::backdrop{backdrop-filter:none;-webkit-backdrop-filter:none}
+:root .tfModelApplyDialog .tfDialogContent{height:100%;display:flex;flex-direction:column}
+:root .tfModelApplyDialog .tfDialogContent>header{flex-shrink:0}
+:root .tfModelApplyBody{flex:1;min-height:0;overflow:auto;overflow-wrap:anywhere}
+:root .tfModelApplyBody .tfMigrationProgress{height:100%;box-sizing:border-box;justify-content:center;padding:64px 0 0;gap:12px}
+:root .tfModelApplyDialog .tfDialogContent>footer{flex-shrink:0;min-height:32px;margin-top:16px}

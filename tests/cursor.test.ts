@@ -387,3 +387,22 @@ it.each(['string','object'])('reports Cursor model region restrictions from a se
  expect(response.status).toBe(403);const raw=await response.text();expect(JSON.parse(raw).error).toMatchObject({code:'cursor_region_unsupported'});expect(raw).toContain('地区');expect(raw).not.toContain('PRIVATE');
  expect(provider.snapshot().models.some(m=>m.id==='cursor/fixture-model')).toBe(true);
 });
+
+
+it('refreshes only the selected Cursor account',async()=>{
+ const {root,secrets}=await setup();
+ await secrets.set('cursor-account',JSON.stringify({version:1,accounts:[{apiKey:'one-fixture',email:'one@example.test'},{apiKey:'two-fixture',email:'two@example.test'}]}));
+ const provider=new CursorProvider(root,secrets);cleanup.push(()=>provider.close());await provider.load();
+ const chosen=provider.snapshot().accounts.find(a=>a.label==='one@example.test')!;
+ sdk.models.mockClear();sdk.quota.mockClear();
+ await provider.refresh(true,chosen.id);
+ expect(sdk.models).toHaveBeenCalledTimes(1);expect(sdk.models.mock.calls[0][0]).toMatchObject({apiKey:'one-fixture'});
+ expect(sdk.quota).toHaveBeenCalledTimes(1);
+});
+
+it('uses the configured native database for the import endpoint as well as detection',async()=>{
+ const {root,secrets}=await setup();const path=join(root,'portable-cursor','state.vscdb');
+ const service=await createDesktopService({root,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin',localKey:'local',secrets,cursorLocalPath:path,claudeCredentialStore:null});cleanup.push(()=>service.app.close());
+ const response=await service.app.inject({url:'/api/local-agent/import-local/cursor',method:'POST',headers:{host:'127.0.0.1:9527',authorization:'Bearer admin'},payload:{}});
+ expect(response.statusCode,response.body).toBe(200);expect(sdk.localSession).toHaveBeenCalledWith(path);expect(response.json().accounts.some((a:{models?:string[]})=>a.models?.includes('cursor/fixture-model'))).toBe(true);
+});

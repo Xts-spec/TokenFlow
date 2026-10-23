@@ -29,6 +29,8 @@ const known:Record<string,{message:string;type:string;wireMessage?:string}>={
  cursor_busy:{type:'rate_limit_error',message:'Cursor 正在处理另一个请求，请稍后重试。'},
  cursor_tool_required:{type:'upstream_protocol_error',message:'Cursor 未按要求生成工具调用，请重试或选择其他模型。'},
  workbuddy_sdk_failed:{type:'provider_error',message:'WorkBuddy 官方 SDK 或上游请求失败，请稍后重试。'},
+ workbuddy_rate_limited:{type:'rate_limit_error',message:'WorkBuddy 来源限流，请稍后重试或选择其他模型。'},
+ workbuddy_authentication_failed:{type:'authentication_error',message:'WorkBuddy 登录已失效，请重新授权所选账号。'},
  workbuddy_text_mismatch:{type:'upstream_protocol_error',message:'WorkBuddy SDK 的流式文本与最终消息不一致，本次响应未完成。'},
  workbuddy_model_mismatch:{type:'upstream_protocol_error',message:'WorkBuddy SDK 返回的模型与所选模型不一致，本次响应未接受。'},
  workbuddy_missing_result:{type:'upstream_protocol_error',message:'WorkBuddy SDK 结束时未返回最终结果，本次响应未完成。'},
@@ -49,9 +51,25 @@ const known:Record<string,{message:string;type:string;wireMessage?:string}>={
  a2a_source_policy_blocked:{type:'source_policy_blocked',message:'WorkBuddy 拒绝了本次请求所属的调用渠道（错误 11128：未获批准的调用渠道）。这是来源端的渠道授权错误；重写本地接口、Key 或重新登录不能解除。其他测试会话成功不代表当前客户端已恢复。',wireMessage:'The source rejected this invocation channel under its security policy.'},
  a2a_structured_output_unsupported:{type:'unsupported_feature',message:'该来源暂不支持严格 JSON 或 JSON Schema 输出。请使用普通文本，或选择支持结构化输出的来源。',wireMessage:'Structured output is not supported by this source adapter.'},
  a2a_server_tool_unsupported:{type:'unsupported_feature',message:'该来源支持客户端函数工具，暂不支持服务端内置工具。请关闭内置网页搜索等服务端工具，或选择支持它们的来源。',wireMessage:'This source supports client function/custom tools only; server-side or unknown tool types are not supported.'},
+ upstream_context_length:{type:'invalid_request_error',message:'上游拒绝了超出模型上下文窗口的输入。请减少本轮附件或工具定义，或选择支持更长上下文的模型。'},
+ upstream_rate_limited:{type:'rate_limit_error',message:'上游返回限流或容量不足，请稍后重试或选择其他模型。'},
 };
-export function upstreamError(status:number,body:string):{code?:string;type:string;message:string}{
- let parsed:{error?:{code?:string;type?:string;param?:unknown;message?:string;fields?:unknown}}|undefined;try{parsed=JSON.parse(body);}catch{/* Non-JSON provider response. */}
+type ErrorDetail={code?:string;type?:string;param?:unknown;message?:string;fields?:unknown};
+const record=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
+// Some Responses bridges wrap an already structured provider error inside
+// `message`. Read that envelope before classification so its category survives.
+function errorEnvelope(body:string):{error?:ErrorDetail}{
+ try{
+  const value:unknown=JSON.parse(body);if(!record(value))return {};
+  const detail=record(value.error)?value.error:record(value.response)&&record(value.response.error)?value.response.error:value;
+  if(typeof detail.message==='string'){
+   const nested=errorEnvelope(detail.message);if(nested.error)return nested;
+  }
+  return ['code','type','message','param','fields'].some(key=>key in detail)?{error:detail as ErrorDetail}:{};
+ }catch{return {};}
+}
+export function upstreamError(status:number,body:string):{code?:string;type:string;message:string;param?:string}{
+ const parsed=errorEnvelope(body);
  const code=typeof parsed?.error?.code==='string'?parsed.error.code:undefined;const message=typeof parsed?.error?.message==='string'?parsed.error.message:'';
  if(code==='workbuddy_invalid_request'||code==='cursor_invalid_request'){
   const fields=Array.isArray(parsed?.error?.fields)?parsed.error.fields.filter((field:unknown)=>typeof field==='string'&&/^(?:tools|input|messages|reasoning|model|stream|instructions|system|tool_choice|parallel_tool_calls|max_tokens|max_output_tokens|max_completion_tokens|reasoning_effort)(?:\.(?:[0-9]+|name|type|content|parameters|summary|effort))*$/.test(field)).slice(0,5):[];
@@ -60,13 +78,14 @@ export function upstreamError(status:number,body:string):{code?:string;type:stri
  }
  const entry=code&&Object.hasOwn(known,code)?[code,known[code]] as const:Object.entries(known).find(([,value])=>message===value.wireMessage);
  if(entry)return {code:entry[0],type:entry[1].type,message:entry[1].message};
- if(status===400){
-  if(code==='context_length_exceeded')return {code:'upstream_context_length',type:'invalid_request_error',message:'上游拒绝了超出模型上下文窗口的输入。请减少本轮附件或工具定义，或选择支持更长上下文的模型。'};
+ if(['context_length_exceeded','context_too_large'].includes(code??''))return {code:'upstream_context_length',...known.upstream_context_length!};
+ if(status===429||['rate_limit_exceeded','rate_limit_error'].includes(code??'')||parsed.error?.type==='rate_limit_error')return {code:'upstream_rate_limited',...known.upstream_rate_limited!};
+ if(status===400||code==='upstream_invalid_request'){
   const param=typeof parsed?.error?.param==='string'?parsed.error.param:'';
   // Retain only structural request paths; arbitrary parameter names can contain
   // user data. Raw upstream messages never cross this boundary.
   const safeParam=/^(?:input|messages|tools|model|instructions|reasoning|text|response_format|tool_choice|max_output_tokens)(?:\[\d+\]|\.(?:\d+|content|type|text|role|name|parameters|schema|format|strict|effort|summary|call_id|arguments|output|encrypted_content))*$/.test(param)?param:'';
-  if(safeParam||['invalid_request_error','invalid_type','invalid_value','missing_required_parameter','unsupported_parameter','unsupported_value','invalid_parameter'].includes(code??'')||parsed?.error?.type==='invalid_request_error')return {code:'upstream_invalid_request',type:'invalid_request_error',message:`上游拒绝了请求格式或参数${safeParam?`（字段：${safeParam}）`:''}。请保留此错误用于排查协议兼容性；切换账号或修改 DNS 不能修复参数错误。`};
+  if(safeParam||['upstream_invalid_request','invalid_request_error','invalid_type','invalid_value','missing_required_parameter','unsupported_parameter','unsupported_value','invalid_parameter'].includes(code??'')||parsed?.error?.type==='invalid_request_error')return {code:'upstream_invalid_request',type:'invalid_request_error',...(safeParam?{param:safeParam}:{}),message:`上游拒绝了请求格式或参数${safeParam?`（字段：${safeParam}）`:''}。请保留此错误用于排查协议兼容性；切换账号或修改 DNS 不能修复参数错误。`};
  }
  if(message.includes('User location is not supported for the API use'))return {code:'region_not_supported',type:'region_not_supported',message:'所选账号的上游服务不支持当前地区使用 API。请查看提供商的地区支持说明；重新登录不能解决此限制。'};
  if(status>=500&&/auth_unavailable|cooling down/.test(message))return {code:'source_cooldown',type:'source_unavailable',message:'所选来源因最近的上游错误暂时无法接收请求。网关会保留账号和模型配置；请稍后重试，持续失败时检查来源的实际调用错误。'};

@@ -1,0 +1,79 @@
+{
+  "version": "10.15.26.51",
+  "installed": true,
+  "installedVersion": "10.15.26.51",
+  "packagedRuntimeCheckPassed": true,
+  "regressionTestsPassed": 256,
+  "typecheckPassed": true,
+  "workbuddyLocalTimersRemoved": [
+    60,
+    240
+  ],
+  "sseParserChanged": false,
+  "policy": {
+    "scope": "total",
+    "knownCapacityRatio": 0.8,
+    "unknownCapacityTrigger": 128000,
+    "contextWindowDeclared": false
+  },
+  "highCacheStable": {
+    "passed": true,
+    "cliVersion": "codex-cli 0.163.0-alpha.11",
+    "tools": 6,
+    "turnStatus": "completed",
+    "localCompactions": 0,
+    "autoCompactTokenLimit": 217600,
+    "normalInputTokens": 140000,
+    "cachedInputTokens": 133000
+  },
+  "realHistoryGrowth": {
+    "passed": true,
+    "cliVersion": "codex-cli 0.163.0-alpha.11",
+    "tools": 6,
+    "turnStatus": "completed",
+    "localCompactions": 1,
+    "autoCompactTokenLimit": 217600,
+    "normalInputTokens": 140000,
+    "cachedInputTokens": 133000
+  },
+  "unknownCapacityStable": {
+    "passed": true,
+    "cliVersion": "codex-cli 0.163.0-alpha.11",
+    "tools": 6,
+    "turnStatus": "completed",
+    "localCompactions": 0,
+    "autoCompactTokenLimit": 128000,
+    "normalInputTokens": 100000,
+    "cachedInputTokens": null
+  },
+  "knownCapacitySwitch": {
+    "passed": true,
+    "scope": "installed Codex runtime with synthetic loopback providers",
+    "advertisedWindow": null,
+    "receiverWindow": 272000,
+    "noTrigger": false,
+    "autoCompactTokenLimit": 217600,
+    "firstCompaction": true,
+    "followupTurns": 2,
+    "clientCompactions": 3,
+    "manualCompactions": 0,
+    "newThread": true,
+    "restoredOriginal": true,
+    "modelAuthorizationPreserved": true
+  },
+  "unknownCapacitySwitch": {
+    "passed": true,
+    "scope": "installed Codex runtime with synthetic loopback providers",
+    "advertisedWindow": null,
+    "receiverWindow": null,
+    "noTrigger": false,
+    "autoCompactTokenLimit": 128000,
+    "firstCompaction": true,
+    "followupTurns": 2,
+    "clientCompactions": 3,
+    "manualCompactions": 0,
+    "newThread": true,
+    "restoredOriginal": true,
+    "modelAuthorizationPreserved": true
+  }
+}

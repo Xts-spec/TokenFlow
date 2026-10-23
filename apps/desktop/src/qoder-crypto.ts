@@ -35,6 +35,7 @@ export async function runQoderCrypto(){
   // Local State during initialization, before app.ready.
   const client=process.argv.find(arg=>arg.startsWith('--tokenflow-qoder-client='))?.slice('--tokenflow-qoder-client='.length)??'qoder';
   if(client!=='qoder'&&client!=='qoder-ide')throw Error();
+  if(process.platform==='darwin')app.setActivationPolicy('prohibited');
   app.setName(process.platform==='darwin'&&client==='qoder'?'Qoder App':'Qoder');
   const profile=process.argv.find(arg=>arg.startsWith('--tokenflow-qoder-profile='))?.slice('--tokenflow-qoder-profile='.length);
   if(!profile||!isAbsolute(profile))throw Error();

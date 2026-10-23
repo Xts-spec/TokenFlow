@@ -3,7 +3,6 @@
 import {upstreamError} from './upstream-errors.js';
 type Item=Record<string,any>;
 export const SUMMARY_CHUNK_BYTES=48*1024;
-export const SUMMARY_MAX_CALLS=32;
 // Baseline history-reduction target. GatewayContext expands it for fixed
 // instructions/tools and the current user request; this is not a model limit.
 export const CONTEXT_INPUT_BYTES=128*1024;
@@ -15,39 +14,32 @@ export function splitTranscript(text:string,limit=SUMMARY_CHUNK_BYTES){
  for(const c of text){const n=Buffer.byteLength(c);if(bytes+n>limit){parts.push(chunk);chunk='';bytes=0;}chunk+=c;bytes+=n;}
  if(chunk)parts.push(chunk);return parts;
 }
-function excerpt(text:string,limit:number){
- if(Buffer.byteLength(text)<=limit)return text;
- // Iterating codepoints keeps UTF-8 intact, including Chinese and emoji.
- const head=splitTranscript(text,Math.floor(limit/2))[0];
- const tail=splitTranscript([...text].reverse().join(''),Math.floor(limit/2))[0];
- return head+`\n[historical output excerpt; ${Buffer.byteLength(text)} original bytes; middle omitted, re-read the source if needed]\n`+[...tail].reverse().join('');
-}
-/** Old tool payloads and assistant work are excerpted. User text/instructions stay intact
- * for the summarizer. Binary attachments cannot be interpreted by a text summary. */
+/** Preserve all historical text for the summarizer. Binary attachments cannot
+ * be interpreted by a text summary. */
 export function summaryTranscript(input:Item[]){
  return JSON.stringify(input.map(item=>{
   const value={...item};delete value.id;delete value.encrypted_content;
   if(item.type==='reasoning')return {type:'reasoning',summary:item.summary};
   if(['function_call_output','custom_tool_call_output'].includes(item.type)){
-   // Codex persists tool output as either text or content blocks. Both forms
-   // need the same bound; large array outputs used to bypass excerpting.
+   // Preserve both text and structured tool output without local excerpts.
    const output=Array.isArray(item.output)?item.output.map((p:Item)=>['input_image','image_url','image','input_file','file'].includes(p.type)?{type:'text',text:'[historical attachment omitted]'}:p):item.output;
-   value.output=excerpt(typeof output==='string'?output:JSON.stringify(output??''),1024);
+   value.output=output;
   }
-  if(['function_call','custom_tool_call'].includes(item.type))for(const key of ['arguments','input'])if(typeof item[key]==='string')value[key]=excerpt(item[key],1024);
   if(Array.isArray(item.content))value.content=item.content.map((p:Item)=>['input_image','image_url','image','input_file','file'].includes(p.type)?{type:'input_text',text:'[Historical attachment omitted from text checkpoint; consult the original conversation if needed.]'}:p);
-  if(item.role==='assistant'){
-   if(typeof value.content==='string')value.content=excerpt(value.content,1024);
-   else if(Array.isArray(value.content))value.content=value.content.map((p:Item)=>typeof p.text==='string'?{...p,text:excerpt(p.text,1024)}:p);
-  }
   return value;
  }));
 }
 export async function readSummaryResponse(response:Response):Promise<Item>{
  if(!response.body)throw new Error('Summary response has no body');
- const reader=response.body.getReader();const decoder=new TextDecoder();let bytes=0,buffer='';
+ const reader=response.body.getReader();const decoder=new TextDecoder();let buffer='';
  const done=new Map<number,Item>(),deltas=new Map<string,string>();let terminal:Item|undefined;
- const safeTerminal=(value:Item):Item=>value.status==='failed'?{...value,error:upstreamError(502,JSON.stringify({error:value.error}))}:value;
+ const safeTerminal=(value:Item):Item=>{
+  if(value.status!=='failed')return value;
+  const reported=[value.error_status,value.status_code,value.error?.status_code,value.error?.status].find(status=>Number.isInteger(status)&&status>=400&&status<=599);
+  const error=upstreamError(reported??502,JSON.stringify({error:value.error}));
+  const status=reported??({rate_limit_error:429,authentication_error:401,permission_error:403,invalid_request_error:400,source_unavailable:503} as Record<string,number>)[error.type]??502;
+  return {...value,error,error_status:status};
+ };
  const frame=(text:string)=>{
   const data=text.split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5).trimStart()).join('\n');
   if(!data||data==='[DONE]')return;
@@ -61,7 +53,7 @@ export async function readSummaryResponse(response:Response):Promise<Item>{
  };
  try{
   const sse=(response.headers.get('content-type')??'').includes('text/event-stream');
-  for(;;){const {done:ended,value}=await reader.read();if(ended)break;bytes+=value.length;if(bytes>4*1024*1024)throw new Error('Summary response exceeds limit');
+  for(;;){const {done:ended,value}=await reader.read();if(ended)break;
    buffer+=decoder.decode(value,{stream:true});
    if(sse){buffer=buffer.replace(/\r\n/g,'\n');let end;while((end=buffer.indexOf('\n\n'))>=0){frame(buffer.slice(0,end));buffer=buffer.slice(end+2);if(terminal)break;}
     // A terminal Responses event ends the operation. Some bridges keep SSE

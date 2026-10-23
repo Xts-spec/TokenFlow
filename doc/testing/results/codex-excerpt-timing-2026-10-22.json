@@ -1,0 +1,82 @@
+{
+  "live": true,
+  "model": "codex/gpt-6-luna",
+  "historyBytes": 12666525,
+  "textExcerptEnabled": true,
+  "timing": {
+    "firstTurnMs": 11715,
+    "firstCompaction": {
+      "inputBytes": 12687944,
+      "outputBytes": 26082,
+      "calls": 1,
+      "reused": 0,
+      "durationMs": 8809,
+      "inputTokens": 7818,
+      "outputTokens": 217,
+      "cachedTokens": 0,
+      "cacheWriteTokens": 0,
+      "reasoningTokens": 0,
+      "failed": false,
+      "unmetered": false
+    },
+    "reuse": [
+      {
+        "durationMs": 3259,
+        "status": "completed",
+        "earliestRequirementPreserved": true
+      }
+    ],
+    "followup": {
+      "durationMs": 5774,
+      "rawHistoryBytes": 12973814,
+      "newSummaryCalls": 1,
+      "report": {
+        "inputBytes": 312755,
+        "outputBytes": 72655,
+        "calls": 1,
+        "reused": 0,
+        "durationMs": 5602,
+        "inputTokens": 6393,
+        "outputTokens": 147,
+        "cachedTokens": 0,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 0,
+        "failed": false,
+        "unmetered": false
+      }
+    }
+  },
+  "firstSummary": {
+    "phase": 1,
+    "summary": true,
+    "bytes": 22801,
+    "hasAnchor": true,
+    "model": "codex/gpt-6-luna",
+    "status": 200,
+    "events": {
+      "response.created": 1,
+      "response.in_progress": 1,
+      "response.output_item.added": 1,
+      "response.content_part.added": 1,
+      "response.output_text.delta": 213,
+      "response.metadata": 1,
+      "response.output_text.done": 1,
+      "response.content_part.done": 1,
+      "response.output_item.done": 1,
+      "response.completed": 1
+    },
+    "durationMs": 6822,
+    "usage": {
+      "input_tokens": 7818,
+      "output_tokens": 217,
+      "total_tokens": 8035,
+      "input_tokens_details": {
+        "cache_write_tokens": 0,
+        "cached_tokens": 0
+      },
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      }
+    }
+  }
+}

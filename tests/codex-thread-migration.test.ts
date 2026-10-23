@@ -4,16 +4,36 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {DatabaseSync} from 'node:sqlite';
 import {CodexThreadMigration,type MigrationClient} from '../packages/core/src/codex-thread-migration.js';
+import {CodexHistoryBackups} from '../packages/core/src/codex-history-backups.js';
 async function fixture(){
  const root=await mkdtemp(join(await realpath(tmpdir()),'thread-migration-')),home=join(root,'codex');await mkdir(home);
  await writeFile(join(home,'config.toml'),'model="native"');
  const db=new DatabaseSync(join(home,'state_5.sqlite'));db.exec('create table threads(id text,model_provider text,model text,rollout_path text,source text,archived integer)');
  for(const [id,provider,source,archived] of [['old','openai','vscode',0],['cli','openai','cli',0],['custom','other','vscode',0],['archived','openai','vscode',1],['test','openai','exec',0],['subagent','openai','{"subagent":1}',0],['draft','openai','vscode',0]] as const){const path=join(home,`${id}.jsonl`);await writeFile(path,`{"history":"${id}"}\n`);db.prepare('insert into threads values (?,?,?,?,?,?)').run(id,provider,id==='draft'?null:'native',path,source,archived);}
- let running=false,failOn='',archiveFailure=false,calls=0;
- const client=async():Promise<MigrationClient>=>({pid:100,setArchived:async(id,archived)=>{if(archived&&archiveFailure)throw Error('archive fixture failure');db.prepare('update threads set archived=? where id=?').run(Number(archived),id);},close:async()=>{},resume:async(id,provider,model)=>{calls++;if(id===failOn)throw Error('fixture failure');const row=db.prepare('select rollout_path from threads where id=?').get(id);await readFile(String(row?.rollout_path));db.prepare('update threads set model_provider=?,model=? where id=?').run(provider,model,id);}});
+ let running=false,failOn='',archiveFailure=false,calls=0,compactionFailure=false;const compacted:string[]=[];
+ const client=async():Promise<MigrationClient>=>({pid:100,setArchived:async(id,archived)=>{if(archived&&archiveFailure)throw Error('archive fixture failure');db.prepare('update threads set archived=? where id=?').run(Number(archived),id);},close:async()=>{},resume:async(id,provider,model,compact?:boolean)=>{calls++;if(id===failOn)throw Error('fixture failure');const row=db.prepare('select rollout_path from threads where id=?').get(id);await readFile(String(row?.rollout_path));db.prepare('update threads set model_provider=?,model=? where id=?').run(provider,model,id);if(compact){compacted.push(id);if(compactionFailure)throw Error('compaction fixture failure');}}});
  const migration=new CodexThreadMigration(root,join(home,'config.toml'),async()=>running?[99]:[],client);
- return {root,home,db,migration,reopen:()=>new CodexThreadMigration(root,join(home,'config.toml'),async()=>running?[99]:[],client),setArchiveFailure:(v:boolean)=>archiveFailure=v,setRunning:(v:boolean)=>running=v,setFailure:(v:string)=>failOn=v,calls:()=>calls,close:async()=>{try{db.close();}catch{}await rm(root,{recursive:true,force:true});}};
+ return {root,home,db,migration,compacted,setCompactionFailure:(v:boolean)=>compactionFailure=v,reopen:()=>new CodexThreadMigration(root,join(home,'config.toml'),async()=>running?[99]:[],client),setArchiveFailure:(v:boolean)=>archiveFailure=v,setRunning:(v:boolean)=>running=v,setFailure:(v:string)=>failOn=v,calls:()=>calls,close:async()=>{try{db.close();}catch{}await rm(root,{recursive:true,force:true});}};
 }
+it('identifies imported official history without treating new gateway threads or key changes as new imports',async()=>{
+ const f=await fixture();try{
+  expect(await f.migration.bootstrapHistory('old')).toBeUndefined();
+  await f.migration.prepare('gateway');await f.migration.migrate('gateway');
+  const initial=await f.migration.bootstrapHistory('old');expect(initial?.revision).toMatch(/^[a-f0-9]{64}$/);
+  expect(await f.reopen().bootstrapHistory('old')).toEqual(initial);
+  const born=join(f.home,'born.jsonl');await writeFile(born,'New gateway conversation');
+  f.db.prepare('insert into threads values (?,?,?,?,?,?)').run('born','token_flow','gateway',born,'vscode',0);
+  await f.migration.prepare('gateway',['gateway','other-model']);await f.migration.migrate('gateway',['gateway','other-model']);
+  expect(await f.migration.bootstrapHistory('born')).toBeUndefined();expect(await f.migration.bootstrapHistory('old')).toEqual(initial);
+  await writeFile(join(f.home,'old.jsonl'),'Official A; gateway completed B.');
+  await f.migration.restore('native');expect(await f.migration.bootstrapHistory('old')).toBeUndefined();
+  expect(await readFile(join(f.home,'old.jsonl'),'utf8')).toBe('Official A; gateway completed B.');
+  await writeFile(join(f.home,'old.jsonl'),'Official A; gateway completed B; official continued C.');
+  await f.migration.prepare('gateway');await f.migration.migrate('gateway');
+  const latest=await f.migration.bootstrapHistory('old');expect(latest?.revision).toMatch(/^[a-f0-9]{64}$/);expect(latest?.revision).not.toBe(initial?.revision);
+  expect(await readFile(join(f.home,'old.jsonl'),'utf8')).toBe('Official A; gateway completed B; official continued C.');
+ }finally{await f.close();}
+});
 describe('Codex old thread migration',()=>{
  it('requires exit before backup or configuration writes',async()=>{const f=await fixture();try{f.setRunning(true);await expect(f.migration.prepare('gateway')).rejects.toMatchObject({code:'codex_exit_required'});expect(f.calls()).toBe(0);expect((await f.migration.status()).backups).toBe(0);}finally{await f.close();}});
  it('backs up routes and history, migrates only local official threads, restores without losing later turns',async()=>{const f=await fixture();try{
@@ -204,6 +224,25 @@ it('appends only a newly seen thread after returning to official, sharing the ea
   expect(f.db.prepare("select model from threads where id='later'").get()?.model).toBe('latest-official');
  }finally{await f.close();}
 });
+it('backs up only added history on repeated switches and retains each observed route with a recoverable revision',async()=>{
+ const f=await fixture();try{
+  const path=join(f.home,'old.jsonl'),original=await readFile(path,'utf8');
+  await f.migration.prepare('gateway');await f.migration.migrate('gateway');
+  const gatewayText=original+'gateway turn\n';await writeFile(path,gatewayText);
+  await f.reopen().restore('native');
+  const officialText=gatewayText+'official turn\n';await writeFile(path,officialText);
+  await f.reopen().prepare('second-gateway');await f.reopen().migrate('second-gateway');await f.reopen().restore('native');
+  const files=await backupFiles(f.root);expect(files.filter(name=>name.endsWith('.jsonl'))).toHaveLength(2);expect(files.filter(name=>name.endsWith('.sqlite'))).toHaveLength(1);
+  const versions:any[]=[];for(const file of files.filter(name=>name.endsWith('manifest.json'))){const journal=JSON.parse(await readFile(join(f.root,'codex-thread-backups',file),'utf8'));for(const entry of journal.entries)if(entry.id==='old')versions.push(...entry.historySnapshots);}
+  const history=new CodexHistoryBackups(f.root);
+  const gatewayVersion=versions.filter(v=>v.provider==='token_flow'&&v.model==='gateway').at(-1);
+  expect((await history.read(gatewayVersion.snapshot)).toString()).toBe(gatewayText);
+  const latest=versions.find(v=>v.provider==='token_flow'&&v.model==='second-gateway');expect((await history.read(latest.snapshot)).toString()).toBe(officialText);
+  const directory=join(f.root,'codex-history-backups',latest.snapshot.key),deltas=(await readdir(directory)).filter(name=>name.endsWith('.delta'));
+  expect(deltas).toHaveLength(2);let bytes=0;for(const file of deltas)bytes+=(await stat(join(directory,file))).size;
+  expect(bytes).toBe(Buffer.byteLength('gateway turn\nofficial turn\n'));expect(await readFile(path,'utf8')).toBe(officialText);
+ }finally{await f.close();}
+});
 it('creates a fresh baseline when an earlier history backup has been removed instead of publishing a broken reference',async()=>{
  const f=await fixture();try{
   await f.migration.prepare('gateway');await f.migration.migrate('gateway');await f.migration.restore();
@@ -233,5 +272,18 @@ it.each(['directory','relative','symlink'])('validates live history before reusi
   await expect(f.reopen().prepare('next-gateway')).rejects.toThrow();
   expect(await readdir(join(f.root,'codex-thread-backups'))).toEqual(previous);
   expect(f.db.prepare("select model_provider from threads where id='old'").get()?.model_provider).toBe('openai');
+ }finally{await f.close();}
+});
+
+it('backs up and switches large histories without starting any compaction',async()=>{
+ const f=await fixture();try{
+  const original=JSON.stringify({type:'response_item',payload:{role:'assistant',content:'old work '.repeat(40000)}})+'\n';
+  await writeFile(join(f.home,'old.jsonl'),original);await f.migration.prepare('gateway');f.setCompactionFailure(true);
+  // Upgrade from .43 must ignore its unfinished switch-time compaction marker.
+  for(const name of await readdir(join(f.root,'codex-thread-backups'))){const path=join(f.root,'codex-thread-backups',name,'manifest.json');const journal=JSON.parse(await readFile(path,'utf8'));for(const entry of journal.entries){entry.compactionChecked=true;entry.initialCompaction='pending';}await writeFile(path,JSON.stringify(journal));}
+  await f.migration.migrate('gateway');expect(f.compacted).toEqual([]);
+  expect(f.db.prepare("select model_provider from threads where id='old'").get()?.model_provider).toBe('token_flow');
+  expect(await readFile(join(f.home,'old.jsonl'),'utf8')).toBe(original);
+  await f.reopen().migrate('gateway');await f.reopen().restore();expect(f.compacted).toEqual([]);
  }finally{await f.close();}
 });

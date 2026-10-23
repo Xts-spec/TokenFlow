@@ -1,6 +1,7 @@
 import { mkdtempSync,readFileSync,writeFileSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join,resolve } from 'node:path';
+import { nativeImportOverlay } from './native-import-overlay.mjs';
 import { workbuddyRegionOverlay } from './workbuddy-region-overlay.mjs';
 import { providerLoginOverlay } from './provider-login-overlay.mjs';
 import { officialCatalogOverlay } from './official-catalog-overlay.mjs';
@@ -46,6 +47,7 @@ replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/token_flow_
 providerLoginOverlay(replacements,patchDir);
 workbuddyRegionOverlay(replacements,patchDir);
 officialCatalogOverlay(replacements,patchDir);
+nativeImportOverlay(replacements,patchDir);
 // An explicit finish reason must terminate even when reasoning used the entire
 // budget before any visible text or tool call was emitted.
 const responseSource=resolve('upstream/CLIProxyAPI/internal/translator/openai/openai/responses/openai_openai-responses_response.go');

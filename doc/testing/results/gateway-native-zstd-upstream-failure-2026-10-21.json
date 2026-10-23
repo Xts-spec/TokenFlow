@@ -1,0 +1,341 @@
+{
+  "passed": false,
+  "error": "AssertionError [ERR_ASSERTION]: {\"message\":\"Error running remote compact task: stream disconnected before completion: 摘要上游请求失败（HTTP 500）：上游连接失败：连接被中断。请检查系统代理、分流和 DNS；尚不能据此判断账号授权失效。 原会话未修改。\",\"codexErrorInfo\":\"other\",\"additionalDetails\":null,\"misalignment\":null}\n+ actual - expected\n\n+ 'failed'\n- 'completed'\n",
+  "nativeOfficial": true,
+  "decodeZstd": false,
+  "gatewayParser": true,
+  "transportOnly": true,
+  "phase": "gateway-1",
+  "recovery": [
+    {
+      "phase": "initial-recovery",
+      "inputBytes": 317142,
+      "outputBytes": 312402,
+      "calls": 6,
+      "reused": 0,
+      "durationMs": 151641,
+      "inputTokens": 6075,
+      "outputTokens": 15744,
+      "cachedTokens": 0,
+      "cacheWriteTokens": null,
+      "reasoningTokens": 12241,
+      "failed": false,
+      "unmetered": false
+    },
+    {
+      "phase": "initial-recovery",
+      "inputBytes": 316339,
+      "outputBytes": 316604,
+      "calls": 1,
+      "reused": 0,
+      "durationMs": 83801,
+      "inputTokens": 279,
+      "outputTokens": 691,
+      "cachedTokens": 0,
+      "cacheWriteTokens": null,
+      "reasoningTokens": 522,
+      "failed": false,
+      "unmetered": false
+    },
+    {
+      "phase": "gateway-1",
+      "inputBytes": 376208,
+      "outputBytes": 0,
+      "calls": 4,
+      "reused": 1,
+      "durationMs": 58664,
+      "inputTokens": 1215,
+      "outputTokens": 4794,
+      "cachedTokens": 0,
+      "cacheWriteTokens": null,
+      "reasoningTokens": 3741,
+      "failed": true,
+      "unmetered": true
+    },
+    {
+      "phase": "gateway-1",
+      "inputBytes": 376208,
+      "outputBytes": 0,
+      "calls": 4,
+      "reused": 3,
+      "durationMs": 46,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "cachedTokens": 0,
+      "cacheWriteTokens": 0,
+      "reasoningTokens": 0,
+      "failed": true,
+      "unmetered": true
+    },
+    {
+      "phase": "gateway-1",
+      "inputBytes": 376208,
+      "outputBytes": 0,
+      "calls": 4,
+      "reused": 3,
+      "durationMs": 59,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "cachedTokens": 0,
+      "cacheWriteTokens": 0,
+      "reasoningTokens": 0,
+      "failed": true,
+      "unmetered": true
+    }
+  ],
+  "rounds": [
+    {
+      "phase": "initial-recovery",
+      "durationMs": 251256,
+      "markersPreserved": 1
+    },
+    {
+      "phase": "official-1",
+      "durationMs": 15463,
+      "restoredCheckpoint": "35ddf15598afc6b41d4a115a72f7cf7052eb6d9ec60e258fd37ce9648a6b20b2",
+      "exactCheckpointTexts": 26,
+      "markersPreserved": 7,
+      "newSummaryCalls": 0
+    }
+  ],
+  "checkpoints": [
+    {
+      "phase": "initial-full-history",
+      "hash": "35ddf15598afc6b41d4a115a72f7cf7052eb6d9ec60e258fd37ce9648a6b20b2"
+    }
+  ],
+  "summaryCalls": 19,
+  "requests": [
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "identity",
+      "model": "qoder/gfmodel",
+      "bytes": 7345,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "identity",
+      "model": "qoder/gfmodel",
+      "bytes": 4683,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "identity",
+      "model": "qoder/gfmodel",
+      "bytes": 3363,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "identity",
+      "model": "qoder/gfmodel",
+      "bytes": 4358,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "identity",
+      "model": "qoder/gfmodel",
+      "bytes": 2891,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "identity",
+      "model": "qoder/gfmodel",
+      "bytes": 2198,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": false,
+      "requestEncoding": "identity",
+      "model": "qoder/gfmodel",
+      "bytes": 334586,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200,
+      "durationMs": 15485
+    },
+    {
+      "phase": "initial-recovery",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "identity",
+      "model": "qoder/gfmodel",
+      "bytes": 1317,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "gateway-1",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 3924,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 500,
+      "durationMs": 39143
+    },
+    {
+      "phase": "gateway-1",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 2689,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "gateway-1",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 2036,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 500,
+      "durationMs": 39074
+    },
+    {
+      "phase": "gateway-1",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 2268,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 200
+    },
+    {
+      "phase": "gateway-1",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 3924,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 500,
+      "durationMs": 25
+    },
+    {
+      "phase": "gateway-1",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 2036,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 500,
+      "durationMs": 23
+    },
+    {
+      "phase": "gateway-1",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 1670,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 500,
+      "durationMs": 25
+    },
+    {
+      "phase": "gateway-1",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 1382,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 500,
+      "durationMs": 23
+    },
+    {
+      "phase": "gateway-1",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 3924,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 500,
+      "durationMs": 41
+    },
+    {
+      "phase": "gateway-1",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 2036,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 500,
+      "durationMs": 39
+    },
+    {
+      "phase": "gateway-1",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 1670,
+      "hasOriginalMarker": false,
+      "opaqueItems": 0,
+      "status": 500,
+      "durationMs": 38
+    },
+    {
+      "phase": "gateway-1",
+      "official": false,
+      "summary": true,
+      "requestEncoding": "zstd",
+      "model": "qoder/gfmodel",
+      "bytes": 1382,
+      "hasOriginalMarker": true,
+      "opaqueItems": 0,
+      "status": 500,
+      "durationMs": 39
+    }
+  ]
+}

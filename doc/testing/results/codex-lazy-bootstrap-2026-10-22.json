@@ -1,0 +1,152 @@
+{
+  "passed": true,
+  "clientOnly": false,
+  "live": true,
+  "largeHistory": true,
+  "bootstrapCompactions": 0,
+  "normalizeContextError": false,
+  "remoteCompaction": false,
+  "seedThresholdCleared": true,
+  "seedReportedInputTokens": 100,
+  "totalScope": false,
+  "persistedCompactions": 0,
+  "resumed": [
+    {
+      "status": "completed",
+      "earliestRequirementPreserved": true
+    }
+  ],
+  "firstTurnStatus": "completed",
+  "firstError": null,
+  "retryTurn": false,
+  "singleAttempt": false,
+  "knownUsage": false,
+  "model": "codex/gpt-6-luna",
+  "turnStatus": "completed",
+  "errorCode": null,
+  "historyBytes": 12666528,
+  "clientCompactions": 0,
+  "gatewayCompactions": 1,
+  "summaryCalls": 1,
+  "sourceContextErrors": 0,
+  "earliestRequirementPreserved": true,
+  "requests": [
+    {
+      "phase": 1,
+      "path": "/v1/responses",
+      "bytes": 12707830,
+      "items": 29,
+      "trigger": false,
+      "localCompact": false,
+      "model": "codex/gpt-6-luna"
+    },
+    {
+      "phase": 1,
+      "path": "/v1/responses",
+      "bytes": 12745152,
+      "items": 32,
+      "trigger": false,
+      "localCompact": false,
+      "model": "codex/gpt-6-luna"
+    }
+  ],
+  "upstream": [
+    {
+      "phase": 1,
+      "summary": true,
+      "bytes": 22802,
+      "hasAnchor": true,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 1,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 256,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.completed": 1
+      },
+      "usage": {
+        "input_tokens": 7691,
+        "output_tokens": 260,
+        "total_tokens": 7951,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": false,
+      "bytes": 45163,
+      "hasAnchor": true,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 1,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 22,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.completed": 1
+      },
+      "usage": {
+        "input_tokens": 12972,
+        "output_tokens": 26,
+        "total_tokens": 12998,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 3712
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      }
+    },
+    {
+      "phase": 1,
+      "summary": false,
+      "bytes": 45909,
+      "hasAnchor": true,
+      "model": "codex/gpt-6-luna",
+      "status": 200,
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 22,
+        "response.metadata": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "usage": {
+        "input_tokens": 13030,
+        "output_tokens": 38,
+        "total_tokens": 13068,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 12800
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 10
+        }
+      }
+    }
+  ],
+  "configurationNote": "bootstrapCompactions counts removed switch-time tasks (zero); gatewayCompactions=1 is the current conversation first-request bootstrap. Other false booleans denote disabled experimental CLI overrides, not production settings."
+}

@@ -4,26 +4,29 @@ import {modelGroups,type Choice} from './flow-model';
 import {qualifiedModelLabel as modelLabel} from './model-label';
 import {compareNames,DragHandle,dropOrder,orderModels,useModelOrder} from './display-order';
 import {modelManufacturer} from './UsagePanel';
-import {ProviderIcon} from './ProviderIcon';
+import {ProviderIcon,providerIconKey} from './ProviderIcon';
 import {QuotaRing} from './QuotaRing';
 import {FlowDialog} from './FlowDialog';
 import {Icon} from './Icons';
 import {sourceSelectionState,sourceSelectionNotice} from './source-options';
 
 const same=(a:Choice,b:Choice)=>a.sourceId===b.sourceId&&a.model===b.model;
-export function AgentModelPicker({open,title,local,current,selected,onConfirm,onClose,embedded=false,busy=false,onSelectionChange}:{embedded?:boolean;busy?:boolean;onSelectionChange?:(choices:Choice[])=>void;open:boolean;title:string;local:LocalAgentSnapshot;current?:Choice;selected:Choice[];onConfirm:(choices:Choice[])=>void;onClose:()=>void}){
+export function AgentModelPicker({open,title,local,current,selected,onConfirm,onClose,embedded=false,busy=false,onSelectionChange,compact=false}:{compact?:boolean;embedded?:boolean;busy?:boolean;onSelectionChange?:(choices:Choice[])=>void;open:boolean;title:string;local:LocalAgentSnapshot;current?:Choice;selected:Choice[];onConfirm:(choices:Choice[])=>void;onClose:()=>void}){
  const catalogId=useId();
- const [query,setQuery]=useState(''),[draft,setDraft]=useState<Choice[]>([]),[source,setSource]=useState('');
+ const [query,setQuery]=useState(''),[draft,setDraft]=useState<Choice[]>([]),[source,setSource]=useState(''),[provider,setProvider]=useState('');
  const [order,,ranks,moveModel]=useModelOrder();const displayOrder=order==='manual'?'manual':'name';
  const search=useRef<HTMLInputElement>(null),list=useRef<HTMLDivElement>(null);
  const positions=useRef(new Map<string,number>());
  const all=modelGroups(local).sort((a,b)=>Number(b.provider==='api')-Number(a.provider==='api')||compareNames(a.label,b.label));
- useLayoutEffect(()=>{if(!open)return;setQuery('');setDraft(selected);setSource(current?.sourceId??selected[0]?.sourceId??all[0]?.id??'');positions.current.clear();},[open]);
+ useLayoutEffect(()=>{if(!open)return;setQuery('');setProvider('');setDraft(selected);setSource(compact?'':current?.sourceId??selected[0]?.sourceId??all[0]?.id??'');positions.current.clear();},[open]);
  const releaseSearch=()=>{if(document.activeElement===search.current)search.current?.blur();};
  const updateDraft=(next:Choice[]|((items:Choice[])=>Choice[]))=>{const value=typeof next==='function'?next(draft):next;setDraft(value);onSelectionChange?.(value);};
  const q=query.trim().toLowerCase();
  const groups=all.map(group=>({...group,models:orderModels(group.models.filter(model=>!q||`${group.label} ${group.providerLabel} ${model.id} ${model.label}`.toLowerCase().includes(q)),model=>model.label,displayOrder,ranks)})).filter(group=>group.models.length);
- const active=groups.find(group=>group.id===source)??groups[0];
+ const active=groups.find(group=>group.id===source)??(!compact?groups[0]:undefined);
+ const providers=[...new Map(groups.map(group=>[providerIconKey(group.provider),group])).entries()];
+ const activeProvider=active?providerIconKey(active.provider):provider;
+ const accounts=groups.filter(group=>providerIconKey(group.provider)===activeProvider);
  const key=`${active?.id??''}\n${q}`;
  useLayoutEffect(()=>{if(list.current)list.current.scrollTop=positions.current.get(key)??0;},[key]);
  const chooseSource=(id:string)=>{if(list.current)positions.current.set(key,list.current.scrollTop);setSource(id);};
@@ -39,25 +42,39 @@ export function AgentModelPicker({open,title,local,current,selected,onConfirm,on
  const sourceChoices=active?.models.map(model=>({sourceId:active.id,model:model.id})).filter(choice=>!draft.some(item=>item.model===choice.model&&!same(item,choice)))??[];
  const sourceSelected=sourceChoices.length>0&&sourceChoices.every(choice=>draft.some(item=>same(item,choice)));
  const content=<>
-  <label className="tfSearch tfAgentPickerSearch"><Icon name="search" size={16}/><input ref={search} type="search" placeholder="搜索模型、来源或账号" aria-label="搜索厂商、账号或模型" value={query} onChange={event=>{if(list.current)positions.current.set(key,list.current.scrollTop);setQuery(event.target.value);}}/></label>
-  <section className="tfAgentPicked" aria-label="已选模型">
+  <div className="tfPickerToolbar">{compact&&<h3>{title}</h3>}<label className="tfSearch tfAgentPickerSearch"><Icon name="search" size={16}/><input ref={search} type="search" placeholder="搜索模型、来源或账号" aria-label="搜索厂商、账号或模型" value={query} onChange={event=>{if(list.current)positions.current.set(key,list.current.scrollTop);setQuery(event.target.value);}}/></label></div>
+  {(!compact||draft.length>0)&&<section className="tfAgentPicked" aria-label="已选模型">
    <header><span>已选模型 <b aria-live="polite">{draft.length}</b></span><div className="tfRow">{embedded&&unavailableCount>0&&<button type="button" className="textButton" onClick={removeUnavailable}>移除不可用模型（{unavailableCount}）</button>}<button type="button" className="textButton" disabled={!draft.length} onClick={()=>updateDraft([])}>清空选择</button></div></header>
    <ul>{chosen.map(choice=>{const group=all.find(group=>group.id===choice.sourceId);const label=modelLabel(local,choice.model);const invalid=unavailable(choice);return <li className={`tfAgentPickedTag tfDragRow ${invalid?'unavailable':''}`} key={`${choice.sourceId}/${choice.model}`} {...dropOrder('models',choice.model,chosenIds,move)} title={`${label} · ${group?.accountLabel??(invalid?'当前来源未提供此模型':'来源信息待加载')}`}>
     <DragHandle kind="models" id={choice.model} label={label} items={chosenIds} move={move}/><ProviderIcon provider={modelManufacturer(choice.model,local)} size={24}/><strong>{label}</strong><button type="button" className="iconButton" aria-label={`移除 ${label}`} onClick={()=>toggle(choice)}><Icon name="close" size={12}/></button>
    </li>;})}</ul>{!chosen.length&&<p>从下方选择模型</p>}
-  </section>
+  </section>}
   {notice&&<p className="tfHint" role="status">{notice}</p>}
-  <div className="tfAgentPickerBrowser" onWheel={releaseSearch}>
-   <div className="tfAgentPickerSources" role="tablist" aria-label="模型来源" aria-orientation="vertical">
+  <div className={`tfAgentPickerBrowser ${compact?'tfCompactBrowser':''}`} onWheel={releaseSearch}>
+   {compact?<>
+    <div className="tfAgentPickerSources" role="tablist" aria-label="模型厂商">
+     {providers.map(([id,group],index)=><button type="button" role="tab" key={id} aria-selected={activeProvider===id} aria-controls={`${catalogId}-accounts`} tabIndex={(providers.some(([key])=>key===activeProvider)?activeProvider:providers[0]?.[0])===id?0:-1} title={group.providerLabel} aria-label={group.providerLabel} onClick={()=>{setProvider(id);chooseSource('');}} onKeyDown={event=>{
+      if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+      event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?providers.length-1:(index+(event.key==='ArrowRight'?1:-1)+providers.length)%providers.length;
+      setProvider(providers[next][0]);chooseSource('');event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role=tab]')[next]?.focus({preventScroll:true});
+     }}><ProviderIcon provider={id} size={22}/></button>)}
+     {!groups.length&&<p className="tfHint">没有匹配的来源</p>}
+    </div>
+    {accounts.length>0&&<fieldset className="tfPickerAccounts" id={`${catalogId}-accounts`}><legend>{activeProvider==='api'?'选择 API 接口':'选择账号'}</legend><div className="tfAccessChoices">
+     {accounts.map(group=><label key={group.id}><input type="radio" name={`${catalogId}-account`} value={group.id} checked={active?.id===group.id} onChange={()=>chooseSource(group.id)}/><span title={group.accountLabel}>{group.accountLabel}{count(group.id)>0&&<b className="tfPickerAccountCount">{count(group.id)}</b>}</span></label>)}
+    </div></fieldset>}
+   </>:<>
+   <div className="tfAgentPickerSources" role="tablist" aria-label="模型来源" aria-orientation={compact?'horizontal':'vertical'}>
     <span className="tfAgentPickerCaption">来源与账号</span>
-    {groups.map(group=><button type="button" role="tab" aria-selected={active?.id===group.id} aria-controls={catalogId} tabIndex={active?.id===group.id?0:-1} onKeyDown={event=>{if(!['ArrowUp','ArrowDown','Home','End'].includes(event.key))return;event.preventDefault();const index=groups.findIndex(item=>item.id===group.id),next=event.key==='Home'?0:event.key==='End'?groups.length-1:(index+(event.key==='ArrowDown'?1:-1)+groups.length)%groups.length;chooseSource(groups[next].id);event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role=tab]')[next]?.focus({preventScroll:true});}} aria-label={group.label} key={group.id} onClick={()=>chooseSource(group.id)}>
-     <ProviderIcon provider={group.provider} size={20}/><span><strong>{group.provider==='api'?group.accountLabel:group.providerLabel}</strong><small title={group.accountLabel}>{group.provider==='api'?'API 接口':group.accountLabel}</small></span><b className={count(group.id)?'chosen':''}>{count(group.id)||group.models.length}</b>
+    {groups.map(group=><button type="button" role="tab" aria-selected={active?.id===group.id} aria-controls={(!compact||active||q)?catalogId:undefined} tabIndex={(active?.id??groups[0]?.id)===group.id?0:-1} onKeyDown={event=>{if(!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const index=groups.findIndex(item=>item.id===group.id),next=event.key==='Home'?0:event.key==='End'?groups.length-1:(index+(event.key==='ArrowDown'||event.key==='ArrowRight'?1:-1)+groups.length)%groups.length;chooseSource(groups[next].id);event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role=tab]')[next]?.focus({preventScroll:true});}} title={group.label} aria-label={group.label} key={group.id} onClick={()=>chooseSource(group.id)}>
+     <ProviderIcon provider={group.provider} size={20}/><span><strong>{group.provider==='api'?group.accountLabel:group.providerLabel}</strong><small title={group.accountLabel}>{group.provider==='api'?'API 接口':group.accountLabel}</small></span>{count(group.id)>0&&<b className="chosen">{count(group.id)}</b>}
     </button>)}
     {!groups.length&&<p className="tfHint">没有匹配的来源</p>}
    </div>
-   <section className="tfAgentPickerCatalog tfPickSource" id={catalogId} role="tabpanel" aria-label={active?.label??'模型列表'}>
+   </>}
+   {(!compact||!!active||!groups.length)&&<section className="tfAgentPickerCatalog tfPickSource" id={catalogId} role="tabpanel" aria-label={active?.label??'模型列表'}>
     {active?<>
-     <header><div className="tfAgentCatalogIdentity"><strong>{active.provider==='api'?active.accountLabel:active.providerLabel}</strong><small title={active.accountLabel}>{active.provider==='api'?`${active.models.length} 个模型`:active.accountLabel}</small></div>
+     <header><div className="tfAgentCatalogIdentity"><strong>{active.provider==='api'?active.accountLabel:active.providerLabel}</strong><small title={active.accountLabel}>{compact||active.provider==='api'?`${active.models.length} 个模型`:`${active.accountLabel} · ${active.models.length} 个模型`}</small></div>
       {!!active.quota?.windows.length&&<div className="tfAgentPickerRings" aria-label={`${active.accountLabel} 额度`}>{active.quota.windows.map(window=><QuotaRing key={window.id} compact remaining={window.usedPercent===null?null:100-window.usedPercent} label={window.label}/>)}</div>}
       <button type="button" className="textButton" disabled={!sourceChoices.length} onClick={()=>updateDraft(items=>sourceSelected?items.filter(item=>!sourceChoices.some(choice=>same(item,choice))):[...items,...sourceChoices.filter(choice=>!items.some(item=>same(item,choice)))])}>{sourceSelected?'取消全选':'全选'}</button>
      </header>
@@ -69,11 +86,11 @@ export function AgentModelPicker({open,title,local,current,selected,onConfirm,on
        </button>
       </div>;})}
      </div></div>
-    </>:<div className="tfAgentPickerEmpty"><Icon name="search" size={24}/><strong>{q?'没有匹配的模型':'还没有可用模型'}</strong><p>{q?'试试其他模型名或账号':'在账号授权或 API 接口添加来源'}</p></div>}
-   </section>
+    </>:<div className="tfAgentPickerEmpty"><Icon name={compact&&!q?'plus':'search'} size={24}/><strong>{compact&&!q&&groups.length?'选择来源查看模型':q?'没有匹配的模型':'还没有可用模型'}</strong>{(!compact||q||!groups.length)&&<p>{q?'试试其他模型名或账号':'在账号授权或 API 接口添加来源'}</p>}</div>}
+   </section>}
   </div>
   {!embedded&&<footer><span aria-live="polite">已选择 {draft.length} 个模型{unavailableCount>0&&<button type="button" className="textButton tfRemoveUnavailable" onClick={removeUnavailable}>移除不可用模型（{unavailableCount}）</button>}</span><button type="button" onClick={onClose}>取消</button><button type="button" className="primary" disabled={busy||!draft.length} onClick={()=>{onConfirm(draft);onClose();}}>应用所选模型</button></footer>}
  </>;
- if(embedded)return open?<section className="tfAgentPicker tfInlineAgentPicker" aria-label={title} inert={busy} aria-busy={busy}>{content}</section>:null;
+ if(embedded)return open?<section className={`tfAgentPicker tfInlineAgentPicker ${compact?'tfCompactPicker':''}`} aria-label={title} inert={busy} aria-busy={busy}>{content}</section>:null;
  return <FlowDialog open={open} title={title} className="tfAgentPicker" onClose={onClose}>{content}</FlowDialog>;
 }

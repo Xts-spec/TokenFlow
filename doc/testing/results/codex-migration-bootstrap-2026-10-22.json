@@ -1,0 +1,85 @@
+{
+  "date": "2026-10-22",
+  "baselineCommit": "47a1db1",
+  "deployed": false,
+  "installedBuildUnchanged": "10.15.26.52",
+  "livePaidUpstreamCalls": 0,
+  "tests": {
+    "initialRegressionBeforeFix": {
+      "failed": 4,
+      "passed": 0
+    },
+    "mainRun": {
+      "files": 17,
+      "passed": 249,
+      "failed": 3,
+      "total": 252
+    },
+    "updatedWireUsageFileRerun": {
+      "passed": 26,
+      "failed": 0
+    },
+    "unchangedSidecarStartupCaseRerun": {
+      "passed": 1,
+      "failed": 0
+    },
+    "apiErrorIntegrationCasesPassed": 3,
+    "uniqueCasesCoveredAfterCorrectionsAndRerun": 255,
+    "typecheck": "passed",
+    "build": "passed"
+  },
+  "nativeSyntheticLargeHistory": {
+    "passed": true,
+    "historyBytes": 12666535,
+    "switchTimeCompactions": 0,
+    "gatewayCompactions": 1,
+    "clientCompactions": 0,
+    "summaryInputTokensReportedByFixture": 88000000,
+    "clientLastInputTokens": 100,
+    "resumed": [
+      {
+        "durationMs": 280,
+        "status": "completed",
+        "earliestRequirementPreserved": true
+      }
+    ],
+    "timingIsSyntheticNotProviderPerformance": true
+  },
+  "nativeSyntheticRoundtrip": {
+    "passed": true,
+    "scope": "real installed Codex with synthetic providers; no live official login",
+    "requests": 36,
+    "repeatedGateway": true,
+    "toolHistoryPreserved": true,
+    "summaryResumed": true,
+    "foreignReasoningRepaired": true
+  },
+  "nativeCheckpointAndError": {
+    "passed": true,
+    "normalCalls": 24,
+    "summaryCalls": 7,
+    "checkpoints": [
+      {
+        "summaryCount": 1,
+        "bytes": 35546
+      },
+      {
+        "summaryCount": 1,
+        "bytes": 35546
+      },
+      {
+        "summaryCount": 1,
+        "bytes": 35546
+      }
+    ],
+    "qoderAdviceReachedCodex": true,
+    "error": "Error running remote compact task: stream disconnected before completion: 摘要上游请求失败（HTTP 429）：Qoder 当前模型容量不足，本次自动等待重试已结束，或上游要求的等待时间超过本次等待预算。请稍后重试或选择其他模型；原账号和模型配置保留。 原会话未修改。",
+    "scope": "installed Codex, real GatewayContext, synthetic sources, isolated HOME"
+  },
+  "limitations": [
+    "No real paid upstream test in this change",
+    "Original DeepSeek 400 payload remains unavailable",
+    "Central regression run required two assertion updates and one isolated fixture startup retry",
+    "Running application not replaced"
+  ]
+}

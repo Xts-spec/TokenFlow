@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+ "sort"
 	"strings"
 	"time"
 
@@ -49,6 +50,14 @@ func zcodeCodingPicker(raw []byte, provider string) (map[string]bool, bool) {
 		}
 	}
 	return ids, found
+}
+// An enabled official project token supplies the Coding Plan authorization;
+// model IDs come from the freshly downloaded native picker, never a static list.
+func zcodeProjectCatalog(allowed map[string]bool,fallback []*ModelInfo)([]*ModelInfo,bool){
+ if allowed==nil{return nil,false}
+ ids:=make([]string,0,len(allowed));for id:=range allowed{ids=append(ids,id)};sort.Strings(ids)
+ entries:=make([]map[string]string,0,len(ids));for _,id:=range ids{entries=append(entries,map[string]string{"id":id})}
+ raw,_:=json.Marshal(map[string]any{"data":entries});return parseOfficialCatalog("zcode",raw,fallback)
 }
 func readZCodeCatalogJSON(ctx context.Context, client *http.Client, target, token string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", target, nil)
@@ -129,7 +138,8 @@ func (s *Service) fetchZCodeConversationCatalog(ctx context.Context, a *coreauth
 	if !ok {
 		return nil, false
 	}
-	apiAuth := *a
+	if metadataText(a,"auth_kind")=="project_access" { return zcodeProjectCatalog(allowed,fallback) }
+ apiAuth := *a
 	apiAuth.Metadata = make(map[string]any, len(a.Metadata))
 	for k, v := range a.Metadata {
 		apiAuth.Metadata[k] = v

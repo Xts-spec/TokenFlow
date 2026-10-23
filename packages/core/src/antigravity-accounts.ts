@@ -3,7 +3,7 @@ import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { safePath } from './agent-connections.js';
-import { nativeConflict, nativeDigest, type NativeStore, type NativeState, type NativeCredential } from './native-accounts.js';
+import { nativeConflict, nativeDigest, nativeCredentialSchema, type NativeStore, type NativeState, type NativeCredential } from './native-accounts.js';
 
 const oauthKey='antigravityUnifiedStateSync.oauthToken',userKey='antigravityUnifiedStateSync.userStatus';
 const enterpriseKey='antigravityUnifiedStateSync.enterprisePreferences';
@@ -48,6 +48,15 @@ export class AntigravityAccountStore implements NativeStore {
   }
   private snapshot(db:DatabaseSync):NativeState{return Object.fromEntries(keys.map(key=>{const row=db.prepare('SELECT value FROM ItemTable WHERE key=?').get(key);const v=row?.value;if(v!==undefined&&typeof v!=='string')throw nativeConflict('反重力登录数据库格式不受支持。');return [key,sentinels[key]?topicValue(v as string|undefined??null,sentinels[key])?.toString('base64')??null:v??null];}));}
   async read(){const db=await this.database(true);try{return this.snapshot(db);}finally{db.close();}}
+  async importCredential(){
+    const state=await this.read(),token=state[oauthKey]?decode(state[oauthKey]):null;
+    if(!token)throw nativeConflict('未找到反重力本机授权，请先在客户端登录。');
+    const timestamp=get(token,4),seconds=timestamp&&fields(timestamp).find(f=>f.number===1&&f.wire===0)?.value;
+    let expires=0,scale=1;for(const byte of seconds??[]){expires+=(byte&127)*scale;scale*=128;}
+    const parsed=nativeCredentialSchema.safeParse({access_token:get(token,1)?.toString(),refresh_token:get(token,3)?.toString(),id_token:get(token,5)?.toString(),email:this.describe(state).email,expired:expires>0&&Number.isSafeInteger(expires)&&expires<8640000000000?new Date(expires*1000).toISOString():'',project_id:state[enterpriseKey]?get(decode(state[enterpriseKey]),3)?.toString():undefined});
+    if(!parsed.success)throw nativeConflict('反重力本机授权资料不完整，请在账号授权页重新授权。');
+    return parsed.data;
+  }
   async usageLogin(){const state=await this.read(),email=this.describe(state).email?.trim().toLowerCase(),project=state[enterpriseKey]?get(decode(state[enterpriseKey]),3)?.toString():undefined;return email&&state[oauthKey]?{provider:'antigravity' as const,accountId:email,email,...(project?{organizationId:project}:{})}:null;}
   describe(state:NativeState){const user=state[userKey]?decode(state[userKey]):null;return {email:user?get(user,7)?.toString()??null:null,model:null};}
   prepare(before:NativeState,c:NativeCredential){

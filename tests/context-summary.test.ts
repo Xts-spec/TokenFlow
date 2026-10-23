@@ -42,9 +42,23 @@ it('retains a tool-request flag even if a bridge omits tools from terminal outpu
  const result=await readSummaryResponse(sse([{type:'response.output_item.done',item:{type:'function_call',call_id:'bad',name:'write'}},{type:'response.completed',response:{status:'completed',output:[message]}}]));
  expect(result.summary_requested_tools).toBe(true);
 });
-it('bounds array tool output and removes binary attachments from the historical summary transcript',()=>{
+it('preserves complete tool text while omitting binary attachments from the text transcript',()=>{
  const user={role:'user',content:[{type:'input_text',text:'必须保留 API，不得删除文件。'},{type:'input_image',image_url:'data:image/png;base64,'+'x'.repeat(100000)}]};
  const value=summaryTranscript([user,{type:'custom_tool_call_output',call_id:'a',output:[{type:'text',text:'工具结果'.repeat(100000)}]}]);
- expect(Buffer.byteLength(value)).toBeLessThan(3000);expect(value).toContain('必须保留 API');expect(value).toContain('middle omitted');expect(value).not.toContain('base64');
+ expect(JSON.parse(value)[1].output[0].text).toBe('工具结果'.repeat(100000));expect(value).toContain('必须保留 API');expect(value).not.toContain('middle omitted');expect(value).not.toContain('base64');
  expect(user.content[1]!.image_url).toContain('base64');
+});
+
+it.each(['json','sse'])('reads a large %s summary without a fixed response-byte cutoff',async format=>{
+ const text='x'.repeat(5*1024*1024);
+ const complete={status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text}]}]};
+ const response=format==='json'?Response.json(complete):sse([{type:'response.output_text.delta',delta:text},{type:'response.completed',response:{status:'completed',output:[]}}],64*1024);
+ const result=await readSummaryResponse(response);
+ expect(result.output[0].content[0].text).toHaveLength(text.length);
+});
+
+it('preserves the middle of tool arguments, string outputs and every assistant text block',()=>{
+ const text='start '+ '完整🙂'.repeat(10000)+' middle fact '+ 'end '.repeat(10000);
+ const input=[{type:'function_call',arguments:JSON.stringify({text})},{type:'custom_tool_call',input:text},{type:'function_call_output',output:text},{role:'assistant',content:text},{role:'assistant',content:[{type:'output_text',text}]}];
+ const before=JSON.stringify(input);expect(JSON.parse(summaryTranscript(input))).toEqual(input);expect(JSON.stringify(input)).toBe(before);
 });
