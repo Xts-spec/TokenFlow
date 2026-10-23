@@ -37,8 +37,8 @@ Claude Code、Antigravity 也有支持的原生登录切换。按界面提示先
 ## 3. Qoder 来源：反代到 Claude Code 或其他 Agent
 
 1. 在 **账号授权 → Qoder IDE** 添加 Qoder 来源账号，按授权页完成登录；等待模型目录，刷新套餐 / 加购 / 组织资源包等可查询额度。
-2. 在 **本地 Agent → Claude Code → 选择模型** 展开 Qoder 来源卡片，选择模型并应用。也可选 Codex、WorkBuddy 或 Qoder 独立应用作为目标，具体组合需要实测。
-3. 重启对应客户端加载接口和模型。Claude Code 可选择 VS Code 插件或终端版；终端版按界面选择会话，先结束生成。
+2. 在 **本地 Agent → Claude Code → 选择模型** 展开 Qoder 来源卡片，选好模型后点击 **应用所选模型**；多个模型时，在应用窗口中选择默认模型和快速模型，再点击 **应用**。也可选 Codex、WorkBuddy 或 Qoder 独立应用作为目标，具体组合需要实测。
+3. 重启对应客户端加载接口和模型。Claude Code 的终端与 IDE 共用接入配置；操作前先结束生成。TokenFlow 暂不展示 Claude Desktop 接入入口。
 4. Claude Code 使用 Messages 接口；模型名以复制的精确 ID 为准。当前界面提示自定义菜单需要 2.1.242+，旧版可用 `/model 模型ID`。
 5. 请求结果在 **活动** 核对，再刷新 Qoder 来源额度。文本成功不代表长工具名、工具执行、图片或自动审批等全部能力通过。
 

@@ -73,7 +73,7 @@ export function ModelPicker({open,title,local,current,recent=[],isDisabled,onPic
   </div>
   {afterModels}
   {error&&<p className="tfError tfPickerError" role="alert">{error}</p>}
-  {multiple&&!inlineSelection&&<footer className="tfPickerFooter"><span aria-live="polite">{allowEmpty&&!draft.length?'未选择模型，保存后此 Key 将无法调用模型':`已选择 ${draft.length} 个模型`}</span><button type="button" disabled={busy} onClick={onClose}>取消</button><button type="button" className="primary" disabled={busy||!allowEmpty&&!draft.length} onClick={()=>{onConfirm?.(draft);if(closeOnConfirm)onClose();}}>{busy?<Thinking label="正在保存模型权限"/>:confirmLabel}</button></footer>}
+  {multiple&&!inlineSelection&&<footer className="tfPickerFooter"><span aria-live="polite">{allowEmpty&&!draft.length?'未选择模型，保存后此 Key 将无法调用模型':`已选择 ${draft.length} 个模型`}</span><button type="button" disabled={busy} onClick={onClose}>取消</button><button type="button" className="primary" disabled={busy||!allowEmpty&&!draft.length} onClick={()=>{onConfirm?.(draft);if(closeOnConfirm)onClose();}}>{open&&busy&&<Thinking label="正在保存模型权限"/>}{busy?'正在保存…':confirmLabel}</button></footer>}
  </>;
  if(embedded)return open?<section className="tfPicker tfInlinePicker" aria-label={title} aria-busy={busy}>{content}</section>:null;
  return createPortal(<dialog ref={dialog} className={`tfPicker ${nativeMac?'tfNativeMacDialog':''}`} aria-label={title} aria-busy={busy} onClose={event=>{if(event.target===dialog.current&&!busy)onClose();}} onCancel={event=>{event.preventDefault();if(!busy)onClose();}} {...dismiss}>{content}</dialog>,document.body);

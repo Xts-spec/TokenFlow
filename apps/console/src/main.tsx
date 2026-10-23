@@ -1,6 +1,6 @@
 import {ExpiredAccountNotice} from './ExpiredAccountNotice';
 import type {MaintenanceContext} from '../../../packages/core/src/maintenance-conversations';
-import {Thinking,LoadingSkeleton,LoadError} from './LoadingState';
+import {ThinkingFeedback,LoadingSkeleton,LoadError} from './LoadingState';
 import {SidebarDivider} from './SidebarDivider';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -136,7 +136,7 @@ function App(){
   <SidebarDivider/>
   <ExpiredAccountNotice local={local} disabled={busy||!localLoaded} onChanged={refresh}/>
   <main className="tfMain">
-   {busy&&<div className="tfOperationFeedback"><Thinking label="正在处理操作"/></div>}
+   <ThinkingFeedback busy={busy}/>
    <div className="tfRequestStatus">{view!=='agents'&&localError&&<LoadError message={localError} retry={()=>refresh().catch(()=>{})}/>}</div>
    {view==='agents'&&<AgentsPage local={local} calls={calls} usage={usage} notify={setNotice} onRepair={openRepair} onAgent={setSelectedAgent} localError={localError} reloadLocal={refresh}/>}
    {!localLoaded?(!localError&&view!=='agents'&&<div className="tfPage"><LoadingSkeleton label="正在加载账号与模型" variant={view==='usage'?'overview':'cards'}/></div>):<>
