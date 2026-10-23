@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { providerSchema, type ProviderConfig } from './providers.js';
 import { RunnerCoreError } from './errors.js';
 import { upstreamRequest, inferenceFetch } from './upstream-request.js';
+import {readUpstreamError,upstreamError} from './upstream-errors.js';
 import type { Secrets } from './service.js';
 
 const modelID=z.string().trim().min(1).max(200).refine(v=>!/[\x00-\x1f\x7f]/.test(v));
@@ -33,8 +34,10 @@ function safeSourceStream(body:ReadableStream<Uint8Array>){
  const safe=(frame:string)=>{
   const data=frame.split('\n').filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trimStart()).join('\n');
   if(!data||data==='[DONE]')return frame+'\n\n';
-  let failed=false;try{const value=JSON.parse(data);failed=value?.type==='error'||value?.type==='response.failed'||!!value?.error||!!value?.response?.error;}catch{failed=true;}
-  return failed?'event: error\ndata: '+JSON.stringify({type:'error',code:'api_source_error',message:'API source stream failed',error:{type:'api_error',message:'API source stream failed'}})+'\n\n':frame+'\n\n';
+  let failed=false,detail:ReturnType<typeof upstreamError>|undefined;
+  try{const value=JSON.parse(data);failed=value?.type==='error'||value?.type==='response.failed'||!!value?.error||!!value?.response?.error;if(failed)detail=upstreamError(502,data);}catch{failed=true;}
+  const error=detail?.code?detail:{code:'api_source_error',type:'api_error',message:'API source stream failed'};
+  return failed?'event: error\ndata: '+JSON.stringify({...error,type:'error',error})+'\n\n':frame+'\n\n';
  };
  return body.pipeThrough(new TransformStream<Uint8Array,Uint8Array>({
   transform(chunk,out){buffer+=decoder.decode(chunk,{stream:true});buffer=buffer.replace(/\r\n/g,'\n');let end:number;while((end=buffer.indexOf('\n\n'))!==-1){const frame=buffer.slice(0,end);buffer=buffer.slice(end+2);out.enqueue(encoder.encode(safe(frame)));}},
@@ -188,7 +191,10 @@ export class ApiSources {
      if(r.ok||r.status!==400||index===bodies.length-1)break;
      await r.body?.cancel();
     }
-    if(!r.ok){await r.body?.cancel();fail(r.status,'API source request failed');return;}
+    if(!r.ok){
+     const error=upstreamError(r.status,await readUpstreamError(r));
+     res.writeHead(r.status,{'content-type':'application/json'});res.end(JSON.stringify({error}));return;
+    }
     res.writeHead(r.status,{'content-type':r.headers.get('content-type')??'application/json','cache-control':'no-store'});
     if(!r.body){res.end();return;}
     const stream=Readable.fromWeb(((r.headers.get('content-type')??'').includes('text/event-stream')?safeSourceStream(r.body):r.body) as never);stream.once('error',()=>res.destroy());stream.pipe(res);

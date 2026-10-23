@@ -1119,7 +1119,7 @@ export async function createDesktopService(options:ServiceOptions) {
       req.body={...(req.body as Record<string,unknown>),model:fixed.model};
       reply.header('X-Token-Flow-Model',fixed.model);
     }
-    const started=Date.now();const traceRequest=requestTrace(req.body);let traceResponse:ResponseObservation={tools:[]};let compaction:CompactionReport|undefined;let contextUsageIncomplete=false;let recorded=false;let callError:{code:string;message:string}|undefined;
+    const started=Date.now();const traceRequest=requestTrace(req.body);let traceResponse:ResponseObservation={tools:[]};let compaction:CompactionReport|undefined;let contextUsageIncomplete=false;let recorded=false;let callError:{code:string;message:string}|undefined;let contextFailureStatus:number|undefined;
     const record=(status:number,usage:{inputTokens:number|null;outputTokens:number|null;cachedTokens?:number|null;cacheWriteTokens?:number|null;reasoningTokens?:number|null}={inputTokens:null,outputTokens:null})=>{
       if(recorded||path==='models')return;recorded=true;
       const rawModel=(req.body as {model?:unknown})?.model;
@@ -1220,11 +1220,12 @@ export async function createDesktopService(options:ServiceOptions) {
         try{return finishUpstream(await transport(route,forward,clock),detach);}catch(error){detach();throw error;}
       };
       const sessionId=req.headers['session_id']??req.headers['session-id'];
-      const response=bridgeContext?await gatewayContext.response(path,req.body as {model:string},client?.id??'workspace',client?.modelSources?.[model]??client?.sourceId??apiSource?.id??upstreamURL,dispatch,fixed?.target==='codex'?{bootstrapOnFirstRequest:true,contextWindowTokens:await compactionModelWindow(model,proxy.snapshot().models,connections.paths.codex),scope:codexContextScope,threadId:typeof sessionId==='string'?sessionId:undefined,connectionId:client?.id,normalize:portableCodexItem,recover:async item=>codexContext.recover(item,await codexContextScopes())}:undefined,{signal:abort.signal,onCancel:()=>abort.abort(),onInitialCompaction:active=>{initialCompaction=active;},onCompaction:report=>{compaction=report;},onUsageIncomplete:()=>{contextUsageIncomplete=true;if(compaction)compaction={...compaction,unmetered:true};}}):await dispatch(path,req.body);
+      const response=bridgeContext?await gatewayContext.response(path,req.body as {model:string},client?.id??'workspace',client?.modelSources?.[model]??client?.sourceId??apiSource?.id??upstreamURL,dispatch,fixed?.target==='codex'?{bootstrapOnFirstRequest:true,contextWindowTokens:await compactionModelWindow(model,proxy.snapshot().models,connections.paths.codex),scope:codexContextScope,threadId:typeof sessionId==='string'?sessionId:undefined,connectionId:client?.id,normalize:portableCodexItem,recover:async item=>codexContext.recover(item,await codexContextScopes())}:undefined,{signal:abort.signal,onCancel:()=>abort.abort(),onInitialCompaction:active=>{initialCompaction=active;},onCompaction:report=>{compaction=report;},onError:error=>{contextFailureStatus=error.statusCode;callError={code:error.code,message:error.message};},onUsageIncomplete:()=>{contextUsageIncomplete=true;if(compaction)compaction={...compaction,unmetered:true};}}):await dispatch(path,req.body);
       if(!response.ok){
         if(response.status===401){const failedSource=client?.modelSources?.[model!]??client?.sourceId;if(failedSource)refreshFailedSource(failedSource);}
         await settle({inputTokens:null,outputTokens:null},response.status>=500);
         const error=upstreamError(response.status,await readUpstreamError(response));
+        if(path.startsWith('responses')&&error.code==='upstream_context_length')error.code='context_length_exceeded';
         callError={code:error.type==='source_policy_blocked'?'source_policy_blocked':error.code??error.type,message:error.message};record(response.status);
         await response.body?.cancel().catch(()=>{});
         return reply.code(response.status).send({...(path==='messages'?{type:'error'}:{}),error});
@@ -1242,7 +1243,7 @@ export async function createDesktopService(options:ServiceOptions) {
           else if(clientDisconnected)callError={code:'request_cancelled',message:'客户端已取消请求。'};
           else if(usage.failed)callError={code:'upstream_incomplete_response',message:'上游响应未完整结束。'};
         }
-        record(callError?.code==='request_cancelled'?499:callError?.code==='upstream_stream_error'||usage.failed?502:response.status,usage);
+        record(callError?.code==='request_cancelled'?499:contextFailureStatus??(callError?.code==='upstream_stream_error'||usage.failed?502:response.status),usage);
         await settle(usage,contextUsageIncomplete||!!compaction?.unmetered||abort.signal.aborted||usage.failed||usage.inputTokens===null||usage.outputTokens===null);
       },details=>{traceResponse=details;});
       source.once('error',()=>{if(!abort.signal.aborted)callError={code:'upstream_stream_error',message:'上游连接中断。'};abort.abort();stream.destroy();});stream.once('close',()=>{source.destroy();});

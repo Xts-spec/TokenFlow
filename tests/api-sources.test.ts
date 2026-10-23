@@ -21,6 +21,10 @@ async function fixture(real=false,configure?:(app:Awaited<ReturnType<typeof crea
   res.setHeader('content-type','application/json');const pathname=new URL(req.url!,'http://127.0.0.1').pathname;let raw='';for await(const c of req)raw+=c;const body=raw?JSON.parse(raw):{};
   const key=String(req.headers.authorization??req.headers['x-api-key']??'');calls.push({path:req.url!,key,body});
   await paused;
+  if(JSON.stringify(body).includes('classified-context-error')){res.writeHead(400);res.end(JSON.stringify({error:{code:'context_length_exceeded',message:'PRIVATE_PROVIDER_BODY'}}));return;}
+  if(JSON.stringify(body).includes('classified-field-error')){res.writeHead(400);res.end(JSON.stringify({error:{type:'invalid_request_error',param:'messages[2].content',message:'PRIVATE_PROVIDER_BODY'}}));return;}
+  if(JSON.stringify(body).includes('classified-stream-error')){res.setHeader('content-type','text/event-stream');res.end('data: '+JSON.stringify({type:'response.failed',response:{status:'failed',error:{code:'context_length_exceeded',message:'PRIVATE_PROVIDER_BODY'}}})+'\n\n');return;}
+  if(JSON.stringify(body).includes('classified-capacity-error')){res.writeHead(429);res.end(JSON.stringify({error:{code:'qoder_capacity_wait_exhausted',message:'PRIVATE_PROVIDER_BODY'}}));return;}
   if(rejectBlankText&&body.messages?.some((message:any)=>Array.isArray(message.content)&&message.content.some((part:any)=>part.type==='text'&&typeof part.text==='string'&&!part.text.trim()))){res.statusCode=400;res.end(JSON.stringify({error:{message:'text content block must contain non-whitespace text'}}));return;}
   const expected=modelProtocols[body.model];
   if(expected&&pathname!==`/v1/${expected}`){res.statusCode=400;res.end(JSON.stringify({error:{message:'Model does not support this protocol'}}));return;}
@@ -345,6 +349,30 @@ it('marks interrupted API streams as failed, prevents budget replay, and does no
  await service.app.inject({method:'DELETE',url:`/api/gateway-keys/${created.key.id}`,headers});expect((await service.app.inject({method:'DELETE',url:`/api/sources/${s.id}`,headers})).statusCode).toBe(200);
  expect((await service.app.inject({method:'POST',url:'/v1/responses',headers,payload:{model,input:'Hi'}})).statusCode).toBe(503);
 },60000);
+it.each(['chat','responses'])('preserves classified %s API failures through the relay and Responses gateway',async protocol=>{
+ const {service,headers,add}=await fixture(true);const source=await add('Diagnostic API','diagnostic-private-key',protocol),model=apiModelID(source.id,'shared');
+ await expect.poll(()=>service.proxy.apiModelAvailable(model),{timeout:5000}).toBe(true);
+ for(const [marker,code,detail] of [['classified-context-error','context_length_exceeded','上下文窗口'],['classified-field-error','upstream_invalid_request','messages[2].content']]){
+  const result=await service.app.inject({method:'POST',url:'/v1/responses',headers,payload:{model,input:marker,stream:false}});
+  expect(result.statusCode,result.body).toBe(400);expect(result.json().error).toMatchObject({code,message:expect.stringContaining(detail!)});expect(result.body).not.toContain('PRIVATE_PROVIDER_BODY');
+ }
+ if(protocol==='responses'){
+  const result=await service.app.inject({method:'POST',url:'/v1/responses',headers,payload:{model,input:'classified-stream-error',stream:true}});
+  expect(result.body).toContain('context_length_exceeded');expect(result.body).not.toContain('PRIVATE_PROVIDER_BODY');
+ }
+},30000);
+it('keeps a managed Codex summary failure identical in its stream and activity record',async()=>{
+ const {root,service,headers,add}=await fixture();const source=await add('Summary error API','diagnostic-private-key'),model=apiModelID(source.id,'shared');
+ const target=(await service.app.inject({url:'/api/a2a',headers})).json().targets.find((t:{id:string})=>t.id==='codex');
+ const connected=await service.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload:{target:'codex',sourceId:source.id,model,revision:target.revision}});expect(connected.statusCode,connected.body).toBe(200);
+ const config=parse(await readFile(join(root,'codex/config.toml'),'utf8')) as any;
+ const client={...headers,authorization:'Bearer '+config.model_providers.token_flow.experimental_bearer_token,session_id:'compaction-failure-test'};
+ await service.app.inject({method:'POST',url:'/v1/responses',headers:client,payload:{model,input:'Hello',stream:true}});
+ const result=await service.app.inject({method:'POST',url:'/v1/responses',headers:client,payload:{model,stream:true,input:[{role:'assistant',content:'classified-capacity-error '+ 'work '.repeat(5000)},...Array.from({length:8},()=>({role:'assistant',content:'Recent work'})),{type:'compaction_trigger'}]}});
+ expect(result.statusCode).toBe(200);expect(result.body).toContain('response.failed');expect(result.body).toContain('选择其他模型');expect(result.body).not.toContain('PRIVATE_PROVIDER_BODY');
+ const rows=(await service.app.inject({url:'/api/gateway/traces',headers})).json().records;
+ expect(rows[0]).toMatchObject({status:429,error:{code:'compaction_upstream_failed',message:expect.stringContaining('Qoder 当前模型容量不足')}});
+});
 it('restricts the private relay to its own source/model/protocol and refuses redirects with credentials',async()=>{
  const {root,service,headers,add,calls}=await fixture();const source=await add('Private','private-source-key');
  const yaml=await readFile(join(root,'cliproxy/config.yaml'),'utf8');const entry=JSON.parse(yaml.match(/^codex-api-key: (.+)/m)![1])[0];

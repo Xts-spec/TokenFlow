@@ -1,8 +1,8 @@
 import {randomUUID} from 'node:crypto';
-/** Start truthful SSE progress only when initial compaction actually begins. No fake
+/** Start truthful SSE progress only when compaction actually begins. No fake
  * model text or usage is generated; failures remain terminal error events. */
 export function compactionProgress(task:Promise<Response>,onCancel?:()=>void,model?:string){
- const envelope={id:'resp_tf_initial_'+randomUUID().replaceAll('-',''),object:'response',created_at:Math.floor(Date.now()/1000),model,status:'failed',output:[]};
+ const envelope={id:'resp_tf_compact_'+randomUUID().replaceAll('-',''),object:'response',created_at:Math.floor(Date.now()/1000),model,status:'failed',output:[]};
  let cancelled=false;
  const encoder=new TextEncoder();
  const stream=new ReadableStream<Uint8Array>({
@@ -21,5 +21,5 @@ export function compactionProgress(task:Promise<Response>,onCancel?:()=>void,mod
    }finally{clearInterval(timer);if(!cancelled)controller.close();}
   },cancel(){cancelled=true;onCancel?.();}
  });
- return new Response(stream,{headers:{'content-type':'text/event-stream','x-token-flow-compaction':'initial-history'}});
+ return new Response(stream,{headers:{'content-type':'text/event-stream','x-token-flow-compaction':'model-summary-v1'}});
 }

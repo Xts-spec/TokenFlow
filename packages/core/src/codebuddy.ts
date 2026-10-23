@@ -116,7 +116,7 @@ export class WorkBuddySDKProvider {
    const send=(text:string)=>{if(!closed)output.enqueue(encoder.encode(text));};
    const protocol=workbuddyStream(path,input.model,send);
    const failed=(error:{type?:string;code?:string;message?:string})=>{
-    const detail={code:error.code??error.type??'workbuddy_sdk_error',message:error.message??'WorkBuddy SDK 请求未完成。'};
+    const detail={type:error.type,code:error.code??error.type??'workbuddy_sdk_error',message:error.message??'WorkBuddy SDK 请求未完成。'};
     protocol.fail(detail);
    };
    send(': codebuddy-sdk\n\n');const heartbeat=setInterval(()=>send(': waiting\n\n'),10000);
@@ -149,8 +149,8 @@ export class WorkBuddySDKProvider {
    const result=await this.run({...credential,model,onText,prompt:input.prompt,systemPrompt:input.systemPrompt,images:input.images,tools:input.tools,parallelToolCalls:input.parallel_tool_calls,signal:controller.signal,cwd,configDir,onDiagnostic:event=>{if(event.event==='failure'&&event.reason)sdkFailureCode=sdkFailureCodes[event.reason];}});
    if(controller.signal.aborted)throw new Error('Cancelled');
    if(result.failed&&result.errorCode==='source_policy_blocked')return Response.json({error:{type:'invalid_request_error',code:'a2a_source_policy_blocked',message:'WorkBuddy SDK upstream rejected the invocation channel (11128).'}},{status:400});
-   if(result.failed&&result.errorCode==='authentication_error')return Response.json({error:{type:'authentication_error',message:'WorkBuddy 登录已失效，请重新授权所选账号。'}},{status:401});
-   if(result.failed&&result.errorCode==='rate_limit_error')return Response.json({error:{type:'rate_limit_error',message:'WorkBuddy 来源限流，请稍后重试。'}},{status:429});
+   if(result.failed&&result.errorCode==='authentication_error')return Response.json({error:{code:'workbuddy_authentication_failed',type:'authentication_error',message:'WorkBuddy 登录已失效，请重新授权所选账号。'}},{status:401});
+   if(result.failed&&result.errorCode==='rate_limit_error')return Response.json({error:{code:'workbuddy_rate_limited',type:'rate_limit_error',message:'WorkBuddy 来源限流，请稍后重试。'}},{status:429});
    if(result.failed)throw new Error('SDK request failed');
    stage='output';
    if(model!=='auto'&&result.model.toLowerCase()!==model)throw new Error('SDK model changed');
